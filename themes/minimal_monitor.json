@@ -1,0 +1,452 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Minimal Monitor",
+    "description": "Minimalny layout z mniejszą liczbą widocznych sekcji.",
+    "author": "Open-Trofeo-LCD",
+    "tags": [
+      "monitor",
+      "minimal",
+      "clean"
+    ]
+  },
+  "canvas": {
+    "width": 1920,
+    "height": 462,
+    "rotation": 180
+  },
+  "background": {
+    "kind": "generated",
+    "base_color": [
+      9,
+      14,
+      22
+    ],
+    "accent_color": [
+      20,
+      34,
+      48
+    ],
+    "texture_alpha": 0.4,
+    "panels": [
+      {
+        "rect": [
+          28,
+          28,
+          1860,
+          74
+        ],
+        "radius": 14,
+        "fill": [
+          0,
+          0,
+          0
+        ],
+        "visible": true
+      },
+      {
+        "rect": [
+          20,
+          82,
+          450,
+          208
+        ],
+        "radius": 18,
+        "fill": [
+          0,
+          0,
+          0
+        ],
+        "visible": false
+      },
+      {
+        "rect": [
+          480,
+          82,
+          450,
+          108
+        ],
+        "radius": 18,
+        "fill": [
+          0,
+          0,
+          0
+        ],
+        "visible": false
+      },
+      {
+        "rect": [
+          980,
+          82,
+          330,
+          108
+        ],
+        "radius": 18,
+        "fill": [
+          0,
+          0,
+          0
+        ],
+        "visible": false
+      },
+      {
+        "rect": [
+          20,
+          404,
+          600,
+          46
+        ],
+        "radius": 12,
+        "fill": [
+          0,
+          0,
+          0
+        ],
+        "visible": false
+      }
+    ]
+  },
+  "texts": [
+    {
+      "id": "host_title",
+      "text": "HOST",
+      "x": 42,
+      "y": 40,
+      "font_size": 28,
+      "color": [
+        0,
+        200,
+        255
+      ],
+      "align": "left",
+      "visible": true,
+      "box_width": 520,
+      "box_height": 40
+    },
+    {
+      "id": "cpu_title",
+      "text": "CPU",
+      "x": 40,
+      "y": 90,
+      "font_size": 28,
+      "color": [
+        255,
+        100,
+        100
+      ],
+      "align": "left",
+      "visible": false
+    },
+    {
+      "id": "memory_title",
+      "text": "MEMORY",
+      "x": 500,
+      "y": 90,
+      "font_size": 28,
+      "color": [
+        100,
+        255,
+        100
+      ],
+      "align": "left",
+      "visible": false
+    },
+    {
+      "id": "uptime_title",
+      "text": "UPTIME",
+      "x": 1000,
+      "y": 90,
+      "font_size": 28,
+      "color": [
+        255,
+        200,
+        100
+      ],
+      "align": "left",
+      "visible": false
+    },
+    {
+      "id": "footer_brand",
+      "text": "Trofeo LCD - Linux Open Driver",
+      "x": 42,
+      "y": 408,
+      "font_size": 22,
+      "color": [
+        100,
+        100,
+        120
+      ],
+      "align": "left",
+      "visible": true,
+      "box_width": 760,
+      "box_height": 26
+    }
+  ],
+  "stats": [
+    {
+      "id": "hostname",
+      "label": "",
+      "source": "hostname",
+      "format": "{value}",
+      "x": 210,
+      "y": 40,
+      "font_size": 36,
+      "label_color": [
+        0,
+        200,
+        255
+      ],
+      "value_color": [
+        0,
+        200,
+        255
+      ],
+      "align": "left",
+      "visible": true,
+      "box_width": 460,
+      "box_height": 40
+    },
+    {
+      "id": "clock",
+      "label": "",
+      "source": "time_hms",
+      "format": "{value}",
+      "x": 1550,
+      "y": 40,
+      "font_size": 36,
+      "label_color": [
+        200,
+        200,
+        200
+      ],
+      "value_color": [
+        200,
+        200,
+        200
+      ],
+      "align": "left",
+      "visible": true,
+      "box_width": 260,
+      "box_height": 40
+    },
+    {
+      "id": "cpu_usage",
+      "label": "Usage",
+      "source": "cpu_usage_percent",
+      "format": "{value}",
+      "x": 42,
+      "y": 158,
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "visible": true,
+      "box_width": 420,
+      "box_height": 42
+    },
+    {
+      "id": "cpu_cores",
+      "label": "Cores",
+      "source": "cpu_core_count",
+      "format": "{value}",
+      "x": 42,
+      "y": 208,
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "visible": true,
+      "box_width": 420,
+      "box_height": 42
+    },
+    {
+      "id": "cpu_avg",
+      "label": "Avg",
+      "source": "cpu_core_avg_percent",
+      "format": "{value}",
+      "x": 40,
+      "y": 182,
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "visible": false
+    },
+    {
+      "id": "cpu_max",
+      "label": "Max",
+      "source": "cpu_core_max_percent",
+      "format": "{value}",
+      "x": 40,
+      "y": 210,
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "visible": false
+    },
+    {
+      "id": "cpu_freq",
+      "label": "Freq",
+      "source": "cpu_freq_ghz",
+      "format": "{value}",
+      "x": 40,
+      "y": 238,
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "visible": false
+    },
+    {
+      "id": "cpu_temp",
+      "label": "Temp",
+      "source": "cpu_temp_c",
+      "format": "{value}",
+      "x": 240,
+      "y": 238,
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "visible": false
+    },
+    {
+      "id": "loadavg",
+      "label": "Load",
+      "source": "load_average",
+      "format": "{value}",
+      "x": 40,
+      "y": 266,
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "visible": false
+    },
+    {
+      "id": "mem_percent",
+      "label": "Used",
+      "source": "mem_percent",
+      "format": "{value}",
+      "x": 500,
+      "y": 130,
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "visible": false
+    },
+    {
+      "id": "mem_used",
+      "label": "MB used",
+      "source": "mem_used_mb",
+      "format": "{value}",
+      "x": 500,
+      "y": 158,
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "visible": false
+    },
+    {
+      "id": "uptime",
+      "label": "",
+      "source": "uptime_human",
+      "format": "{value}",
+      "x": 1000,
+      "y": 130,
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "visible": false
+    }
+  ],
+  "images": [],
+  "effects": {
+    "show_grid": false,
+    "show_safe_area": false
+  }
+}

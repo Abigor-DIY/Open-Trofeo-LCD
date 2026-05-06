@@ -1,0 +1,21 @@
+[Unit]
+Description=Open Trofeo LCD Replay Daemon
+After=default.target
+StartLimitIntervalSec=30
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=__WORKDIR__
+EnvironmentFile=__WORKDIR__/.trofeo-service.env
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/open-trofeo-lcd
+ExecStartPre=-/usr/bin/pkill -f replay_from_pcap.py
+ExecStartPre=-/usr/bin/pkill -f trofeo_lcd.py
+ExecStart=/bin/bash __WORKDIR__/scripts/run_replay_service.sh
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

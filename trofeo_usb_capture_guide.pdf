@@ -1,0 +1,202 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Length 2122 >>
+stream
+BT
+/F1 12 Tf
+14 TL
+72 780 Td
+(Open-Trofeo-LCD: instrukcja przechwycenia USB trace pod Windows) Tj
+T*
+() Tj
+T*
+(CEL) Tj
+T*
+(Celem jest zlapac trace USB podczas uzycia oficjalnego programu Thermalright/TRCC, aby) Tj
+T*
+(odtworzyc prawdziwy protokol urzadzenia.) Tj
+T*
+(Bez tego LCD najpewniej ignoruje nasze dane, bo samo bulk write nie wystarcza do) Tj
+T*
+(wyswietlenia obrazu.) Tj
+T*
+() Tj
+T*
+(CO ZAINSTALOWAC) Tj
+T*
+(1. Wireshark) Tj
+T*
+(2. USBPcap) Tj
+T*
+(3. Po instalacji zrestartowac Windows, jesli instalator tego wymaga.) Tj
+T*
+() Tj
+T*
+(WAZNE PRZED STARTEM) Tj
+T*
+(Najlepiej uzyc portu USB 2.0 albo huba USB 2.0.) Tj
+T*
+(USBPcap ma znane ograniczenia przy czesci root hubow USB 3.0.) Tj
+T*
+(Jesli masz wybor, podlacz LCD przez USB 2.0. To zwieksza szanse na poprawny trace.) Tj
+T*
+() Tj
+T*
+(PROCEDURA CAPTURE KROK PO KROKU) Tj
+T*
+(1. Odlacz ekran Trofeo od USB.) Tj
+T*
+(2. Uruchom USBPcapCMD.exe jako Administrator.) Tj
+T*
+(3. Na liscie root hubow znajdz ten, pod ktory bedzie podpiete urzadzenie.) Tj
+T*
+(4. Zacznij capture na tym hubie.) Tj
+T*
+(5. Dopiero teraz podlacz Trofeo do USB.) Tj
+T*
+(6. Uruchom oficjalny program Thermalright/TRCC.) Tj
+T*
+(7. W aplikacji wykonaj jedna prosta akcje: ustaw statyczny obraz testowy.) Tj
+T*
+(8. Potem zmien obraz na drugi, bardzo rozny, np. czerwony na zielony.) Tj
+T*
+(9. Po kazdej zmianie odczekaj kilka sekund.) Tj
+T*
+(10. Zatrzymaj capture.) Tj
+T*
+(11. Zapisz plik jako PCAPNG.) Tj
+T*
+() Tj
+T*
+(JAK ZROBIC DOBRY MATERIAL DO ANALIZY) Tj
+T*
+(Najlepiej nagrac osobne sesje, np.:) Tj
+T*
+(01_connect_and_send_red.pcapng) Tj
+T*
+(02_send_green.pcapng) Tj
+T*
+(03_restart_app_and_send_test_image.pcapng) Tj
+T*
+(Im mniej zbednych klikniec w oficjalnym programie, tym latwiejsza analiza.) Tj
+T*
+(Najbardziej wartosciowy trace zawiera tylko: start programu, wykrycie urzadzenia, upload) Tj
+T*
+(jednego obrazu, upload drugiego obrazu.) Tj
+T*
+() Tj
+T*
+(CO POTEM SPRAWDZIC W WIRESHARK) Tj
+T*
+(1. Otworzyc plik PCAPNG w Wireshark.) Tj
+T*
+(2. Znalezc urzadzenie po VID:PID 0416:5408.) Tj
+T*
+(3. Zanotowac device address nadany przez hosta.) Tj
+ET
+BT
+/F1 10 Tf
+72 36 Td
+(Strona 1/2) Tj
+ET
+endstream
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 3 0 R >>
+endobj
+5 0 obj
+<< /Length 1346 >>
+stream
+BT
+/F1 12 Tf
+14 TL
+72 780 Td
+(4. Uzyc filtra display filter, np.:) Tj
+T*
+(usb.device_address == X) Tj
+T*
+(lub bardziej zawazajaco:) Tj
+T*
+(usb.device_address == X && \(usb.endpoint_address == 0x09 || usb.endpoint_address ==) Tj
+T*
+(0x81\)) Tj
+T*
+() Tj
+T*
+(CZEGO SZUKAC W TRACE) Tj
+T*
+(1. Pierwszych control transfer po wykryciu urzadzenia.) Tj
+T*
+(2. Pierwszych bulk OUT na endpoint 0x09.) Tj
+T*
+(3. Odpowiedzi bulk IN na endpoint 0x81.) Tj
+T*
+(4. Powtarzalnych naglowkow pakietow.) Tj
+T*
+(5. Rozmiarow blokow danych: czy ida po 512 bajtow i czy pierwszy pakiet ma inny format.) Tj
+T*
+(6. Roznic miedzy wyslaniem czerwonego i zielonego obrazu.) Tj
+T*
+(Jesli kilka pierwszych bajtow pozostaje stalych, a reszta danych sie zmienia, to zwykle) Tj
+T*
+(oznacza naglowek plus payload obrazu.) Tj
+T*
+() Tj
+T*
+(UWAGI PRAKTYCZNE) Tj
+T*
+(Jesli w capture nic nie widac, przepnij urzadzenie na inny port albo przez USB 2.0 hub.) Tj
+T*
+(USBPcap lapie URB-y, a nie pelny sygnal z drutu. Mimo to do odtworzenia hostowego) Tj
+T*
+(protokolu zwykle to wystarcza.) Tj
+T*
+() Tj
+T*
+(CO PRZEKAZAC DALEJ) Tj
+T*
+(1. Sam plik PCAPNG.) Tj
+T*
+(2. Krotka notatke, ktory trace odpowiada ktorej akcji.) Tj
+T*
+(3. Informacje, jaki obraz byl wysylany.) Tj
+T*
+(4. Informacje, czy urzadzenie bylo przepinane miedzy probami.) Tj
+T*
+() Tj
+ET
+BT
+/F1 10 Tf
+72 36 Td
+(Strona 2/2) Tj
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 5 0 R >>
+endobj
+7 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000085 00000 n 
+0000000148 00000 n 
+0000002322 00000 n 
+0000002448 00000 n 
+0000003846 00000 n 
+0000003972 00000 n 
+trailer
+<< /Size 8 /Root 7 0 R >>
+startxref
+4021
+%%EOF

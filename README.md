@@ -1,0 +1,366 @@
+# Thermalright Trofeo LCD — Linux Open Driver
+
+Reverse-engineered driver for the Thermalright Trofeo LCD cooler display.
+
+## Discovered Protocol
+
+| Parameter       | Value                                    |
+|-----------------|------------------------------------------|
+| VID:PID         | `0416:5408` (Winbond Electronics Corp.)  |
+| USB Class       | Vendor Specific (0xFF)                   |
+| EP OUT          | 0x09 (Bulk, 512B max packet)             |
+| EP IN           | 0x81 (Bulk, 512B max packet)             |
+| Resolution      | 1920×462 pixels                          |
+| Image format    | JPEG (baseline, 4:2:0)                   |
+| Frame rate      | ~6.3 FPS (TRCC default)                  |
+| Frame size      | ~310–320 KB per JPEG                     |
+
+### Packet Structure
+
+Each JPEG is split into chunks sent as USB bulk transfers:
+
+```
+Standard chunk: 4096 bytes total
+  [0]       0x01        Command (send image)
+  [1]       0xFF        Marker
+  [2..5]    uint32 LE   JPEG total size / frame metadata
+  [6]       0x00        Fixed
+  [7]       0xF0        Fixed
+  [8]       0x01        Fixed
+  [9]       0x01        Fixed
+  [10]      N           Frame counter (low byte, wraps)
+  [11]      seq         Sequence within frame (0x00, 0x08, 0x10, ...)
+  [12..15]  0x00        Padding
+  [16..4095]            JPEG data (4080 bytes)
+
+Final chunk:
+  In captures this often appeared as a 2048-byte transfer, but that detail is still
+  the least certain part of the protocol. The driver therefore supports multiple
+  final-packet strategies for live testing:
+  - `auto`: final packet size = 16-byte header + remaining JPEG data
+  - `pad-2048`: zero-pad final packet to 2048 bytes
+  - `pad-4096`: zero-pad final packet to 4096 bytes
+```
+
+After each packet, the host reads a 512-byte ACK from EP1 IN.
+
+## Installation
+
+### Dependencies
+
+```bash
+# Kubuntu / Ubuntu / Debian
+sudo apt install python3-usb python3-pil playerctl
+
+# Or via venv pip
+~/trofeo-venv/bin/pip install pyusb Pillow
+
+# Qt GUI client (Etap 2.3)
+scripts/setup_gui_venv.sh
+
+# Optional but recommended for "Now Playing" widget (MPRIS metadata)
+# (Spotify / Chromium / YT Music web / etc.)
+playerctl -v
+```
+
+### Udev Rule (run without sudo)
+
+```bash
+sudo cp 99-trofeo-lcd.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+After this, unplug and replug the LCD.
+
+### Verify Device
+
+```bash
+lsusb | grep 0416
+# Should show: Bus XXX Device XXX: ID 0416:5408 Winbond Electronics Corp.
+```
+
+## Usage
+
+```bash
+# Test pattern (kolorowe paski)
+python3 trofeo_lcd.py --test
+
+# Test pattern with packet plan printed
+python3 trofeo_lcd.py --test --packet-debug
+
+# Try the 2048-byte padded final packet variant
+python3 trofeo_lcd.py --test --final-packet-mode pad-2048
+
+# Send a custom image
+python3 trofeo_lcd.py my_image.png
+
+# Send an existing JPEG byte-for-byte without re-encoding
+python3 trofeo_lcd.py --raw-jpeg-passthrough reference_frame_trcc.jpg
+
+# System monitoring mode (auto-refresh)
+python3 trofeo_lcd.py --monitor
+
+# Loop an image every 2 seconds
+python3 trofeo_lcd.py --loop --interval 2.0 wallpaper.jpg
+
+# Lower JPEG quality for faster transfers
+python3 trofeo_lcd.py --monitor --quality 70
+```
+
+W trybie `--monitor` driver pokazuje realne dane z Linuxa:
+- CPU usage (delta `/proc/stat`, bez blokującego sleep)
+- per-core summary (avg/max)
+- CPU frequency (`/proc/cpuinfo`)
+- CPU temperature (best-effort z `thermal`/`hwmon`)
+- load average (`/proc/loadavg`)
+
+## Etap 2.1: Service Runtime (systemd user)
+
+Ten etap uruchamia stabilny replay w tle (auto-restart + log do pliku), bez ręcznego odpalania długiej komendy.
+
+### 1) Instalacja user service
+
+```bash
+scripts/trofeo_service.sh install
+```
+
+To tworzy:
+- `~/.config/systemd/user/trofeo-lcd.service`
+- lokalny config: `.trofeo-service.env` (na bazie `.trofeo-service.env.example`)
+
+### 2) Start / status / logi
+
+```bash
+scripts/trofeo_service.sh start
+scripts/trofeo_service.sh status
+scripts/trofeo_service.sh logs
+```
+
+Uwaga:
+- Dla `systemd --user` nie używaj `sudo`.
+- Jeśli `start` nie powiedzie się, skrypt automatycznie pokaże `status` i ostatnie linie `journalctl`.
+
+Log plikowy:
+- `~/.local/state/open-trofeo-lcd/service.log`
+
+### 3) Autostart po zalogowaniu
+
+```bash
+scripts/trofeo_service.sh enable
+```
+
+### 4) Stop / restart
+
+```bash
+scripts/trofeo_service.sh stop
+scripts/trofeo_service.sh restart
+```
+
+### Konfiguracja
+
+Edytuj `.trofeo-service.env`:
+- `PCAP_FILE` (domyślnie `dzis.pcapng`)
+- `FRAME_INDEX`
+- timingi: `ACK_TIMEOUT_MS`, `INTER_PACKET_DELAY`, `FRAME_DELAY`
+- retry połączenia: `CONNECT_RETRIES`, `CONNECT_RETRY_DELAY`
+
+## Etap 2.2: Backend API (pod Qt GUI)
+
+Backend wystawia lokalne HTTP API i sam zarządza workerem replay.
+
+### 1) Instalacja i start backendu
+
+```bash
+scripts/trofeo_backend_service.sh install
+scripts/trofeo_backend_service.sh start
+scripts/trofeo_backend_service.sh status
+scripts/trofeo_backend_service.sh logs
+```
+
+Uwaga:
+- `trofeo_backend_service.sh start` zatrzymuje starą usługę `trofeo-lcd.service`, żeby uniknąć `Resource busy`.
+- Dla `systemd --user` nie używaj `sudo`.
+
+### 2) Najważniejsze endpointy
+
+```bash
+# status backendu + worker'a
+curl -s http://127.0.0.1:18777/v1/status
+
+# start pętli replay
+curl -s -X POST http://127.0.0.1:18777/v1/start
+
+# stop pętli replay
+curl -s -X POST http://127.0.0.1:18777/v1/stop
+
+# zmiana klatki (restart worker'a jeśli działa)
+curl -s -X POST http://127.0.0.1:18777/v1/set-frame \
+  -H 'Content-Type: application/json' \
+  -d '{"frame_index": 10}'
+
+# wysyłka pojedynczego obrazu i powrót do pętli
+curl -s -X POST http://127.0.0.1:18777/v1/send-image \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"reference_frame_trcc.jpg","raw_jpeg_passthrough":false,"resume_loop":false}'
+```
+
+### 3) Konfiguracja backendu
+
+Plik: `.trofeo-backend.env`
+- `HOST`, `PORT`
+- `PCAP_FILE`, `FRAME_INDEX`
+- timingi/retry: `ACK_TIMEOUT_MS`, `INTER_PACKET_DELAY`, `FRAME_DELAY`, `CONNECT_RETRIES`, `CONNECT_RETRY_DELAY`
+- `THEMES_FILE` (domyślnie `.trofeo-themes.json`)
+- `PLAYLIST_FILE` (domyślnie `.trofeo-playlist.json`)
+- `AUTOSTART=1` uruchamia replay od razu po starcie backendu
+
+## Etap 2.3: Qt GUI Client
+
+Minimalny panel Qt sterujący backendem API:
+- status runtime (`mode/running/pid/uptime/error`)
+- `start/stop/restart/scan`
+- zmiana `frame_index`
+- `send-image`
+- edycja podstawowego configu backendu (`pcap`, timingi)
+
+### Start GUI
+
+```bash
+scripts/run_trofeo_gui.sh
+```
+
+Opcjonalnie inny URL backendu:
+
+```bash
+scripts/run_trofeo_gui.sh http://127.0.0.1:18777
+```
+
+Pliki:
+- `trofeo_gui.py`
+- `scripts/run_trofeo_gui.sh`
+- `scripts/setup_gui_venv.sh`
+
+## Etap 2.4: Theme Manager
+
+Backend i GUI mają teraz manager presetów (theme):
+- zapis presetów do pliku `.trofeo-themes.json`
+- `add/update/remove`
+- `apply` wybranego theme jednym kliknięciem
+
+Nowe endpointy API:
+
+```bash
+# lista theme
+curl -s http://127.0.0.1:18777/v1/themes
+
+# dodanie/aktualizacja theme
+curl -s -X POST http://127.0.0.1:18777/v1/themes/add \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"dark_ref","path":"reference_frame_trcc.jpg","raw_jpeg_passthrough":false}'
+
+# usunięcie theme
+curl -s -X POST http://127.0.0.1:18777/v1/themes/remove \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"dark_ref"}'
+
+# apply theme (opcjonalnie wznowienie loop)
+curl -s -X POST http://127.0.0.1:18777/v1/themes/apply \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"dark_ref","resume_loop":false}'
+
+# apply z większym timeoutem requestu API (opcjonalnie)
+curl -s -X POST http://127.0.0.1:18777/v1/themes/apply \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"dark_ref","resume_loop":false,"timeout_s":90}'
+```
+
+## Etap 2.5: Playlist / Scheduler
+
+Backend i GUI obsługują playlistę theme (animacja przez sekwencyjne przełączanie presetów):
+- lista pozycji `{name, duration_s}`
+- `start/stop` playlisty
+- zapis do `.trofeo-playlist.json`
+
+Endpointy API:
+
+```bash
+# podgląd playlisty
+curl -s http://127.0.0.1:18777/v1/playlist
+
+# dodanie pozycji (theme musi istnieć)
+curl -s -X POST http://127.0.0.1:18777/v1/playlist/add \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"dark_ref","duration_s":3.5}'
+
+# usunięcie pozycji po indeksie
+curl -s -X POST http://127.0.0.1:18777/v1/playlist/remove \
+  -H 'Content-Type: application/json' \
+  -d '{"index":0}'
+
+# start/stop schedulera
+curl -s -X POST http://127.0.0.1:18777/v1/playlist/start
+curl -s -X POST http://127.0.0.1:18777/v1/playlist/stop
+```
+
+## Etap 2.6: Bundle Import / Export
+
+Bundle to snapshot konfiguracji `themes + playlist` do jednego pliku JSON.
+
+Endpointy API:
+
+```bash
+# eksport bundle jako JSON w odpowiedzi
+curl -s http://127.0.0.1:18777/v1/bundle/export
+
+# zapis bundle do pliku
+curl -s -X POST http://127.0.0.1:18777/v1/bundle/save \
+  -H 'Content-Type: application/json' \
+  -d '{"path":".trofeo-bundle.json"}'
+
+# wczytanie bundle (replace)
+curl -s -X POST http://127.0.0.1:18777/v1/bundle/load \
+  -H 'Content-Type: application/json' \
+  -d '{"path":".trofeo-bundle.json","merge":false}'
+
+# wczytanie bundle (merge)
+curl -s -X POST http://127.0.0.1:18777/v1/bundle/load \
+  -H 'Content-Type: application/json' \
+  -d '{"path":".trofeo-bundle.json","merge":true}'
+```
+
+## Troubleshooting
+
+**Device not found:**
+- Check `lsusb | grep 0416`
+- Make sure no other program (e.g. TRCC under Wine) is using the device
+- Try `sudo python3 trofeo_lcd.py --test`
+
+**Permission denied:**
+- Install the udev rule (see above)
+- Or run with `sudo`
+
+**Image does not change at all:**
+- Try `--final-packet-mode pad-2048`
+- If that still fails, try `--final-packet-mode pad-4096`
+- Compare packet plans with `--packet-debug`
+- Per-packet ACK is required and is now the default behavior
+- Also test a small delay, e.g. `--inter-packet-delay 0.01`
+
+**Image looks wrong:**
+- The LCD is 1920×462 — ultra-wide. Images are auto-resized
+- Try `--quality 90` for better image quality
+- If you have a known-good TRCC JPEG, use `--raw-jpeg-passthrough` to test USB protocol separately from JPEG generation
+
+## How This Was Reverse-Engineered
+
+1. USBPcap + Wireshark on Windows, capturing while TRCC was running
+2. The device appeared on a separate USB root hub (USBPcap1) from where it was physically plugged in (USBPcap4) — the hub (Terminus Tech 1a40:0101) routed it there
+3. Analysis of 83,512 packets revealed 524 JPEG frames sent at ~6.3 FPS
+4. Each frame is a standard baseline JPEG, 1920×462, split into USB bulk transfers with a 16-byte proprietary header
+5. No separate complex init sequence was identified in the capture; the main remaining uncertainty is the exact meaning of a few header bytes and the final packet shape
+
+## License
+
+This is an independent reverse-engineering effort for interoperability purposes.
+Use at your own risk.

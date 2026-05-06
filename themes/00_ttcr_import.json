@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "00",
+    "description": "Motyw zaimportowany z TTCR (Windows) w trybie best-effort.",
+    "author": "TTCR Import",
+    "tags": [
+      "ttcr-import",
+      "windows"
+    ]
+  },
+  "canvas": {
+    "width": 1920,
+    "height": 462,
+    "rotation": 180
+  },
+  "background": {
+    "kind": "image",
+    "base_color": [
+      9,
+      14,
+      22
+    ],
+    "accent_color": [
+      20,
+      34,
+      48
+    ],
+    "texture_alpha": 0.35,
+    "panels": [],
+    "path": "00_ttcr_import_assets/2026-04-28/ttcr_import/background/00_ttcr_import_background_00.png",
+    "fit": "cover",
+    "opacity": 1.0
+  },
+  "texts": [],
+  "stats": [],
+  "images": [],
+  "effects": {
+    "show_grid": false,
+    "show_safe_area": false,
+    "animation": {
+      "enabled": false,
+      "use_as_background": false,
+      "fps": 12.0,
+      "current_frame": 0,
+      "loop": true,
+      "frame_paths": [],
+      "frame_durations_ms": []
+    },
+    "motion_tracks": [],
+    "import_report": {
+      "source_path": "/home/abigor/Workspace/Open-Trofeo-LCD/TTCR_Windows/Theme172640/Theme1/00.png",
+      "source_canvas": [
+        1920,
+        462
+      ],
+      "imported_layout_files": [],
+      "preserved_animations": [],
+      "extracted_frames": []
+    }
+  }
+}

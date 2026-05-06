@@ -1,0 +1,568 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Focus Monitor",
+    "description": "Układ z dużymi panelami i mocniejszym akcentem na kluczowe statystyki.",
+    "author": "Open-Trofeo-LCD",
+    "tags": [
+      "monitor",
+      "focus",
+      "accent"
+    ]
+  },
+  "canvas": {
+    "width": 1920,
+    "height": 462,
+    "rotation": 180
+  },
+  "background": {
+    "kind": "generated",
+    "base_color": [
+      8,
+      12,
+      18
+    ],
+    "accent_color": [
+      38,
+      84,
+      104
+    ],
+    "texture_alpha": 0.4,
+    "panels": [
+      {
+        "rect": [
+          24,
+          18,
+          1872,
+          56
+        ],
+        "radius": 14,
+        "fill": [
+          0,
+          0,
+          0
+        ],
+        "z_index": 50,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "rect": [
+          24,
+          90,
+          920,
+          292
+        ],
+        "radius": 18,
+        "fill": [
+          0,
+          0,
+          0
+        ],
+        "z_index": 50,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "rect": [
+          966,
+          90,
+          930,
+          292
+        ],
+        "radius": 18,
+        "fill": [
+          0,
+          0,
+          0
+        ],
+        "z_index": 50,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "rect": [
+          980,
+          82,
+          330,
+          108
+        ],
+        "radius": 18,
+        "fill": [
+          0,
+          0,
+          0
+        ],
+        "z_index": 50,
+        "visible": false,
+        "locked": false
+      },
+      {
+        "rect": [
+          20,
+          404,
+          600,
+          46
+        ],
+        "radius": 12,
+        "fill": [
+          0,
+          0,
+          0
+        ],
+        "z_index": 50,
+        "visible": false,
+        "locked": false
+      }
+    ]
+  },
+  "texts": [
+    {
+      "id": "host_title",
+      "text": "HOST",
+      "x": 40,
+      "y": 20,
+      "box_width": 320,
+      "box_height": 48,
+      "font_family": "DejaVu Sans",
+      "font_size": 28,
+      "color": [
+        0,
+        200,
+        255
+      ],
+      "align": "left",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "cpu_title",
+      "text": "CPU",
+      "x": 40,
+      "y": 90,
+      "box_width": 320,
+      "box_height": 48,
+      "font_family": "DejaVu Sans",
+      "font_size": 28,
+      "color": [
+        255,
+        100,
+        100
+      ],
+      "align": "left",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "memory_title",
+      "text": "MEMORY",
+      "x": 500,
+      "y": 90,
+      "box_width": 320,
+      "box_height": 48,
+      "font_family": "DejaVu Sans",
+      "font_size": 28,
+      "color": [
+        100,
+        255,
+        100
+      ],
+      "align": "left",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "uptime_title",
+      "text": "UPTIME",
+      "x": 1000,
+      "y": 90,
+      "box_width": 320,
+      "box_height": 48,
+      "font_family": "DejaVu Sans",
+      "font_size": 28,
+      "color": [
+        255,
+        200,
+        100
+      ],
+      "align": "left",
+      "z_index": 200,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "footer_brand",
+      "text": "Trofeo LCD - Linux Open Driver",
+      "x": 40,
+      "y": 422,
+      "box_width": 320,
+      "box_height": 48,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "color": [
+        100,
+        100,
+        120
+      ],
+      "align": "left",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "stats": [
+    {
+      "id": "hostname",
+      "label": "",
+      "source": "hostname",
+      "format": "{value}",
+      "x": 190,
+      "y": 24,
+      "box_width": 360,
+      "box_height": 42,
+      "font_family": "DejaVu Sans",
+      "font_size": 36,
+      "label_color": [
+        0,
+        200,
+        255
+      ],
+      "value_color": [
+        0,
+        200,
+        255
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "clock",
+      "label": "",
+      "source": "time_hms",
+      "format": "{value}",
+      "x": 1608,
+      "y": 24,
+      "box_width": 240,
+      "box_height": 42,
+      "font_family": "DejaVu Sans",
+      "font_size": 36,
+      "label_color": [
+        200,
+        200,
+        200
+      ],
+      "value_color": [
+        200,
+        200,
+        200
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "cpu_usage",
+      "label": "Usage",
+      "source": "cpu_usage_percent",
+      "format": "{value}",
+      "x": 42,
+      "y": 150,
+      "box_width": 360,
+      "box_height": 38,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "cpu_cores",
+      "label": "Cores",
+      "source": "cpu_core_count",
+      "format": "{value}",
+      "x": 42,
+      "y": 192,
+      "box_width": 360,
+      "box_height": 38,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "cpu_avg",
+      "label": "Avg",
+      "source": "cpu_core_avg_percent",
+      "format": "{value}",
+      "x": 42,
+      "y": 234,
+      "box_width": 360,
+      "box_height": 38,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "cpu_max",
+      "label": "Max",
+      "source": "cpu_core_max_percent",
+      "format": "{value}",
+      "x": 42,
+      "y": 276,
+      "box_width": 360,
+      "box_height": 38,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "cpu_freq",
+      "label": "Freq",
+      "source": "cpu_freq_ghz",
+      "format": "{value}",
+      "x": 40,
+      "y": 238,
+      "box_width": 320,
+      "box_height": 40,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "cpu_temp",
+      "label": "Temp",
+      "source": "cpu_temp_c",
+      "format": "{value}",
+      "x": 240,
+      "y": 238,
+      "box_width": 320,
+      "box_height": 40,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "loadavg",
+      "label": "Load",
+      "source": "load_average",
+      "format": "{value}",
+      "x": 40,
+      "y": 266,
+      "box_width": 320,
+      "box_height": 40,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "mem_percent",
+      "label": "Used",
+      "source": "mem_percent",
+      "format": "{value}",
+      "x": 500,
+      "y": 130,
+      "box_width": 320,
+      "box_height": 40,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "mem_used",
+      "label": "MB used",
+      "source": "mem_used_mb",
+      "format": "{value}",
+      "x": 500,
+      "y": 158,
+      "box_width": 320,
+      "box_height": 40,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "uptime",
+      "label": "",
+      "source": "uptime_human",
+      "format": "{value}",
+      "x": 1000,
+      "y": 130,
+      "box_width": 320,
+      "box_height": 40,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "label_color": [
+        220,
+        220,
+        220
+      ],
+      "value_color": [
+        220,
+        220,
+        220
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": false,
+      "locked": false
+    }
+  ],
+  "images": [
+    {
+      "id": "image_0",
+      "path": "reference_frame_trcc.jpg",
+      "rect": [
+        0,
+        0,
+        1912,
+        464
+      ],
+      "fit": "contain",
+      "opacity": 1.0,
+      "rotation": 0,
+      "z_index": 100,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "image_1",
+      "path": "focus_monitor_assets/2026-04-28/image/focus_monitor_dashboard_strumien_image_trofeo_2.jpg",
+      "rect": [
+        0,
+        0,
+        1920,
+        462
+      ],
+      "fit": "cover",
+      "opacity": 1.0,
+      "rotation": 0,
+      "z_index": 100,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "effects": {
+    "show_grid": false,
+    "show_safe_area": false
+  }
+}

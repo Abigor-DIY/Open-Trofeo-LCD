@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Open Trofeo LCD
+Comment=Driver and Customizer for Thermalright Trofeo LCD
+Exec=/home/abigor/Workspace/Open-Trofeo-LCD/main.py
+Icon=/home/abigor/Workspace/Open-Trofeo-LCD/cpu_preview.png
+Terminal=false
+Type=Application
+Categories=Utility;System;
+Keywords=LCD;Thermalright;Trofeo;Driver;
+StartupNotify=true
+StartupWMClass=trofeo_gui.py
