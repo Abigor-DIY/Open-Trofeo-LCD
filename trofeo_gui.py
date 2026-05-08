@@ -177,6 +177,10 @@ UI_THEMES = {
     "Graphite": {"primary": "#596273", "primary_border": "#7d889a", "accent": "#c7d2e2"},
     "Emerald": {"primary": "#1f8f6b", "primary_border": "#34b087", "accent": "#7bf0c9"},
 }
+UI_LANGUAGES = {
+    "English": "en",
+    "Polski": "pl",
+}
 PROJECT_REPOSITORY_URL = "https://github.com/Abigor-DIY/Open-Trofeo-LCD"
 PROJECT_SPONSOR_URL = "https://github.com/sponsors/Abigor-DIY"
 
@@ -2043,17 +2047,17 @@ class TrofeoGui(QMainWindow):
         sidebar_layout.addLayout(brand_row)
         sidebar_layout.addWidget(self.brand_sub)
 
-        self.nav_library_btn = QPushButton("🗂  Galeria\nmotywów")
-        self.nav_designer_btn = QPushButton("✎  Projektant\nmotywów")
+        self.nav_library_btn = QPushButton("🗂  Theme\nGallery")
+        self.nav_designer_btn = QPushButton("✎  Theme\nDesigner")
         self.nav_system_btn = QPushButton("◉  System")
-        self.nav_logs_btn = QPushButton("☰  Logi")
-        self.nav_config_btn = QPushButton("⚙  Konfiguracja")
+        self.nav_logs_btn = QPushButton("☰  Logs")
+        self.nav_config_btn = QPushButton("⚙  Configuration")
         self._nav_button_meta = {
-            self.nav_library_btn: ("🗂", "Galeria motywów"),
-            self.nav_designer_btn: ("✎", "Projektant motywów"),
+            self.nav_library_btn: ("🗂", "Theme Gallery"),
+            self.nav_designer_btn: ("✎", "Theme Designer"),
             self.nav_system_btn: ("◉", "System"),
-            self.nav_logs_btn: ("☰", "Logi"),
-            self.nav_config_btn: ("⚙", "Konfiguracja"),
+            self.nav_logs_btn: ("☰", "Logs"),
+            self.nav_config_btn: ("⚙", "Configuration"),
         }
         self._shell_nav_buttons = [
             self.nav_library_btn,
@@ -2090,63 +2094,72 @@ class TrofeoGui(QMainWindow):
         outer.setSpacing(12)
         shell_layout.addWidget(content, 1)
 
-        chrome_box = QGroupBox("Sterowanie")
+        chrome_box = QGroupBox("Control")
         self.chrome_box = chrome_box
         chrome_box.setObjectName("shellHeader")
         chrome_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         chrome_layout = QHBoxLayout(chrome_box)
-        chrome_layout.setContentsMargins(16, 10, 16, 10)
-        chrome_layout.setSpacing(10)
+        chrome_layout.setContentsMargins(16, 8, 16, 8)
+        chrome_layout.setSpacing(9)
 
         title_label = QLabel("Open Trofeo LCD")
         title_label.setObjectName("shellTitleLabel")
-        title_sub = QLabel("Sterowanie LCD i motywami.")
+        title_sub = QLabel("LCD control and themes.")
         title_sub.setObjectName("shellTitleMeta")
+        self.shell_title_sub = title_sub
         title_stack = QVBoxLayout()
         title_stack.setContentsMargins(0, 0, 0, 0)
-        title_stack.setSpacing(2)
+        title_stack.setSpacing(1)
         title_stack.addWidget(title_label)
         title_stack.addWidget(title_sub)
         self.ui_mode_combo = QComboBox()
         self.ui_mode_combo.addItems(["Dark", "Light"])
         self.ui_theme_combo = QComboBox()
         self.ui_theme_combo.addItems(list(UI_THEMES.keys()))
+        self.ui_theme_combo.hide()
         self.ui_scale_combo = QComboBox()
         for value in (70, 80, 90, 100, 110, 125, 140):
             self.ui_scale_combo.addItem(f"{value}%", value)
         self.ui_scale_combo.setCurrentText("100%")
-        for combo in (self.ui_mode_combo, self.ui_theme_combo, self.ui_scale_combo):
+        for combo in (self.ui_mode_combo, self.ui_scale_combo):
             combo.setMinimumHeight(34)
             combo.setMaxVisibleItems(8)
 
-        self.header_connection_label = QLabel("● Rozłączono")
+        self.header_connection_label = QLabel("● Disconnected")
         self.header_connection_label.setObjectName("headerStatusBadge")
         self.header_device_combo = QComboBox()
         self.header_device_combo.addItem("Trofeo LCD")
         self.header_device_combo.setMinimumHeight(34)
-        self.header_ready_label = QLabel("Start")
+        self.header_ready_label = QLabel("Ready")
         self.header_ready_label.setObjectName("headerReadyBadge")
-        self.header_donate_btn = QPushButton("Donate / Wspomóż")
+        self.header_language_combo = QComboBox()
+        for label, code in UI_LANGUAGES.items():
+            self.header_language_combo.addItem(label, code)
+        self.header_language_combo.setMinimumHeight(34)
+        self.header_donate_btn = QPushButton("Donate / Support")
         self.header_donate_btn.setObjectName("primaryButton")
         self.header_donate_btn.setMinimumHeight(34)
         self.header_donate_btn.clicked.connect(lambda: self._open_external_link(PROJECT_SPONSOR_URL, "strony wsparcia"))
-        self.header_donate_btn.setToolTip("Otwórz GitHub Sponsors dla Open Trofeo LCD")
+        self.header_donate_btn.setToolTip("Open GitHub Sponsors for Open Trofeo LCD")
 
         chrome_layout.addLayout(title_stack, 1)
-        mode_label = QLabel("Tryb")
+        mode_label = QLabel("Mode")
         mode_label.setObjectName("headerFieldLabel")
-        theme_label = QLabel("Motyw")
-        theme_label.setObjectName("headerFieldLabel")
-        scale_label = QLabel("Skala")
+        self.header_mode_label = mode_label
+        scale_label = QLabel("Scale")
         scale_label.setObjectName("headerFieldLabel")
-        conn_label = QLabel("Połączenie")
+        self.header_scale_label = scale_label
+        conn_label = QLabel("Connection")
         conn_label.setObjectName("headerFieldLabel")
-        device_label = QLabel("Urządzenie")
+        self.header_conn_label = conn_label
+        device_label = QLabel("Device")
         device_label.setObjectName("headerFieldLabel")
+        self.header_device_label = device_label
+        language_label = QLabel("Language")
+        language_label.setObjectName("headerFieldLabel")
+        self.header_language_label = language_label
         chrome_layout.addWidget(mode_label)
         chrome_layout.addWidget(self.ui_mode_combo)
-        chrome_layout.addWidget(theme_label)
-        chrome_layout.addWidget(self.ui_theme_combo)
         chrome_layout.addWidget(scale_label)
         chrome_layout.addWidget(self.ui_scale_combo)
         chrome_layout.addSpacing(6)
@@ -2154,6 +2167,8 @@ class TrofeoGui(QMainWindow):
         chrome_layout.addWidget(self.header_connection_label)
         chrome_layout.addWidget(device_label)
         chrome_layout.addWidget(self.header_device_combo)
+        chrome_layout.addWidget(language_label)
+        chrome_layout.addWidget(self.header_language_combo)
         chrome_layout.addWidget(self.header_ready_label)
         chrome_layout.addSpacing(8)
         chrome_layout.addWidget(self.header_donate_btn)
@@ -2184,13 +2199,13 @@ class TrofeoGui(QMainWindow):
         logs_layout.setContentsMargins(0, 0, 0, 0)
 
         tabs.addTab(runtime_tab, "System")
-        tabs.addTab(studio_tab, "Projektant motywów")
-        tabs.addTab(automation_tab, "Konfiguracja")
-        tabs.addTab(logs_tab, "Logi")
+        tabs.addTab(studio_tab, "Theme Designer")
+        tabs.addTab(automation_tab, "Configuration")
+        tabs.addTab(logs_tab, "Logs")
         tabs.tabBar().hide()
         self.ui_mode_combo.currentTextChanged.connect(self.apply_ui_chrome)
-        self.ui_theme_combo.currentTextChanged.connect(self.apply_ui_chrome)
         self.ui_scale_combo.currentIndexChanged.connect(self.apply_ui_chrome)
+        self.header_language_combo.currentTextChanged.connect(self._apply_language_selection)
         tabs.currentChanged.connect(lambda _idx: (self._animate_widget_fade(tabs.currentWidget()), self._sync_shell_navigation()))
         self.nav_system_btn.clicked.connect(lambda: self._go_system())
         self.nav_logs_btn.clicked.connect(lambda: self._go_logs())
@@ -2605,8 +2620,8 @@ class TrofeoGui(QMainWindow):
         config_intro_layout = QHBoxLayout(config_intro)
         config_intro_layout.setContentsMargins(18, 16, 18, 16)
         config_intro_text = QLabel(
-            "Konfiguracja zbiera ustawienia interfejsu, preferencje LCD i integracje w jednym miejscu. "
-            "Zmiany wizualne aplikacji są synchronizowane z górnym paskiem sterowania."
+            "Configuration centralizes interface settings, LCD preferences and integrations in one place. "
+            "App theme management now lives here instead of the top control bar."
         )
         config_intro_text.setObjectName("studioHeroText")
         config_intro_text.setWordWrap(True)
@@ -2617,14 +2632,14 @@ class TrofeoGui(QMainWindow):
         config_grid.setHorizontalSpacing(14)
         config_grid.setVerticalSpacing(14)
 
-        autostart_box = QGroupBox("Autostart")
+        autostart_box = QGroupBox("Startup")
         autostart_box.setObjectName("configCardBox")
         autostart_layout = QVBoxLayout(autostart_box)
-        self.cfg_start_with_system_chk = QCheckBox("Uruchamiaj z systemem")
-        self.cfg_minimize_to_tray_chk = QCheckBox("Minimalizuj do zasobnika przy starcie")
-        self.cfg_auto_connect_chk = QCheckBox("Automatycznie łącz z urządzeniem")
-        self.cfg_restore_project_chk = QCheckBox("Przywróć ostatni projekt po uruchomieniu")
-        self.cfg_check_updates_chk = QCheckBox("Sprawdzaj aktualizacje przy starcie")
+        self.cfg_start_with_system_chk = QCheckBox("Launch with system")
+        self.cfg_minimize_to_tray_chk = QCheckBox("Minimize to tray on startup")
+        self.cfg_auto_connect_chk = QCheckBox("Auto-connect to device")
+        self.cfg_restore_project_chk = QCheckBox("Restore last project on startup")
+        self.cfg_check_updates_chk = QCheckBox("Check for updates on startup")
         self.cfg_start_with_system_chk.setChecked(True)
         self.cfg_minimize_to_tray_chk.setChecked(True)
         self.cfg_auto_connect_chk.setChecked(True)
@@ -2640,7 +2655,8 @@ class TrofeoGui(QMainWindow):
         autostart_layout.addStretch(1)
         config_grid.addWidget(autostart_box, 0, 0)
 
-        appearance_box = QGroupBox("Wygląd Aplikacji")
+        appearance_box = QGroupBox("App Appearance")
+        self.appearance_box = appearance_box
         appearance_box.setObjectName("configCardBox")
         appearance_form = QFormLayout(appearance_box)
         self.cfg_ui_theme_combo = QComboBox()
@@ -2653,18 +2669,18 @@ class TrofeoGui(QMainWindow):
         self.cfg_font_scale_slider = QSlider(Qt.Horizontal)
         self.cfg_font_scale_slider.setRange(80, 140)
         self.cfg_font_scale_slider.setValue(100)
-        self.cfg_animations_chk = QCheckBox("Efekty animacji")
+        self.cfg_animations_chk = QCheckBox("Animation effects")
         self.cfg_animations_chk.setChecked(True)
-        self.cfg_compact_layout_chk = QCheckBox("Kompaktowy układ")
-        appearance_form.addRow("Motyw aplikacji:", self.cfg_ui_theme_combo)
-        appearance_form.addRow("Tryb:", self.cfg_ui_mode_combo)
-        appearance_form.addRow("Skala interfejsu:", self.cfg_ui_scale_combo)
-        appearance_form.addRow("Rozmiar czcionki:", self.cfg_font_scale_slider)
-        appearance_form.addRow("Efekty animacji:", self.cfg_animations_chk)
-        appearance_form.addRow("Kompaktowy układ:", self.cfg_compact_layout_chk)
+        self.cfg_compact_layout_chk = QCheckBox("Compact layout")
+        appearance_form.addRow("App theme:", self.cfg_ui_theme_combo)
+        appearance_form.addRow("Mode:", self.cfg_ui_mode_combo)
+        appearance_form.addRow("Interface scale:", self.cfg_ui_scale_combo)
+        appearance_form.addRow("Font size:", self.cfg_font_scale_slider)
+        appearance_form.addRow("Animation effects:", self.cfg_animations_chk)
+        appearance_form.addRow("Compact layout:", self.cfg_compact_layout_chk)
         config_grid.addWidget(appearance_box, 0, 1)
 
-        lcd_box = QGroupBox("Preferencje LCD")
+        lcd_box = QGroupBox("LCD Preferences")
         lcd_box.setObjectName("configCardBox")
         lcd_form = QFormLayout(lcd_box)
         self.cfg_brightness_slider = QSlider(Qt.Horizontal)
@@ -2676,38 +2692,39 @@ class TrofeoGui(QMainWindow):
         self.cfg_refresh_combo = QComboBox()
         self.cfg_refresh_combo.addItems(["0.5 s", "1.0 s", "1.5 s", "2.0 s"])
         self.cfg_refresh_combo.setCurrentText("1.5 s")
-        self.cfg_smoothing_chk = QCheckBox("Wygładzanie wykresów")
+        self.cfg_smoothing_chk = QCheckBox("Smooth charts")
         self.cfg_smoothing_chk.setChecked(True)
         self.cfg_start_layout_combo = QComboBox()
-        self.cfg_start_layout_combo.addItems(["Ostatni użyty", "Dashboard", "Minimal", "Focus"])
-        lcd_form.addRow("Domyślna jasność:", self.cfg_brightness_slider)
-        lcd_form.addRow("Domyślny FPS podglądu:", self.cfg_preview_fps_combo)
-        lcd_form.addRow("Odświeżanie danych:", self.cfg_refresh_combo)
-        lcd_form.addRow("Wygładzanie wykresów:", self.cfg_smoothing_chk)
-        lcd_form.addRow("Układ startowy:", self.cfg_start_layout_combo)
+        self.cfg_start_layout_combo.addItems(["Last used", "Dashboard", "Minimal", "Focus"])
+        lcd_form.addRow("Default brightness:", self.cfg_brightness_slider)
+        lcd_form.addRow("Default preview FPS:", self.cfg_preview_fps_combo)
+        lcd_form.addRow("Data refresh:", self.cfg_refresh_combo)
+        lcd_form.addRow("Smooth charts:", self.cfg_smoothing_chk)
+        lcd_form.addRow("Startup layout:", self.cfg_start_layout_combo)
         config_grid.addWidget(lcd_box, 0, 2)
 
-        notifications_box = QGroupBox("Powiadomienia i Logi")
+        notifications_box = QGroupBox("Notifications and Logs")
         notifications_box.setObjectName("configCardBox")
         notifications_form = QFormLayout(notifications_box)
-        self.cfg_system_notifications_chk = QCheckBox("Powiadomienia systemowe")
-        self.cfg_backend_alerts_chk = QCheckBox("Alerty błędów backendu")
-        self.cfg_debug_log_chk = QCheckBox("Zapisuj logi debug")
-        self.cfg_log_rotation_chk = QCheckBox("Automatyczna rotacja logów")
+        self.cfg_system_notifications_chk = QCheckBox("System notifications")
+        self.cfg_backend_alerts_chk = QCheckBox("Backend error alerts")
+        self.cfg_debug_log_chk = QCheckBox("Write debug logs")
+        self.cfg_log_rotation_chk = QCheckBox("Automatic log rotation")
         self.cfg_system_notifications_chk.setChecked(True)
         self.cfg_backend_alerts_chk.setChecked(True)
         self.cfg_log_rotation_chk.setChecked(True)
         self.cfg_log_size_combo = QComboBox()
         self.cfg_log_size_combo.addItems(["25 MB", "50 MB", "100 MB", "250 MB"])
         self.cfg_log_size_combo.setCurrentText("100 MB")
-        notifications_form.addRow("Powiadomienia:", self.cfg_system_notifications_chk)
-        notifications_form.addRow("Alerty backendu:", self.cfg_backend_alerts_chk)
+        notifications_form.addRow("Notifications:", self.cfg_system_notifications_chk)
+        notifications_form.addRow("Backend alerts:", self.cfg_backend_alerts_chk)
         notifications_form.addRow("Debug:", self.cfg_debug_log_chk)
-        notifications_form.addRow("Rotacja logów:", self.cfg_log_rotation_chk)
-        notifications_form.addRow("Maksymalny rozmiar:", self.cfg_log_size_combo)
+        notifications_form.addRow("Log rotation:", self.cfg_log_rotation_chk)
+        notifications_form.addRow("Maximum size:", self.cfg_log_size_combo)
         config_grid.addWidget(notifications_box, 1, 0)
 
-        paths_box = QGroupBox("Ścieżki i Integracja")
+        paths_box = QGroupBox("Paths and Integration")
+        self.paths_box = paths_box
         paths_box.setObjectName("configCardBox")
         paths_form = QFormLayout(paths_box)
         self.cfg_theme_dir_edit = QLineEdit(str((Path.cwd() / "themes").resolve()))
@@ -2719,21 +2736,22 @@ class TrofeoGui(QMainWindow):
         self.cfg_start_device_combo.addItems(["Trofeo LCD"])
         self.cfg_comm_mode_combo = QComboBox()
         self.cfg_comm_mode_combo.addItems(["USB / Serial", "Backend API"])
-        paths_form.addRow("Katalog motywów:", self.cfg_theme_dir_edit)
-        paths_form.addRow("Katalog kopii zapasowych:", self.cfg_backup_dir_edit)
-        paths_form.addRow("Port API:", self.cfg_api_port_spin)
-        paths_form.addRow("Urządzenie startowe:", self.cfg_start_device_combo)
-        paths_form.addRow("Tryb komunikacji:", self.cfg_comm_mode_combo)
+        paths_form.addRow("Themes directory:", self.cfg_theme_dir_edit)
+        paths_form.addRow("Backups directory:", self.cfg_backup_dir_edit)
+        paths_form.addRow("API port:", self.cfg_api_port_spin)
+        paths_form.addRow("Startup device:", self.cfg_start_device_combo)
+        paths_form.addRow("Communication mode:", self.cfg_comm_mode_combo)
         config_grid.addWidget(paths_box, 1, 1, 1, 2)
 
-        quick_cfg_box = QGroupBox("Szybkie Akcje")
+        quick_cfg_box = QGroupBox("Quick Actions")
+        self.quick_cfg_box = quick_cfg_box
         quick_cfg_box.setObjectName("configCardBox")
         quick_cfg_layout = QVBoxLayout(quick_cfg_box)
-        self.cfg_reset_btn = QPushButton("Przywróć domyślne")
-        self.cfg_export_btn = QPushButton("Eksportuj konfigurację")
-        self.cfg_import_btn = QPushButton("Importuj konfigurację")
-        self.cfg_clear_cache_btn = QPushButton("Wyczyść cache")
-        self.cfg_restart_app_btn = QPushButton("Uruchom ponownie aplikację")
+        self.cfg_reset_btn = QPushButton("Restore Defaults")
+        self.cfg_export_btn = QPushButton("Export Configuration")
+        self.cfg_import_btn = QPushButton("Import Configuration")
+        self.cfg_clear_cache_btn = QPushButton("Clear Cache")
+        self.cfg_restart_app_btn = QPushButton("Restart Application")
         self.cfg_reset_btn.clicked.connect(self._reset_configuration_defaults)
         self.cfg_export_btn.clicked.connect(self._export_configuration_file)
         self.cfg_import_btn.clicked.connect(self._import_configuration_file)
@@ -2755,31 +2773,32 @@ class TrofeoGui(QMainWindow):
 
         self.playlist_list = QListWidget()
         self.bundle_path_edit = QLineEdit(".trofeo-bundle.json")
-        automation_tools_box = QGroupBox("Automatyzacja i Bundles")
+        automation_tools_box = QGroupBox("Automation and Bundles")
+        self.automation_tools_box = automation_tools_box
         automation_tools_box.setObjectName("configCardBox")
         automation_tools_layout = QGridLayout(automation_tools_box)
         self.playlist_duration_spin = QDoubleSpinBox()
         self.playlist_duration_spin.setRange(0.5, 3600.0)
         self.playlist_duration_spin.setSingleStep(0.5)
         self.playlist_duration_spin.setValue(15.0)
-        self.playlist_add_btn = QPushButton("Dodaj wybrany motyw do playlisty")
-        self.playlist_remove_btn = QPushButton("Usuń z playlisty")
-        self.playlist_start_btn = QPushButton("Start playlisty")
-        self.playlist_stop_btn = QPushButton("Stop playlisty")
+        self.playlist_add_btn = QPushButton("Add selected theme to playlist")
+        self.playlist_remove_btn = QPushButton("Remove from playlist")
+        self.playlist_start_btn = QPushButton("Start playlist")
+        self.playlist_stop_btn = QPushButton("Stop playlist")
         self.playlist_add_btn.clicked.connect(self.add_playlist_item)
         self.playlist_remove_btn.clicked.connect(self.remove_playlist_item)
         self.playlist_start_btn.clicked.connect(self.start_playlist)
         self.playlist_stop_btn.clicked.connect(self.stop_playlist)
-        self.bundle_merge_chk = QCheckBox("Scal przy imporcie")
-        self.bundle_browse_btn = QPushButton("Wybierz bundle")
-        self.bundle_save_btn = QPushButton("Zapisz bundle")
-        self.bundle_load_btn = QPushButton("Wczytaj bundle")
+        self.bundle_merge_chk = QCheckBox("Merge on import")
+        self.bundle_browse_btn = QPushButton("Choose bundle")
+        self.bundle_save_btn = QPushButton("Save bundle")
+        self.bundle_load_btn = QPushButton("Load bundle")
         self.bundle_browse_btn.clicked.connect(self.browse_bundle_path)
         self.bundle_save_btn.clicked.connect(self.save_bundle)
         self.bundle_load_btn.clicked.connect(self.load_bundle)
-        automation_tools_layout.addWidget(QLabel("Playlista"), 0, 0)
+        automation_tools_layout.addWidget(QLabel("Playlist"), 0, 0)
         automation_tools_layout.addWidget(self.playlist_list, 1, 0, 4, 2)
-        automation_tools_layout.addWidget(QLabel("Czas pozycji (s)"), 0, 2)
+        automation_tools_layout.addWidget(QLabel("Item duration (s)"), 0, 2)
         automation_tools_layout.addWidget(self.playlist_duration_spin, 0, 3)
         automation_tools_layout.addWidget(self.playlist_add_btn, 1, 2, 1, 2)
         automation_tools_layout.addWidget(self.playlist_remove_btn, 2, 2, 1, 2)
@@ -2794,9 +2813,9 @@ class TrofeoGui(QMainWindow):
         automation_layout.addWidget(automation_tools_box)
         cfg_actions_row = QHBoxLayout()
         cfg_actions_row.addStretch(1)
-        self.cfg_cancel_btn = QPushButton("Anuluj")
-        self.cfg_apply_btn = QPushButton("Zastosuj")
-        self.cfg_save_btn = QPushButton("Zapisz ustawienia")
+        self.cfg_cancel_btn = QPushButton("Cancel")
+        self.cfg_apply_btn = QPushButton("Apply")
+        self.cfg_save_btn = QPushButton("Save Settings")
         self.cfg_apply_btn.setObjectName("secondaryAccentButton")
         self.cfg_save_btn.setObjectName("primaryButton")
         self.cfg_cancel_btn.clicked.connect(self._sync_config_ui_controls_from_header)
@@ -2825,7 +2844,7 @@ class TrofeoGui(QMainWindow):
         designer_workspace_layout = QVBoxLayout(designer_workspace_tab)
         designer_workspace_layout.setContentsMargins(0, 0, 0, 0)
         designer_workspace_layout.setSpacing(10)
-        studio_sections_tabs.addTab(library_tab, "Galeria motywów")
+        studio_sections_tabs.addTab(library_tab, "Theme Gallery")
         studio_sections_tabs.addTab(designer_workspace_tab, "Designer")
         self.nav_library_btn.clicked.connect(lambda: self._go_library())
         self.nav_designer_btn.clicked.connect(lambda: self._go_designer())
@@ -2891,36 +2910,36 @@ class TrofeoGui(QMainWindow):
         new_theme_box_layout = QVBoxLayout(self.new_theme_options_box)
         new_theme_box_layout.setContentsMargins(14, 12, 14, 12)
         new_theme_box_layout.setSpacing(6)
-        self.library_summary_label = QLabel("Szybkie akcje galerii motywów")
+        self.library_summary_label = QLabel("Theme gallery quick actions")
         self.library_summary_label.setObjectName("selectionSummaryLabel")
         self.library_summary_label.setWordWrap(False)
         new_theme_box_layout.addWidget(self.library_summary_label)
-        self.new_theme_name_edit = QLineEdit("Nowy Motyw")
+        self.new_theme_name_edit = QLineEdit("New Theme")
         self.new_theme_name_edit.setObjectName("newThemeNameEdit")
-        self.new_theme_name_edit.setPlaceholderText("Np. Mój dashboard")
+        self.new_theme_name_edit.setPlaceholderText("e.g. My Dashboard")
         self.new_theme_template_combo = QComboBox()
         self.new_theme_template_combo.setObjectName("newThemeTemplateCombo")
         for template in THEME_TEMPLATE_CATALOG:
             self.new_theme_template_combo.addItem(template["title"], template["path"])
-        self.new_theme_create_btn = QPushButton("Utwórz motyw")
+        self.new_theme_create_btn = QPushButton("Create Theme")
         self.new_theme_create_btn.setObjectName("newThemeCreateButton")
-        self.new_theme_advanced_btn = QPushButton("Ustawienia pliku")
+        self.new_theme_advanced_btn = QPushButton("File Settings")
         self.new_theme_advanced_btn.setCheckable(True)
-        self.library_refresh_btn = QPushButton("Odśwież")
+        self.library_refresh_btn = QPushButton("Refresh")
         self.library_import_ttcr_btn = QPushButton("Import TTCR")
         self.library_refresh_btn.clicked.connect(self.refresh_themes)
         self.library_import_ttcr_btn.clicked.connect(self.import_ttcr_theme_bundle)
         self.new_theme_path_edit = QLineEdit(str(Path("themes") / "nowy_motyw.json"))
         self.new_theme_path_edit.setObjectName("newThemePathEdit")
-        self.new_theme_browse_btn = QPushButton("Wybierz plik")
+        self.new_theme_browse_btn = QPushButton("Choose File")
         self._new_theme_path_user_edited = False
         new_theme_row = QHBoxLayout()
         new_theme_row.setSpacing(8)
         new_theme_row.addWidget(self.library_import_ttcr_btn)
         new_theme_row.addWidget(self.library_refresh_btn)
-        new_theme_row.addWidget(QLabel("Nazwa"))
+        new_theme_row.addWidget(QLabel("Name"))
         new_theme_row.addWidget(self.new_theme_name_edit, 2)
-        new_theme_row.addWidget(QLabel("Styl"))
+        new_theme_row.addWidget(QLabel("Style"))
         new_theme_row.addWidget(self.new_theme_template_combo, 1)
         new_theme_row.addWidget(self.new_theme_create_btn)
         new_theme_row.addWidget(self.new_theme_advanced_btn)
@@ -2929,12 +2948,12 @@ class TrofeoGui(QMainWindow):
         new_theme_path_row_layout = QHBoxLayout(self.new_theme_path_row)
         new_theme_path_row_layout.setContentsMargins(0, 0, 0, 0)
         new_theme_path_row_layout.setSpacing(8)
-        new_theme_path_row_layout.addWidget(QLabel("Plik"))
+        new_theme_path_row_layout.addWidget(QLabel("File"))
         new_theme_path_row_layout.addWidget(self.new_theme_path_edit, 1)
         new_theme_path_row_layout.addWidget(self.new_theme_browse_btn)
         new_theme_box_layout.addWidget(self.new_theme_path_row)
         self.new_theme_path_row.hide()
-        self.new_theme_hint_label = QLabel("Podaj nazwę i styl. Plik motywu zostanie zaproponowany automatycznie.")
+        self.new_theme_hint_label = QLabel("Enter a name and style. The theme file path will be suggested automatically.")
         self.new_theme_hint_label.setObjectName("selectionSummaryLabel")
         self.new_theme_hint_label.setWordWrap(False)
         new_theme_box_layout.addWidget(self.new_theme_hint_label)
@@ -2945,7 +2964,7 @@ class TrofeoGui(QMainWindow):
         self.new_theme_path_edit.textEdited.connect(self._mark_new_theme_path_customized)
         self.new_theme_advanced_btn.toggled.connect(self._toggle_new_theme_advanced)
         library_layout.addWidget(self.new_theme_options_box)
-        theme_browser_box = QGroupBox("Motywy")
+        theme_browser_box = QGroupBox("Themes")
         self.theme_browser_box = theme_browser_box
         theme_browser_box.setObjectName("librarySectionBox")
         theme_browser_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
@@ -2953,19 +2972,22 @@ class TrofeoGui(QMainWindow):
         theme_browser_controls = QHBoxLayout()
         theme_browser_controls.setSpacing(6)
         self.library_theme_filter_edit = QLineEdit()
-        self.library_theme_filter_edit.setPlaceholderText("Szukaj po nazwie motywu...")
+        self.library_theme_filter_edit.setPlaceholderText("Search by theme name...")
         self.library_theme_type_combo = QComboBox()
-        self.library_theme_type_combo.addItems(["Wszystkie", "Motyw", "Obraz", "Lokalne", "TTCR", "Animowane"])
+        self.library_theme_type_combo.addItems(["All", "Theme", "Image", "Local", "TTCR", "Animated"])
         self.library_theme_sort_combo = QComboBox()
-        self.library_theme_sort_combo.addItems(["Nazwa A-Z", "Nazwa Z-A", "Najnowsze", "Najstarsze"])
-        theme_browser_controls.addWidget(QLabel("Szukaj"))
+        self.library_theme_sort_combo.addItems(["Name A-Z", "Name Z-A", "Newest", "Oldest"])
+        self.theme_browser_controls_search_label = QLabel("Search")
+        self.theme_browser_controls_type_label = QLabel("Type")
+        self.theme_browser_controls_sort_label = QLabel("Sort")
+        theme_browser_controls.addWidget(self.theme_browser_controls_search_label)
         theme_browser_controls.addWidget(self.library_theme_filter_edit, 1)
-        theme_browser_controls.addWidget(QLabel("Typ"))
+        theme_browser_controls.addWidget(self.theme_browser_controls_type_label)
         theme_browser_controls.addWidget(self.library_theme_type_combo)
-        theme_browser_controls.addWidget(QLabel("Sortuj"))
+        theme_browser_controls.addWidget(self.theme_browser_controls_sort_label)
         theme_browser_controls.addWidget(self.library_theme_sort_combo)
         theme_browser_layout.addLayout(theme_browser_controls)
-        self.library_current_theme_label = QLabel("Brak aktywnego motywu.")
+        self.library_current_theme_label = QLabel("No active theme.")
         self.library_current_theme_label.setObjectName("selectionSummaryLabel")
         self.library_current_theme_label.setWordWrap(True)
         theme_browser_layout.addWidget(self.library_current_theme_label)
@@ -2988,7 +3010,7 @@ class TrofeoGui(QMainWindow):
         self.library_theme_filter_edit.textChanged.connect(self._rebuild_library_theme_browser)
         self.library_theme_type_combo.currentTextChanged.connect(self._rebuild_library_theme_browser)
         self.library_theme_sort_combo.currentTextChanged.connect(self._rebuild_library_theme_browser)
-        asset_gallery_box = QGroupBox("Zasoby motywu")
+        asset_gallery_box = QGroupBox("Theme Assets")
         self.asset_gallery_box = asset_gallery_box
         asset_gallery_box.setObjectName("librarySectionBox")
         asset_gallery_layout = QVBoxLayout(asset_gallery_box)
@@ -4900,9 +4922,133 @@ class TrofeoGui(QMainWindow):
             pass
         return {}
 
+    def _current_ui_language(self) -> str:
+        return str(getattr(self, "_ui_language", "en")).strip().lower() or "en"
+
+    def _tr(self, en_text: str, pl_text: str) -> str:
+        return pl_text if self._current_ui_language() == "pl" else en_text
+
+    def _refresh_localized_texts(self) -> None:
+        if hasattr(self, "brand_sub"):
+            self.brand_sub.setText("TROFEO LCD")
+        if hasattr(self, "sidebar_footer_note"):
+            self.sidebar_footer_note.setText("Open Trofeo LCD\nLinux Open Driver")
+        if hasattr(self, "chrome_box"):
+            self.chrome_box.setTitle(self._tr("Control", "Sterowanie"))
+        if hasattr(self, "shell_title_sub"):
+            self.shell_title_sub.setText(self._tr("LCD control and themes.", "Sterowanie LCD i motywami."))
+        if hasattr(self, "header_mode_label"):
+            self.header_mode_label.setText(self._tr("Mode", "Tryb"))
+        if hasattr(self, "header_scale_label"):
+            self.header_scale_label.setText(self._tr("Scale", "Skala"))
+        if hasattr(self, "header_conn_label"):
+            self.header_conn_label.setText(self._tr("Connection", "Połączenie"))
+        if hasattr(self, "header_device_label"):
+            self.header_device_label.setText(self._tr("Device", "Urządzenie"))
+        if hasattr(self, "header_language_label"):
+            self.header_language_label.setText(self._tr("Language", "Język"))
+        if hasattr(self, "header_donate_btn"):
+            self.header_donate_btn.setText(self._tr("Donate / Support", "Donate / Wspomóż"))
+            self.header_donate_btn.setToolTip(self._tr("Open GitHub Sponsors for Open Trofeo LCD", "Otwórz GitHub Sponsors dla Open Trofeo LCD"))
+        if hasattr(self, "header_ready_label"):
+            current = self.header_ready_label.text().strip().lower()
+            if current in {"start", "ready", "gotowe"}:
+                self.header_ready_label.setText(self._tr("Ready", "Gotowe"))
+            elif current in {"error", "błąd"}:
+                self.header_ready_label.setText(self._tr("Error", "Błąd"))
+        if hasattr(self, "header_connection_label"):
+            current = self.header_connection_label.text()
+            if "Połączono" in current or "Connected" in current:
+                self.header_connection_label.setText(self._tr("● Connected", "● Połączono"))
+            elif "Rozłączono" in current or "Disconnected" in current:
+                self.header_connection_label.setText(self._tr("● Disconnected", "● Rozłączono"))
+        self._nav_button_meta = {
+            self.nav_library_btn: ("🗂", self._tr("Theme Gallery", "Galeria motywów")),
+            self.nav_designer_btn: ("✎", self._tr("Theme Designer", "Projektant motywów")),
+            self.nav_system_btn: ("◉", self._tr("System", "System")),
+            self.nav_logs_btn: ("☰", self._tr("Logs", "Logi")),
+            self.nav_config_btn: ("⚙", self._tr("Configuration", "Konfiguracja")),
+        }
+        if hasattr(self, "main_tabs"):
+            self.main_tabs.setTabText(0, self._tr("System", "System"))
+            self.main_tabs.setTabText(1, self._tr("Theme Designer", "Projektant motywów"))
+            self.main_tabs.setTabText(2, self._tr("Configuration", "Konfiguracja"))
+            self.main_tabs.setTabText(3, self._tr("Logs", "Logi"))
+        if hasattr(self, "studio_sections_tabs"):
+            self.studio_sections_tabs.setTabText(0, self._tr("Theme Gallery", "Galeria motywów"))
+            self.studio_sections_tabs.setTabText(1, "Designer")
+        if hasattr(self, "appearance_box"):
+            self.appearance_box.setTitle(self._tr("App Appearance", "Wygląd Aplikacji"))
+        if hasattr(self, "paths_box"):
+            self.paths_box.setTitle(self._tr("Paths and Integration", "Ścieżki i Integracja"))
+        if hasattr(self, "quick_cfg_box"):
+            self.quick_cfg_box.setTitle(self._tr("Quick Actions", "Szybkie Akcje"))
+        if hasattr(self, "automation_tools_box"):
+            self.automation_tools_box.setTitle(self._tr("Automation and Bundles", "Automatyzacja i Bundles"))
+        if hasattr(self, "cfg_cancel_btn"):
+            self.cfg_cancel_btn.setText(self._tr("Cancel", "Anuluj"))
+        if hasattr(self, "cfg_apply_btn"):
+            self.cfg_apply_btn.setText(self._tr("Apply", "Zastosuj"))
+        if hasattr(self, "cfg_save_btn"):
+            self.cfg_save_btn.setText(self._tr("Save Settings", "Zapisz ustawienia"))
+        if hasattr(self, "cfg_reset_btn"):
+            self.cfg_reset_btn.setText(self._tr("Restore Defaults", "Przywróć domyślne"))
+        if hasattr(self, "cfg_export_btn"):
+            self.cfg_export_btn.setText(self._tr("Export Configuration", "Eksportuj konfigurację"))
+        if hasattr(self, "cfg_import_btn"):
+            self.cfg_import_btn.setText(self._tr("Import Configuration", "Importuj konfigurację"))
+        if hasattr(self, "cfg_clear_cache_btn"):
+            self.cfg_clear_cache_btn.setText(self._tr("Clear Cache", "Wyczyść cache"))
+        if hasattr(self, "cfg_restart_app_btn"):
+            self.cfg_restart_app_btn.setText(self._tr("Restart Application", "Uruchom ponownie aplikację"))
+        if hasattr(self, "library_summary_label"):
+            self.library_summary_label.setText(self._tr("Theme gallery quick actions", "Szybkie akcje galerii motywów"))
+        if hasattr(self, "library_import_ttcr_btn"):
+            self.library_import_ttcr_btn.setText(self._tr("Import TTCR", "Import TTCR"))
+        if hasattr(self, "library_refresh_btn"):
+            self.library_refresh_btn.setText(self._tr("Refresh", "Odśwież"))
+        if hasattr(self, "new_theme_create_btn"):
+            self.new_theme_create_btn.setText(self._tr("Create Theme", "Utwórz motyw"))
+        if hasattr(self, "new_theme_advanced_btn"):
+            self.new_theme_advanced_btn.setText(self._tr("File Settings", "Ustawienia pliku"))
+        if hasattr(self, "new_theme_hint_label"):
+            self.new_theme_hint_label.setText(self._tr("Enter a name and style. The theme file path will be suggested automatically.", "Podaj nazwę i styl. Plik motywu zostanie zaproponowany automatycznie."))
+        if hasattr(self, "new_theme_name_edit"):
+            self.new_theme_name_edit.setPlaceholderText(self._tr("e.g. My Dashboard", "Np. Mój dashboard"))
+        if hasattr(self, "theme_browser_box"):
+            self.theme_browser_box.setTitle(self._tr("Themes", "Motywy"))
+        if hasattr(self, "asset_gallery_box"):
+            self.asset_gallery_box.setTitle(self._tr("Theme Assets", "Zasoby motywu"))
+        if hasattr(self, "library_current_theme_label"):
+            current = getattr(self, "theme_combo", None)
+            current_name = current.currentText().strip() if current is not None else ""
+            self.library_current_theme_label.setText(
+                self._tr(f"Currently selected: {current_name}", f"Aktualnie wybrany: {current_name}") if current_name
+                else self._tr("No active theme.", "Brak aktywnego motywu.")
+            )
+        self._apply_sidebar_mode()
+        if hasattr(self, "theme_browser_controls_search_label"):
+            self.theme_browser_controls_search_label.setText(self._tr("Search", "Szukaj"))
+        if hasattr(self, "theme_browser_controls_type_label"):
+            self.theme_browser_controls_type_label.setText(self._tr("Type", "Typ"))
+        if hasattr(self, "theme_browser_controls_sort_label"):
+            self.theme_browser_controls_sort_label.setText(self._tr("Sort", "Sortuj"))
+
+    def _apply_language_selection(self, _value: str | None = None, *, persist: bool = True) -> None:
+        if hasattr(self, "header_language_combo"):
+            self._ui_language = self.header_language_combo.currentData() or "en"
+        self._refresh_localized_texts()
+        if persist:
+            self._save_ui_state()
+
     def _restore_ui_state(self) -> None:
         payload = self._load_ui_state_payload()
         try:
+            self._ui_language = str(payload.get("ui_language", "en")).strip() or "en"
+            if hasattr(self, "header_language_combo"):
+                idx = self.header_language_combo.findData(self._ui_language)
+                if idx >= 0:
+                    self.header_language_combo.setCurrentIndex(idx)
             ui_mode = str(payload.get("ui_mode", "")).strip()
             if ui_mode and hasattr(self, "ui_mode_combo"):
                 self.ui_mode_combo.setCurrentText(ui_mode)
@@ -4938,11 +5084,13 @@ class TrofeoGui(QMainWindow):
                 if widget is not None:
                     widget.setChecked(bool(payload.get(key, default)))
             self._sync_config_ui_controls_from_header()
+            self._refresh_localized_texts()
         except Exception:
             pass
 
     def _save_ui_state(self, *, onboarding_done: bool | None = None) -> None:
         payload = self._load_ui_state_payload()
+        payload["ui_language"] = self._current_ui_language()
         if hasattr(self, "ui_mode_combo"):
             payload["ui_mode"] = self.ui_mode_combo.currentText()
         if hasattr(self, "ui_theme_combo"):
@@ -5018,7 +5166,7 @@ class TrofeoGui(QMainWindow):
                 self.sidebar_layout.setSpacing(14)
         if hasattr(self, "sidebar_toggle_btn"):
             self.sidebar_toggle_btn.setText("⟩" if collapsed else "⟨")
-            self.sidebar_toggle_btn.setToolTip("Rozwiń menu" if collapsed else "Zwiń menu")
+            self.sidebar_toggle_btn.setToolTip(self._tr("Expand menu", "Rozwiń menu") if collapsed else self._tr("Collapse menu", "Zwiń menu"))
         if hasattr(self, "brand_label"):
             self.brand_label.setVisible(not collapsed)
         if hasattr(self, "brand_sub"):
@@ -5030,7 +5178,8 @@ class TrofeoGui(QMainWindow):
             btn.setProperty("collapsed", collapsed)
             btn.style().unpolish(btn)
             btn.style().polish(btn)
-            btn.setText(icon_text if collapsed else f"{icon_text}  {full_text.replace(' ', chr(10), 1) if full_text.count(' ') >= 1 and 'motywów' in full_text else full_text}")
+            wrapped = full_text.replace(" ", chr(10), 1) if full_text.count(" ") >= 1 and len(full_text) > 11 else full_text
+            btn.setText(icon_text if collapsed else f"{icon_text}  {wrapped}")
             btn.setToolTip(full_text)
             btn.setMinimumHeight(66 if collapsed else 88)
         self._apply_responsive_layout_metrics()
@@ -6107,9 +6256,9 @@ class TrofeoGui(QMainWindow):
         
         if hasattr(self, "header_connection_label"):
             running = bool(status.get("running", False))
-            self.header_connection_label.setText("● Połączono" if running or bool(status.get("ok", False)) else "● Rozłączono")
+            self.header_connection_label.setText(self._tr("● Connected", "● Połączono") if running or bool(status.get("ok", False)) else self._tr("● Disconnected", "● Rozłączono"))
         if hasattr(self, "header_ready_label"):
-            self.header_ready_label.setText("Gotowe" if bool(status.get("ok", False)) else "Błąd")
+            self.header_ready_label.setText(self._tr("Ready", "Gotowe") if bool(status.get("ok", False)) else self._tr("Error", "Błąd"))
 
         if hasattr(self, "cfg_ui_theme_combo"):
             self._sync_config_ui_controls_from_header()
@@ -6163,7 +6312,7 @@ class TrofeoGui(QMainWindow):
 
             self.system_uptime_value.setText(self._read_system_uptime())
             self.system_restart_value.setText(time.strftime("%H:%M:%S"))
-            self.system_connection_value.setText("Połączono" if is_ok else "Rozłączono")
+            self.system_connection_value.setText(self._tr("Connected", "Połączono") if is_ok else self._tr("Disconnected", "Rozłączono"))
             self.system_device_value.setText(self.header_device_combo.currentText() if hasattr(self, "header_device_combo") else "Trofeo LCD")
             self.system_firmware_value.setText(str(status.get("firmware", "N/A")))
             self.system_ip_value.setText(str(cfg.get("host", "127.0.0.1")))
@@ -6515,7 +6664,7 @@ class TrofeoGui(QMainWindow):
             if widget is not None:
                 widget.deleteLater()
         needle = self.library_theme_filter_edit.text().strip().lower() if hasattr(self, "library_theme_filter_edit") else ""
-        type_filter = self.library_theme_type_combo.currentText().strip() if hasattr(self, "library_theme_type_combo") else "Wszystkie"
+        type_filter = self.library_theme_type_combo.currentText().strip() if hasattr(self, "library_theme_type_combo") else "All"
         items: list[tuple[str, dict[str, Any]]] = []
         for name, item in self.theme_items.items():
             theme_type = str(item.get("type", "image"))
@@ -6523,31 +6672,31 @@ class TrofeoGui(QMainWindow):
             if needle and needle not in hay:
                 continue
             category = self._theme_card_category(item)
-            if type_filter == "Obraz" and theme_type != "image":
+            if type_filter == "Image" and theme_type != "image":
                 continue
-            if type_filter == "Motyw" and theme_type != "theme-doc":
+            if type_filter == "Theme" and theme_type != "theme-doc":
                 continue
-            if type_filter in {"Lokalne", "TTCR", "Animowane"} and category != type_filter:
+            if type_filter in {"Local", "TTCR", "Animated"} and category != type_filter:
                 continue
             items.append((name, item))
-        sort_mode = self.library_theme_sort_combo.currentText().strip() if hasattr(self, "library_theme_sort_combo") else "Nazwa A-Z"
-        if sort_mode in {"Najnowsze", "Najstarsze"}:
+        sort_mode = self.library_theme_sort_combo.currentText().strip() if hasattr(self, "library_theme_sort_combo") else "Name A-Z"
+        if sort_mode in {"Newest", "Oldest"}:
             def _mtime(entry: tuple[str, dict[str, Any]]) -> float:
                 try:
                     resolved = self._resolve_theme_asset_path(str(entry[1].get("path", "")))
                     return resolved.stat().st_mtime if resolved.exists() else 0.0
                 except Exception:
                     return 0.0
-            items.sort(key=_mtime, reverse=(sort_mode == "Najnowsze"))
+            items.sort(key=_mtime, reverse=(sort_mode == "Newest"))
         else:
-            items.sort(key=lambda entry: entry[0].lower(), reverse=(sort_mode == "Nazwa Z-A"))
+            items.sort(key=lambda entry: entry[0].lower(), reverse=(sort_mode == "Name Z-A"))
         current = self.theme_combo.currentText().strip() if hasattr(self, "theme_combo") else ""
         if hasattr(self, "library_current_theme_label"):
             self.library_current_theme_label.setText(
-                f"Aktualnie wybrany: {current}" if current else "Brak aktywnego motywu."
+                self._tr(f"Currently selected: {current}", f"Aktualnie wybrany: {current}") if current else self._tr("No active theme.", "Brak aktywnego motywu.")
             )
         if not items:
-            empty = QLabel("Brak motywów pasujących do filtra.")
+            empty = QLabel(self._tr("No themes match the current filter.", "Brak motywów pasujących do filtra."))
             empty.setObjectName("selectionSummaryLabel")
             empty.setWordWrap(True)
             self.library_theme_cards_layout.addWidget(empty, 0, 0)
@@ -6638,11 +6787,11 @@ class TrofeoGui(QMainWindow):
             layout.addWidget(meta)
             layout.addWidget(desc)
             if name == current:
-                active_label = QLabel("Aktualnie wybrany")
+                active_label = QLabel(self._tr("Currently selected", "Aktualnie wybrany"))
                 active_label.setObjectName("layerBadgeLabel")
                 layout.addWidget(active_label)
             startup_row = QHBoxLayout()
-            startup_chk = QCheckBox("Zastosuj przy uruchomieniu")
+            startup_chk = QCheckBox(self._tr("Apply on startup", "Zastosuj przy uruchomieniu"))
             startup_chk.setChecked(name == self._startup_theme_name)
             startup_chk.toggled.connect(
                 lambda checked, theme_name=name: self._set_startup_theme_preference(theme_name, checked)
@@ -6652,11 +6801,11 @@ class TrofeoGui(QMainWindow):
             layout.addLayout(startup_row)
             actions = QHBoxLayout()
             actions.setSpacing(6)
-            select_btn = QPushButton("Edytuj" if str(item.get("type", "")) == "theme-doc" else "Wybierz")
-            preview_btn = QPushButton("Podgląd")
-            apply_btn = QPushButton("Zastosuj")
-            duplicate_btn = QPushButton("Duplikuj")
-            remove_btn = QPushButton("Usuń")
+            select_btn = QPushButton(self._tr("Edit", "Edytuj") if str(item.get("type", "")) == "theme-doc" else self._tr("Select", "Wybierz"))
+            preview_btn = QPushButton(self._tr("Preview", "Podgląd"))
+            apply_btn = QPushButton(self._tr("Apply", "Zastosuj"))
+            duplicate_btn = QPushButton(self._tr("Duplicate", "Duplikuj"))
+            remove_btn = QPushButton(self._tr("Remove", "Usuń"))
             apply_btn.setObjectName("primaryButton" if name == current else "secondaryAccentButton")
             for btn in (select_btn, preview_btn, apply_btn, duplicate_btn, remove_btn):
                 btn.setMinimumHeight(28)
@@ -6729,10 +6878,10 @@ class TrofeoGui(QMainWindow):
     def _theme_type_badge(self, theme_item: dict[str, Any]) -> str:
         theme_type = str(theme_item.get("type", "image")).strip()
         if theme_type == "theme-doc":
-            return "Motyw"
+            return self._tr("Theme", "Motyw")
         if theme_type == "image":
-            return "Obraz"
-        return theme_type or "Motyw"
+            return self._tr("Image", "Obraz")
+        return theme_type or self._tr("Theme", "Motyw")
 
     def _read_theme_document_for_card(self, theme_item: dict[str, Any]) -> dict[str, Any] | None:
         theme_type = str(theme_item.get("type", "")).strip()
@@ -6753,7 +6902,7 @@ class TrofeoGui(QMainWindow):
             animation = effects.get("animation", {}) if isinstance(effects, dict) else {}
             frame_paths = animation.get("frame_paths", []) if isinstance(animation, dict) else []
             if bool(animation.get("enabled", False)) and isinstance(frame_paths, list) and len(frame_paths) > 1:
-                return "Animowane"
+                return "Animated"
             meta = document.get("meta", {})
             tags = meta.get("tags", []) if isinstance(meta, dict) else []
             if isinstance(tags, list) and any(str(tag).strip().lower() == "ttcr-import" for tag in tags):
@@ -6765,7 +6914,7 @@ class TrofeoGui(QMainWindow):
         path = str(theme_item.get("path", "")).lower()
         if "ttcr" in path:
             return "TTCR"
-        return "Lokalne"
+        return "Local"
 
     def _theme_card_stats(self, theme_item: dict[str, Any]) -> tuple[int, int]:
         document = self._read_theme_document_for_card(theme_item)
