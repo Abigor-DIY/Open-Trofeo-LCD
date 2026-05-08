@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Ember Phoenix",
+    "description": "Ognisty motyw z bardzo dużym zegarem, ciężkimi statami i szerokim playerem.",
+    "author": "Open-Trofeo-LCD",
+    "tags": ["monitor", "media", "ember", "slavic", "custom"]
+  },
+  "canvas": {
+    "width": 1920,
+    "height": 462,
+    "rotation": 180
+  },
+  "background": {
+    "kind": "image",
+    "base_color": [10, 6, 4],
+    "accent_color": [255, 96, 40],
+    "texture_alpha": 0.2,
+    "path": "ember_phoenix_assets/2026-05-08/image/background.png",
+    "fit": "cover",
+    "opacity": 1.0,
+    "panels": [
+      {"id": "head_bar", "rect": [96, 20, 1728, 60], "radius": 22, "fill": [0, 0, 0, 132], "z_index": 80, "visible": true, "locked": false},
+      {"id": "stats_panel", "rect": [108, 318, 586, 96], "radius": 20, "fill": [0, 0, 0, 126], "z_index": 80, "visible": true, "locked": false},
+      {"id": "media_panel", "rect": [748, 286, 1086, 132], "radius": 24, "fill": [0, 0, 0, 150], "z_index": 80, "visible": true, "locked": false}
+    ]
+  },
+  "texts": [
+    {
+      "id": "title",
+      "text": "EMBER PHOENIX",
+      "x": 760,
+      "y": 28,
+      "box_width": 420,
+      "box_height": 36,
+      "font_family": "DejaVu Serif",
+      "font_size": 24,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "color": [255, 184, 144],
+      "align": "center",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "stats": [
+    {"id": "host", "label": "", "source": "hostname", "format": "{value}", "x": 126, "y": 34, "box_width": 300, "box_height": 28, "font_family": "Ubuntu", "font_size": 24, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [226, 210, 198], "value_color": [226, 210, 198], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "clock", "label": "", "source": "time_hms", "format": "{value}", "x": 1450, "y": 26, "box_width": 300, "box_height": 42, "font_family": "Ubuntu", "font_size": 48, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [255, 196, 156], "value_color": [255, 196, 156], "align": "center", "z_index": 210, "visible": true, "locked": false},
+    {"id": "cpu_usage", "label": "CPU", "source": "cpu_usage_percent", "format": "{value}", "x": 128, "y": 342, "box_width": 168, "box_height": 32, "font_family": "Ubuntu", "font_size": 32, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [230, 208, 194], "value_color": [255, 104, 86], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "gpu_usage", "label": "GPU", "source": "gpu_load", "format": "{value}", "x": 322, "y": 342, "box_width": 168, "box_height": 32, "font_family": "Ubuntu", "font_size": 32, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [230, 208, 194], "value_color": [255, 104, 86], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "ram_usage", "label": "RAM", "source": "mem_percent", "format": "{value}", "x": 516, "y": 342, "box_width": 148, "box_height": 32, "font_family": "Ubuntu", "font_size": 32, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [230, 208, 194], "value_color": [255, 208, 160], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "media_title", "label": "", "source": "media_title", "format": "{value}", "x": 922, "y": 308, "box_width": 784, "box_height": 40, "font_family": "Ubuntu", "font_size": 36, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": true, "marquee_speed": 62.0, "label_color": [252, 238, 228], "value_color": [252, 238, 228], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "media_artist", "label": "", "source": "media_artist", "format": "{value}", "x": 922, "y": 350, "box_width": 784, "box_height": 28, "font_family": "Ubuntu", "font_size": 24, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [212, 186, 172], "value_color": [212, 186, 172], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "media_app", "label": "Player", "source": "media_app", "format": "{value}", "x": 922, "y": 386, "box_width": 250, "box_height": 22, "font_family": "Ubuntu", "font_size": 18, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [184, 160, 148], "value_color": [184, 160, 148], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "media_state", "label": "Stan", "source": "media_state", "format": "{value}", "x": 1192, "y": 386, "box_width": 220, "box_height": 22, "font_family": "Ubuntu", "font_size": 18, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [184, 160, 148], "value_color": [184, 160, 148], "align": "left", "z_index": 210, "visible": true, "locked": false}
+  ],
+  "images": [
+    {"id": "media_cover", "path": "", "source": "media_cover", "rect": [762, 300, 148, 148], "fit": "cover", "opacity": 1.0, "radius": 24, "border_width": 2, "border_color": [255, 180, 128, 180], "glow_radius": 18, "glow_opacity": 0.34, "rotation": 0, "z_index": 230, "visible": true, "locked": false},
+    {"id": "overlay_frame", "path": "ember_phoenix_assets/2026-05-08/overlay/frame.png", "rect": [0, 0, 1920, 462], "fit": "stretch", "opacity": 1.0, "rotation": 0, "z_index": 260, "visible": true, "locked": false}
+  ],
+  "effects": {
+    "animation": {"enabled": false, "current_frame": 0, "frame_paths": []}
+  }
+}
