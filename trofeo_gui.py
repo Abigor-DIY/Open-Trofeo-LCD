@@ -1899,7 +1899,7 @@ class TrofeoGui(QMainWindow):
         if hasattr(self, "cfg_ui_mode_combo"):
             self.cfg_ui_mode_combo.setCurrentText("Dark")
         if hasattr(self, "cfg_ui_scale_combo"):
-            self.cfg_ui_scale_combo.setCurrentIndex(0)
+            self.cfg_ui_scale_combo.setCurrentText("100%")
         if hasattr(self, "cfg_brightness_slider"):
             self.cfg_brightness_slider.setValue(82)
         if hasattr(self, "cfg_preview_fps_combo"):
@@ -1974,7 +1974,7 @@ class TrofeoGui(QMainWindow):
 
         sidebar = QFrame()
         sidebar.setObjectName("shellSidebar")
-        sidebar.setFixedWidth(220)
+        sidebar.setFixedWidth(236)
         sidebar_layout = QVBoxLayout(sidebar)
         self.sidebar_layout = sidebar_layout
         sidebar_layout.setContentsMargins(18, 18, 18, 18)
@@ -2054,7 +2054,7 @@ class TrofeoGui(QMainWindow):
 
         title_label = QLabel("Open Trofeo LCD")
         title_label.setObjectName("shellTitleLabel")
-        title_sub = QLabel("Thermalright Trofeo LCD: sterowanie urządzeniem, motywy i monitoring runtime.")
+        title_sub = QLabel("Sterowanie LCD i motywami.")
         title_sub.setObjectName("shellTitleMeta")
         title_stack = QVBoxLayout()
         title_stack.setContentsMargins(0, 0, 0, 0)
@@ -2066,9 +2066,9 @@ class TrofeoGui(QMainWindow):
         self.ui_theme_combo = QComboBox()
         self.ui_theme_combo.addItems(list(UI_THEMES.keys()))
         self.ui_scale_combo = QComboBox()
-        for value in (90, 100, 110, 125, 140):
+        for value in (70, 80, 90, 100, 110, 125, 140):
             self.ui_scale_combo.addItem(f"{value}%", value)
-        self.ui_scale_combo.setCurrentIndex(1)
+        self.ui_scale_combo.setCurrentText("100%")
         for combo in (self.ui_mode_combo, self.ui_theme_combo, self.ui_scale_combo):
             combo.setMinimumHeight(34)
             combo.setMaxVisibleItems(8)
@@ -2602,7 +2602,7 @@ class TrofeoGui(QMainWindow):
         self.cfg_ui_mode_combo = QComboBox()
         self.cfg_ui_mode_combo.addItems(["Dark", "Light"])
         self.cfg_ui_scale_combo = QComboBox()
-        for value in (90, 100, 110, 125, 140):
+        for value in (70, 80, 90, 100, 110, 125, 140):
             self.cfg_ui_scale_combo.addItem(f"{value}%", value)
         self.cfg_font_scale_slider = QSlider(Qt.Horizontal)
         self.cfg_font_scale_slider.setRange(80, 140)
@@ -2839,31 +2839,16 @@ class TrofeoGui(QMainWindow):
         self.quick_preset_minimal_btn.clicked.connect(lambda: self.apply_builtin_layout_preset("minimal"))
         self.quick_preset_focus_btn.clicked.connect(lambda: self.apply_builtin_layout_preset("focus"))
 
-        library_intro_box = QGroupBox("Galeria motywów")
-        library_intro_box.setObjectName("librarySectionBox")
-        library_intro_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        library_intro_layout = QHBoxLayout(library_intro_box)
-        library_intro_layout.setContentsMargins(14, 12, 14, 12)
-        library_intro_layout.setSpacing(10)
-        self.library_summary_label = QLabel(
-            "Biblioteka motywów: importuj, odśwież i otwieraj wybrane motywy do edycji."
-        )
-        self.library_summary_label.setObjectName("selectionSummaryLabel")
-        self.library_summary_label.setWordWrap(False)
-        self.library_refresh_btn = QPushButton("Odśwież")
-        self.library_import_ttcr_btn = QPushButton("Import TTCR")
-        self.library_refresh_btn.clicked.connect(self.refresh_themes)
-        self.library_import_ttcr_btn.clicked.connect(self.import_ttcr_theme_bundle)
-        library_intro_layout.addWidget(self.library_summary_label, 1)
-        library_intro_layout.addWidget(self.library_import_ttcr_btn)
-        library_intro_layout.addWidget(self.library_refresh_btn)
-        library_layout.addWidget(library_intro_box)
-        self.new_theme_options_box = QGroupBox("Nowy motyw")
-        self.new_theme_options_box.setObjectName("librarySectionBox")
+        self.new_theme_options_box = QFrame()
+        self.new_theme_options_box.setObjectName("libraryActionBar")
         self.new_theme_options_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         new_theme_box_layout = QVBoxLayout(self.new_theme_options_box)
         new_theme_box_layout.setContentsMargins(14, 12, 14, 12)
-        new_theme_box_layout.setSpacing(8)
+        new_theme_box_layout.setSpacing(6)
+        self.library_summary_label = QLabel("Szybkie akcje galerii motywów")
+        self.library_summary_label.setObjectName("selectionSummaryLabel")
+        self.library_summary_label.setWordWrap(False)
+        new_theme_box_layout.addWidget(self.library_summary_label)
         self.new_theme_name_edit = QLineEdit("Nowy Motyw")
         self.new_theme_name_edit.setObjectName("newThemeNameEdit")
         self.new_theme_name_edit.setPlaceholderText("Np. Mój dashboard")
@@ -2875,12 +2860,18 @@ class TrofeoGui(QMainWindow):
         self.new_theme_create_btn.setObjectName("newThemeCreateButton")
         self.new_theme_advanced_btn = QPushButton("Ustawienia pliku")
         self.new_theme_advanced_btn.setCheckable(True)
+        self.library_refresh_btn = QPushButton("Odśwież")
+        self.library_import_ttcr_btn = QPushButton("Import TTCR")
+        self.library_refresh_btn.clicked.connect(self.refresh_themes)
+        self.library_import_ttcr_btn.clicked.connect(self.import_ttcr_theme_bundle)
         self.new_theme_path_edit = QLineEdit(str(Path("themes") / "nowy_motyw.json"))
         self.new_theme_path_edit.setObjectName("newThemePathEdit")
         self.new_theme_browse_btn = QPushButton("Wybierz plik")
         self._new_theme_path_user_edited = False
         new_theme_row = QHBoxLayout()
         new_theme_row.setSpacing(8)
+        new_theme_row.addWidget(self.library_import_ttcr_btn)
+        new_theme_row.addWidget(self.library_refresh_btn)
         new_theme_row.addWidget(QLabel("Nazwa"))
         new_theme_row.addWidget(self.new_theme_name_edit, 2)
         new_theme_row.addWidget(QLabel("Styl"))
@@ -2897,9 +2888,7 @@ class TrofeoGui(QMainWindow):
         new_theme_path_row_layout.addWidget(self.new_theme_browse_btn)
         new_theme_box_layout.addWidget(self.new_theme_path_row)
         self.new_theme_path_row.hide()
-        self.new_theme_hint_label = QLabel(
-            "Podaj nazwę i styl startowy. Plik motywu zostanie zaproponowany automatycznie."
-        )
+        self.new_theme_hint_label = QLabel("Podaj nazwę i styl. Plik motywu zostanie zaproponowany automatycznie.")
         self.new_theme_hint_label.setObjectName("selectionSummaryLabel")
         self.new_theme_hint_label.setWordWrap(False)
         new_theme_box_layout.addWidget(self.new_theme_hint_label)
@@ -4167,7 +4156,7 @@ class TrofeoGui(QMainWindow):
             }}
             QLabel#shellBrandLabel {{
                 color: {text_main};
-                font-size: {title_font}px;
+                font-size: {title_font - 1}px;
                 font-weight: 800;
             }}
             QLabel#shellBrandSubLabel {{
@@ -4382,6 +4371,13 @@ class TrofeoGui(QMainWindow):
                 border-radius: 18px;
                 margin-top: 20px;
                 padding: 18px 14px 14px 14px;
+            }}
+            QFrame#libraryActionBar {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {bg_panel}, stop:1 {bg_tab_selected});
+                border: 1px solid {border_main};
+                border-radius: 16px;
+                padding: 8px;
             }}
             QGroupBox#designerWorkspaceBox {{
                 background: {bg_panel};
@@ -4690,7 +4686,7 @@ class TrofeoGui(QMainWindow):
         compact = width < 1650
         short = height < 1180
         if hasattr(self, "_shell_nav_buttons") and self._shell_nav_buttons:
-            sidebar_width = 102 if getattr(self, "sidebar_collapsed", False) else (208 if compact else 228)
+            sidebar_width = 102 if getattr(self, "sidebar_collapsed", False) else (224 if compact else 242)
             parent_sidebar = getattr(self, "sidebar_frame", None)
             if parent_sidebar is not None:
                 parent_sidebar.setFixedWidth(int(sidebar_width * min(scale, 1.15)))
