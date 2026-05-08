@@ -1985,11 +1985,14 @@ class TrofeoGui(QMainWindow):
         brand_icon.setObjectName("shellBrandIcon")
         self.brand_label = QLabel("THERMALRIGHT")
         self.brand_label.setObjectName("shellBrandLabel")
+        self.brand_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.brand_label.setMinimumWidth(118)
         self.brand_sub = QLabel("TROFEO LCD")
         self.brand_sub.setObjectName("shellBrandSubLabel")
         self.sidebar_toggle_btn = QPushButton("⟨")
         self.sidebar_toggle_btn.setObjectName("secondaryAccentButton")
-        self.sidebar_toggle_btn.setMinimumSize(34, 34)
+        self.sidebar_toggle_btn.setMinimumSize(30, 30)
+        self.sidebar_toggle_btn.setMaximumWidth(30)
         brand_row.addWidget(brand_icon)
         brand_row.addWidget(self.brand_label)
         brand_row.addStretch(1)
@@ -4156,7 +4159,7 @@ class TrofeoGui(QMainWindow):
             }}
             QLabel#shellBrandLabel {{
                 color: {text_main};
-                font-size: {title_font - 1}px;
+                font-size: {title_font - 2}px;
                 font-weight: 800;
             }}
             QLabel#shellBrandSubLabel {{
@@ -4689,7 +4692,11 @@ class TrofeoGui(QMainWindow):
             sidebar_width = 102 if getattr(self, "sidebar_collapsed", False) else (224 if compact else 242)
             parent_sidebar = getattr(self, "sidebar_frame", None)
             if parent_sidebar is not None:
-                parent_sidebar.setFixedWidth(int(sidebar_width * min(scale, 1.15)))
+                if getattr(self, "sidebar_collapsed", False):
+                    computed_width = int(sidebar_width * min(scale, 1.15))
+                else:
+                    computed_width = max(214, int(sidebar_width * max(scale, 0.95)))
+                parent_sidebar.setFixedWidth(computed_width)
         if hasattr(self, "designer_elements_box"):
             self.designer_elements_box.setMinimumWidth(max(340, int((380 if compact else 430) * scale)))
             self.designer_elements_box.setMaximumWidth(max(560, int((600 if compact else 660) * scale)))
