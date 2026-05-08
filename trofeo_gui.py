@@ -1534,6 +1534,47 @@ class ImagePrepDialog(QDialog):
         self.accept()
 
 
+class ThemePreviewDialog(QDialog):
+    def __init__(self, theme_name: str, pixmap: QPixmap, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Podgląd motywu - {theme_name}")
+        self.resize(1320, 620)
+        self.setMinimumSize(980, 420)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(12)
+
+        title = QLabel(theme_name)
+        title.setObjectName("libraryCardTitle")
+        root.addWidget(title)
+
+        hint = QLabel("Powiększony podgląd motywu. Jeśli obraz jest szerszy, możesz przewinąć obszar.")
+        hint.setObjectName("libraryCardMeta")
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setAlignment(Qt.AlignCenter)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setMinimumHeight(360)
+        preview = QLabel()
+        preview.setAlignment(Qt.AlignCenter)
+        preview.setMinimumSize(max(920, pixmap.width()), max(260, pixmap.height()))
+        preview.setPixmap(pixmap)
+        scroll.setWidget(preview)
+        root.addWidget(scroll, 1)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        close_btn = QPushButton("Zamknij")
+        close_btn.clicked.connect(self.accept)
+        actions.addWidget(close_btn)
+        root.addLayout(actions)
+
+
 class BackendClient:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
@@ -6375,6 +6416,41 @@ class TrofeoGui(QMainWindow):
                 return pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         return self._render_template_placeholder(str(item.get("name", "Theme")), "#5ec8ff", size)
 
+    def _render_theme_preview_pixmap(self, item: dict[str, Any], size: QSize) -> QPixmap:
+        path = str(item.get("path", "")).strip()
+        theme_name = str(item.get("name", "Theme")).strip() or "Theme"
+        theme_type = str(item.get("type", "image")).strip()
+        if theme_type == "theme-doc" and render_theme_file is not None and path:
+            try:
+                image = render_theme_file(path)
+                try:
+                    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+                    if isinstance(raw, dict):
+                        rotation = int(raw.get("canvas", {}).get("rotation", 0)) % 360
+                        if rotation:
+                            image = image.rotate((-rotation) % 360, expand=True)
+                except Exception:
+                    pass
+                image.thumbnail((max(920, size.width()), max(280, size.height())))
+                buffer = io.BytesIO()
+                image.save(buffer, format="PNG")
+                pixmap = QPixmap()
+                if pixmap.loadFromData(buffer.getvalue(), "PNG"):
+                    return pixmap
+            except Exception:
+                pass
+        if path:
+            resolved = self._resolve_theme_asset_path(path)
+            pixmap = QPixmap(str(resolved))
+            if not pixmap.isNull():
+                return pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        return self._render_template_placeholder(theme_name, "#5ec8ff", size)
+
+    def _open_theme_preview_dialog(self, theme_name: str, theme_item: dict[str, Any]) -> None:
+        pixmap = self._render_theme_preview_pixmap(theme_item, QSize(1180, 360))
+        dialog = ThemePreviewDialog(theme_name, pixmap, self)
+        dialog.exec()
+
     def _rebuild_runtime_theme_cards(self) -> None:
         if not hasattr(self, "runtime_theme_cards_layout"):
             return
@@ -6577,17 +6653,20 @@ class TrofeoGui(QMainWindow):
             actions = QHBoxLayout()
             actions.setSpacing(6)
             select_btn = QPushButton("Edytuj" if str(item.get("type", "")) == "theme-doc" else "Wybierz")
+            preview_btn = QPushButton("Podgląd")
             apply_btn = QPushButton("Zastosuj")
             duplicate_btn = QPushButton("Duplikuj")
             remove_btn = QPushButton("Usuń")
             apply_btn.setObjectName("primaryButton" if name == current else "secondaryAccentButton")
-            for btn in (select_btn, apply_btn, duplicate_btn, remove_btn):
+            for btn in (select_btn, preview_btn, apply_btn, duplicate_btn, remove_btn):
                 btn.setMinimumHeight(28)
             select_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item: self._library_select_theme(theme_name, theme_item))
+            preview_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item: self._open_theme_preview_dialog(theme_name, theme_item))
             apply_btn.clicked.connect(lambda _checked=False, theme_name=name: self._apply_runtime_theme_card(theme_name))
             duplicate_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item: self._duplicate_theme_card(theme_name, theme_item))
             remove_btn.clicked.connect(lambda _checked=False, theme_name=name: self._remove_runtime_theme_card(theme_name))
             actions.addWidget(select_btn, 2)
+            actions.addWidget(preview_btn, 1)
             actions.addWidget(apply_btn, 2)
             actions.addWidget(duplicate_btn, 1)
             actions.addWidget(remove_btn, 1)
@@ -6721,12 +6800,15 @@ class TrofeoGui(QMainWindow):
     def _show_library_theme_card_menu(self, theme_name: str, theme_item: dict[str, Any], anchor: QWidget) -> None:
         menu = QMenu(self)
         edit_action = menu.addAction("Edytuj")
+        preview_action = menu.addAction("Podgląd")
         apply_action = menu.addAction("Zastosuj")
         duplicate_action = menu.addAction("Duplikuj")
         remove_action = menu.addAction("Usuń")
         chosen = menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
         if chosen == edit_action:
             self._library_select_theme(theme_name, theme_item)
+        elif chosen == preview_action:
+            self._open_theme_preview_dialog(theme_name, theme_item)
         elif chosen == apply_action:
             self._apply_runtime_theme_card(theme_name)
         elif chosen == duplicate_action:
