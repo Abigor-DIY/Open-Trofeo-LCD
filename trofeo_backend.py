@@ -117,6 +117,17 @@ class ReplayController:
         self._load_themes()
         self._load_playlist()
 
+    def _refresh_mode_locked(self) -> None:
+        playlist_running = self.playlist_thread is not None and self.playlist_thread.is_alive()
+        live_theme_running = self.live_theme_thread is not None and self.live_theme_thread.is_alive()
+        proc_running = self.proc is not None and self.proc.poll() is None
+        if playlist_running:
+            self.mode = "playlist"
+        elif live_theme_running:
+            self.mode = "theme-live"
+        elif not proc_running:
+            self.mode = "idle"
+
     def _log(self, msg: str) -> None:
         print(f"[{now_iso()}] {msg}", flush=True)
 
@@ -624,8 +635,7 @@ class ReplayController:
             self.last_exit_code = proc.returncode
             self.proc = None
             self.proc_started_at = None
-            if self.playlist_thread is None or not self.playlist_thread.is_alive():
-                self.mode = "idle"
+            self._refresh_mode_locked()
             return {"running": False, "pid": pid, "exit_code": self.last_exit_code}
 
     def _theme_has_media_sources(self, document: dict[str, Any] | None) -> bool:
@@ -1259,8 +1269,7 @@ class ReplayController:
         with self.lock:
             self.playlist_thread = None
             self.playlist_started_at = None
-            if self.proc is None:
-                self.mode = "idle"
+            self._refresh_mode_locked()
         self._log("playlist worker stop")
 
     def start_playlist(self) -> dict[str, Any]:
@@ -1284,8 +1293,7 @@ class ReplayController:
             th = self.playlist_thread
             if th is None or not th.is_alive():
                 self.playlist_thread = None
-                if self.proc is None:
-                    self.mode = "idle"
+                self._refresh_mode_locked()
                 return {"running": False, "already_stopped": True}
             self.playlist_stop.set()
 
@@ -1295,8 +1303,7 @@ class ReplayController:
             if not alive:
                 self.playlist_thread = None
                 self.playlist_started_at = None
-                if self.proc is None:
-                    self.mode = "idle"
+                self._refresh_mode_locked()
         return {"running": alive is True, "stopped": alive is False}
 
     def scan_capture(self) -> dict[str, Any]:
@@ -1351,10 +1358,9 @@ class ReplayController:
         code = self.proc.poll()
         if code is not None:
             self.last_exit_code = code
-            if self.playlist_thread is None or not self.playlist_thread.is_alive():
-                self.mode = "idle"
             self.proc = None
             self.proc_started_at = None
+            self._refresh_mode_locked()
             self._log(f"worker zakończony kodem={code}")
 
     def start_loop(self) -> dict[str, Any]:
