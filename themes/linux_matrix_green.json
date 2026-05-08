@@ -1,0 +1,610 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Linux Matrix Green",
+    "description": "Zielony motyw z panelem media i monitoringiem CPU/GPU/RAM.",
+    "author": "Open-Trofeo-LCD",
+    "tags": [
+      "monitor",
+      "media",
+      "green",
+      "custom"
+    ]
+  },
+  "canvas": {
+    "width": 1920,
+    "height": 462,
+    "rotation": 180
+  },
+  "background": {
+    "kind": "image",
+    "base_color": [
+      4,
+      10,
+      8
+    ],
+    "accent_color": [
+      0,
+      255,
+      140
+    ],
+    "texture_alpha": 0.18,
+    "path": "linux_matrix_green_assets/2026-05-08/image/background.png",
+    "fit": "cover",
+    "opacity": 1.0,
+    "panels": [
+      {
+        "id": "top_bar",
+        "rect": [
+          80,
+          18,
+          1760,
+          40
+        ],
+        "radius": 14,
+        "fill": [
+          0,
+          0,
+          0,
+          150
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "left_stats",
+        "rect": [
+          86,
+          78,
+          360,
+          168
+        ],
+        "radius": 22,
+        "fill": [
+          0,
+          0,
+          0,
+          112
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "right_stats",
+        "rect": [
+          1478,
+          78,
+          350,
+          168
+        ],
+        "radius": 22,
+        "fill": [
+          0,
+          0,
+          0,
+          112
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "media_bar",
+        "rect": [
+          480,
+          330,
+          960,
+          100
+        ],
+        "radius": 24,
+        "fill": [
+          0,
+          0,
+          0,
+          170
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      }
+    ]
+  },
+  "texts": [
+    {
+      "id": "title_left",
+      "text": "SYSTEM",
+      "x": 110,
+      "y": 88,
+      "box_width": 220,
+      "box_height": 36,
+      "font_family": "DejaVu Sans",
+      "font_size": 24,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "color": [
+        80,
+        255,
+        160
+      ],
+      "align": "left",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "title_right",
+      "text": "MEDIA",
+      "x": 1510,
+      "y": 88,
+      "box_width": 220,
+      "box_height": 36,
+      "font_family": "DejaVu Sans",
+      "font_size": 24,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "color": [
+        80,
+        255,
+        160
+      ],
+      "align": "left",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "footer_brand",
+      "text": "Open Trofeo LCD",
+      "x": 862,
+      "y": 26,
+      "box_width": 260,
+      "box_height": 36,
+      "font_family": "DejaVu Sans",
+      "font_size": 20,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "color": [
+        120,
+        255,
+        180
+      ],
+      "align": "left",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "stats": [
+    {
+      "id": "clock",
+      "label": "",
+      "source": "time_hms",
+      "format": "{value}",
+      "x": 1610,
+      "y": 24,
+      "box_width": 180,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 28,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        210,
+        255,
+        220
+      ],
+      "value_color": [
+        255,
+        240,
+        180
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "host",
+      "label": "",
+      "source": "hostname",
+      "format": "{value}",
+      "x": 110,
+      "y": 24,
+      "box_width": 260,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        120,
+        255,
+        180
+      ],
+      "value_color": [
+        120,
+        255,
+        180
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "cpu_usage",
+      "label": "CPU",
+      "source": "cpu_usage_percent",
+      "format": "{value}",
+      "x": 112,
+      "y": 126,
+      "box_width": 260,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 26,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        170,
+        255,
+        190
+      ],
+      "value_color": [
+        235,
+        255,
+        240
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "gpu_usage",
+      "label": "GPU",
+      "source": "gpu_load",
+      "format": "{value}",
+      "x": 112,
+      "y": 164,
+      "box_width": 260,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 26,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        170,
+        255,
+        190
+      ],
+      "value_color": [
+        235,
+        255,
+        240
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "ram_usage",
+      "label": "RAM",
+      "source": "mem_percent",
+      "format": "{value}",
+      "x": 112,
+      "y": 202,
+      "box_width": 260,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 26,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        170,
+        255,
+        190
+      ],
+      "value_color": [
+        235,
+        255,
+        240
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "media_title",
+      "label": "",
+      "source": "media_title",
+      "format": "♫ {value}",
+      "x": 626,
+      "y": 346,
+      "box_width": 700,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 24,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": true,
+      "marquee_speed": 62.0,
+      "label_color": [
+        180,
+        255,
+        200
+      ],
+      "value_color": [
+        240,
+        255,
+        245
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "media_artist",
+      "label": "",
+      "source": "media_artist",
+      "format": "{value}",
+      "x": 626,
+      "y": 380,
+      "box_width": 700,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 20,
+      "font_bold": false,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        180,
+        220,
+        190
+      ],
+      "value_color": [
+        200,
+        235,
+        210
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "media_state",
+      "label": "Stan",
+      "source": "media_state",
+      "format": "{value}",
+      "x": 626,
+      "y": 408,
+      "box_width": 240,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 18,
+      "font_bold": false,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        160,
+        220,
+        180
+      ],
+      "value_color": [
+        200,
+        235,
+        210
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "media_app",
+      "label": "Player",
+      "source": "media_app",
+      "format": "{value}",
+      "x": 910,
+      "y": 408,
+      "box_width": 300,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 18,
+      "font_bold": false,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        160,
+        220,
+        180
+      ],
+      "value_color": [
+        200,
+        235,
+        210
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "cpu_temp",
+      "label": "CPU Temp",
+      "source": "cpu_temp_c",
+      "format": "{value}",
+      "x": 1510,
+      "y": 126,
+      "box_width": 250,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "font_bold": false,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        170,
+        255,
+        190
+      ],
+      "value_color": [
+        235,
+        255,
+        240
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "vram",
+      "label": "VRAM",
+      "source": "vram_percent",
+      "format": "{value}",
+      "x": 1510,
+      "y": 160,
+      "box_width": 250,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "font_bold": false,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        170,
+        255,
+        190
+      ],
+      "value_color": [
+        235,
+        255,
+        240
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "load",
+      "label": "Load",
+      "source": "load_average",
+      "format": "{value}",
+      "x": 1510,
+      "y": 194,
+      "box_width": 250,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "font_bold": false,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        170,
+        255,
+        190
+      ],
+      "value_color": [
+        235,
+        255,
+        240
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "images": [
+    {
+      "id": "overlay_frame",
+      "path": "linux_matrix_green_assets/2026-05-08/overlay/frame.png",
+      "rect": [
+        0,
+        0,
+        1920,
+        462
+      ],
+      "fit": "stretch",
+      "opacity": 1.0,
+      "rotation": 0,
+      "z_index": 260,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "media_cover",
+      "path": "",
+      "source": "media_cover",
+      "rect": [
+        510,
+        342,
+        86,
+        86
+      ],
+      "fit": "cover",
+      "opacity": 1.0,
+      "radius": 18,
+      "border_width": 2,
+      "border_color": [
+        200,
+        255,
+        220,
+        180
+      ],
+      "glow_radius": 14,
+      "glow_opacity": 0.35,
+      "rotation": 0,
+      "z_index": 230,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "effects": {
+    "animation": {
+      "enabled": false,
+      "current_frame": 0,
+      "frame_paths": [],
+      "frame_durations_ms": []
+    },
+    "motion_tracks": []
+  }
+}

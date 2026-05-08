@@ -1,0 +1,526 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Linux Matrix Blue",
+    "description": "Niebieski motyw z hero media i monitoringiem CPU/GPU/RAM.",
+    "author": "Open-Trofeo-LCD",
+    "tags": [
+      "monitor",
+      "media",
+      "blue",
+      "custom"
+    ]
+  },
+  "canvas": {
+    "width": 1920,
+    "height": 462,
+    "rotation": 180
+  },
+  "background": {
+    "kind": "image",
+    "base_color": [
+      4,
+      8,
+      16
+    ],
+    "accent_color": [
+      0,
+      180,
+      255
+    ],
+    "texture_alpha": 0.18,
+    "path": "linux_matrix_blue_assets/2026-05-08/image/background.png",
+    "fit": "cover",
+    "opacity": 1.0,
+    "panels": [
+      {
+        "id": "top_band",
+        "rect": [
+          120,
+          18,
+          1680,
+          44
+        ],
+        "radius": 14,
+        "fill": [
+          0,
+          0,
+          0,
+          145
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "stats_bar",
+        "rect": [
+          360,
+          76,
+          1180,
+          72
+        ],
+        "radius": 20,
+        "fill": [
+          0,
+          0,
+          0,
+          110
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "media_hero",
+        "rect": [
+          390,
+          258,
+          1140,
+          128
+        ],
+        "radius": 28,
+        "fill": [
+          0,
+          0,
+          0,
+          170
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "right_clock",
+        "rect": [
+          1570,
+          70,
+          240,
+          86
+        ],
+        "radius": 20,
+        "fill": [
+          0,
+          0,
+          0,
+          105
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      }
+    ]
+  },
+  "texts": [
+    {
+      "id": "title_main",
+      "text": "LINUX MATRIX",
+      "x": 796,
+      "y": 28,
+      "box_width": 320,
+      "box_height": 36,
+      "font_family": "DejaVu Sans",
+      "font_size": 20,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "color": [
+        110,
+        230,
+        255
+      ],
+      "align": "left",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "media_hdr",
+      "text": "NOW PLAYING",
+      "x": 582,
+      "y": 270,
+      "box_width": 240,
+      "box_height": 36,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "color": [
+        120,
+        240,
+        255
+      ],
+      "align": "left",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "stats": [
+    {
+      "id": "host",
+      "label": "",
+      "source": "hostname",
+      "format": "{value}",
+      "x": 170,
+      "y": 28,
+      "box_width": 280,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 24,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        120,
+        240,
+        255
+      ],
+      "value_color": [
+        120,
+        240,
+        255
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "cpu_usage",
+      "label": "CPU",
+      "source": "cpu_usage_percent",
+      "format": "{value}",
+      "x": 416,
+      "y": 98,
+      "box_width": 240,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 24,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        170,
+        220,
+        255
+      ],
+      "value_color": [
+        240,
+        248,
+        255
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "gpu_usage",
+      "label": "GPU",
+      "source": "gpu_load",
+      "format": "{value}",
+      "x": 686,
+      "y": 98,
+      "box_width": 240,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 24,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        170,
+        220,
+        255
+      ],
+      "value_color": [
+        240,
+        248,
+        255
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "ram_usage",
+      "label": "RAM",
+      "source": "mem_percent",
+      "format": "{value}",
+      "x": 956,
+      "y": 98,
+      "box_width": 240,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 24,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        170,
+        220,
+        255
+      ],
+      "value_color": [
+        240,
+        248,
+        255
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "cpu_temp",
+      "label": "CPU Temp",
+      "source": "cpu_temp_c",
+      "format": "{value}",
+      "x": 1226,
+      "y": 98,
+      "box_width": 270,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 24,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        170,
+        220,
+        255
+      ],
+      "value_color": [
+        240,
+        248,
+        255
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "clock",
+      "label": "",
+      "source": "time_hms",
+      "format": "{value}",
+      "x": 1600,
+      "y": 98,
+      "box_width": 180,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 30,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        180,
+        255,
+        255
+      ],
+      "value_color": [
+        255,
+        240,
+        180
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "media_title",
+      "label": "",
+      "source": "media_title",
+      "format": "{value}",
+      "x": 584,
+      "y": 304,
+      "box_width": 760,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 28,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": true,
+      "marquee_speed": 62.0,
+      "label_color": [
+        180,
+        230,
+        255
+      ],
+      "value_color": [
+        240,
+        248,
+        255
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "media_artist",
+      "label": "",
+      "source": "media_artist",
+      "format": "{value}",
+      "x": 584,
+      "y": 338,
+      "box_width": 760,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
+      "font_bold": false,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        150,
+        210,
+        240
+      ],
+      "value_color": [
+        200,
+        232,
+        248
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "media_state",
+      "label": "Stan",
+      "source": "media_state",
+      "format": "{value}",
+      "x": 584,
+      "y": 368,
+      "box_width": 220,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 18,
+      "font_bold": false,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        140,
+        200,
+        235
+      ],
+      "value_color": [
+        190,
+        225,
+        245
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "media_app",
+      "label": "Player",
+      "source": "media_app",
+      "format": "{value}",
+      "x": 836,
+      "y": 368,
+      "box_width": 280,
+      "box_height": 28,
+      "font_family": "DejaVu Sans",
+      "font_size": 18,
+      "font_bold": false,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        140,
+        200,
+        235
+      ],
+      "value_color": [
+        190,
+        225,
+        245
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "images": [
+    {
+      "id": "overlay_frame",
+      "path": "linux_matrix_blue_assets/2026-05-08/overlay/frame.png",
+      "rect": [
+        0,
+        0,
+        1920,
+        462
+      ],
+      "fit": "stretch",
+      "opacity": 1.0,
+      "rotation": 0,
+      "z_index": 260,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "media_cover",
+      "path": "",
+      "source": "media_cover",
+      "rect": [
+        438,
+        284,
+        116,
+        116
+      ],
+      "fit": "cover",
+      "opacity": 1.0,
+      "radius": 20,
+      "border_width": 2,
+      "border_color": [
+        190,
+        235,
+        255,
+        180
+      ],
+      "glow_radius": 16,
+      "glow_opacity": 0.32,
+      "rotation": 0,
+      "z_index": 230,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "effects": {
+    "animation": {
+      "enabled": false,
+      "current_frame": 0,
+      "frame_paths": [],
+      "frame_durations_ms": []
+    },
+    "motion_tracks": []
+  }
+}

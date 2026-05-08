@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Tux Circuit Cyan",
+    "description": "Cyber-linuxowy motyw w chłodnym cyjanie z dużym playerem i czytelnym zegarem.",
+    "author": "Open-Trofeo-LCD",
+    "tags": ["monitor", "media", "linux", "cyan", "custom"]
+  },
+  "canvas": {
+    "width": 1920,
+    "height": 462,
+    "rotation": 180
+  },
+  "background": {
+    "kind": "image",
+    "base_color": [4, 8, 14],
+    "accent_color": [44, 220, 255],
+    "texture_alpha": 0.18,
+    "path": "tux_circuit_cyan_assets/2026-05-08/image/background.png",
+    "fit": "cover",
+    "opacity": 1.0,
+    "panels": [
+      {"id": "clock_panel", "rect": [1398, 24, 408, 72], "radius": 22, "fill": [0, 0, 0, 126], "z_index": 80, "visible": true, "locked": false},
+      {"id": "stats_panel", "rect": [106, 314, 558, 96], "radius": 20, "fill": [0, 0, 0, 116], "z_index": 80, "visible": true, "locked": false},
+      {"id": "media_panel", "rect": [742, 286, 1072, 130], "radius": 24, "fill": [0, 0, 0, 138], "z_index": 80, "visible": true, "locked": false}
+    ]
+  },
+  "texts": [
+    {
+      "id": "title",
+      "text": "TUX CIRCUIT CYAN",
+      "x": 774,
+      "y": 28,
+      "box_width": 380,
+      "box_height": 38,
+      "font_family": "Ubuntu",
+      "font_size": 24,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "color": [168, 244, 255],
+      "align": "center",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "stats": [
+    {"id": "host", "label": "", "source": "hostname", "format": "{value}", "x": 116, "y": 30, "box_width": 300, "box_height": 30, "font_family": "Ubuntu", "font_size": 24, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [190, 234, 248], "value_color": [190, 234, 248], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "clock", "label": "", "source": "time_hms", "format": "{value}", "x": 1442, "y": 38, "box_width": 320, "box_height": 40, "font_family": "Ubuntu", "font_size": 42, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [166, 244, 255], "value_color": [166, 244, 255], "align": "center", "z_index": 210, "visible": true, "locked": false},
+    {"id": "cpu_usage", "label": "CPU", "source": "cpu_usage_percent", "format": "{value}", "x": 126, "y": 338, "box_width": 156, "box_height": 30, "font_family": "Ubuntu", "font_size": 28, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [198, 220, 232], "value_color": [44, 220, 255], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "gpu_usage", "label": "GPU", "source": "gpu_load", "format": "{value}", "x": 308, "y": 338, "box_width": 156, "box_height": 30, "font_family": "Ubuntu", "font_size": 28, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [198, 220, 232], "value_color": [44, 220, 255], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "ram_usage", "label": "RAM", "source": "mem_percent", "format": "{value}", "x": 490, "y": 338, "box_width": 142, "box_height": 30, "font_family": "Ubuntu", "font_size": 28, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [198, 220, 232], "value_color": [110, 255, 220], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "media_title", "label": "", "source": "media_title", "format": "{value}", "x": 912, "y": 310, "box_width": 792, "box_height": 38, "font_family": "Ubuntu", "font_size": 34, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": true, "marquee_speed": 62.0, "label_color": [226, 244, 248], "value_color": [226, 244, 248], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "media_artist", "label": "", "source": "media_artist", "format": "{value}", "x": 912, "y": 350, "box_width": 792, "box_height": 28, "font_family": "Ubuntu", "font_size": 24, "font_bold": false, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [172, 206, 220], "value_color": [172, 206, 220], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "media_app", "label": "Player", "source": "media_app", "format": "{value}", "x": 912, "y": 384, "box_width": 248, "box_height": 24, "font_family": "Ubuntu", "font_size": 18, "font_bold": false, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [148, 188, 204], "value_color": [148, 188, 204], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "media_state", "label": "Stan", "source": "media_state", "format": "{value}", "x": 1182, "y": 384, "box_width": 230, "box_height": 24, "font_family": "Ubuntu", "font_size": 18, "font_bold": false, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [148, 188, 204], "value_color": [148, 188, 204], "align": "left", "z_index": 210, "visible": true, "locked": false}
+  ],
+  "images": [
+    {"id": "media_cover", "path": "", "source": "media_cover", "rect": [756, 304, 138, 138], "fit": "cover", "opacity": 1.0, "radius": 24, "border_width": 2, "border_color": [156, 236, 248, 180], "glow_radius": 18, "glow_opacity": 0.34, "rotation": 0, "z_index": 230, "visible": true, "locked": false},
+    {"id": "overlay_frame", "path": "tux_circuit_cyan_assets/2026-05-08/overlay/frame.png", "rect": [0, 0, 1920, 462], "fit": "stretch", "opacity": 1.0, "rotation": 0, "z_index": 260, "visible": true, "locked": false}
+  ],
+  "effects": {
+    "animation": {"enabled": false, "current_frame": 0, "frame_paths": []}
+  }
+}
