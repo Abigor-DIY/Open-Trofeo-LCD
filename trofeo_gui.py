@@ -1598,6 +1598,8 @@ class TrofeoGui(QMainWindow):
         self._log_entries: list[str] = []
         self._max_log_entries = 1500
         self._log_refresh_pending = False
+        self._startup_theme_name = ""
+        self._startup_theme_applied = False
         self._history_undo: list[dict[str, Any]] = []
         self._history_redo: list[dict[str, Any]] = []
         self._history_suspended = False
@@ -4859,6 +4861,8 @@ class TrofeoGui(QMainWindow):
             designer_mode = str(payload.get("designer_mode", "")).strip()
             if designer_mode and hasattr(self, "designer_mode_combo"):
                 self.designer_mode_combo.setCurrentText(designer_mode)
+            self._startup_theme_name = str(payload.get("startup_theme", "")).strip()
+            self._startup_theme_applied = False
             for attr, key, default in (
                 ("cfg_start_with_system_chk", "cfg_start_with_system", True),
                 ("cfg_minimize_to_tray_chk", "cfg_minimize_to_tray", True),
@@ -4890,6 +4894,7 @@ class TrofeoGui(QMainWindow):
             payload["ui_scale"] = int(self.ui_scale_combo.currentData() or 100)
         if hasattr(self, "designer_mode_combo"):
             payload["designer_mode"] = self.designer_mode_combo.currentText()
+        payload["startup_theme"] = str(getattr(self, "_startup_theme_name", "")).strip()
         for attr, key in (
             ("cfg_start_with_system_chk", "cfg_start_with_system"),
             ("cfg_minimize_to_tray_chk", "cfg_minimize_to_tray"),
@@ -6143,6 +6148,9 @@ class TrofeoGui(QMainWindow):
         if current in names:
             self.theme_combo.setCurrentText(current)
         self.theme_combo.blockSignals(False)
+        if self._startup_theme_name and self._startup_theme_name not in names:
+            self._startup_theme_name = ""
+            self._save_ui_state()
         if hasattr(self, "library_summary_label"):
             self.library_summary_label.setText(
                 f"Biblioteka: {len(names)} motywów. Edytuj, zastosuj, duplikuj lub usuń z poziomu kafelka."
@@ -6151,6 +6159,7 @@ class TrofeoGui(QMainWindow):
             )
         self._rebuild_runtime_theme_cards()
         self._rebuild_library_theme_browser()
+        self._apply_startup_theme_if_needed()
 
     def _update_playlist(self, playlist_payload: dict[str, Any]) -> None:
         items = playlist_payload.get("items", [])
@@ -6540,6 +6549,15 @@ class TrofeoGui(QMainWindow):
                 active_label = QLabel("Aktualnie wybrany")
                 active_label.setObjectName("layerBadgeLabel")
                 layout.addWidget(active_label)
+            startup_row = QHBoxLayout()
+            startup_chk = QCheckBox("Zastosuj przy uruchomieniu")
+            startup_chk.setChecked(name == self._startup_theme_name)
+            startup_chk.toggled.connect(
+                lambda checked, theme_name=name: self._set_startup_theme_preference(theme_name, checked)
+            )
+            startup_row.addWidget(startup_chk)
+            startup_row.addStretch(1)
+            layout.addLayout(startup_row)
             actions = QHBoxLayout()
             actions.setSpacing(6)
             select_btn = QPushButton("Edytuj" if str(item.get("type", "")) == "theme-doc" else "Wybierz")
@@ -6585,6 +6603,33 @@ class TrofeoGui(QMainWindow):
             self.theme_doc_path_edit.setText(path)
             self.load_theme_doc()
             self._go_designer()
+
+    def _set_startup_theme_preference(self, theme_name: str, enabled: bool) -> None:
+        if enabled:
+            next_name = theme_name
+        elif self._startup_theme_name == theme_name:
+            next_name = ""
+        else:
+            return
+        if self._startup_theme_name == next_name:
+            return
+        self._startup_theme_name = next_name
+        self._startup_theme_applied = False
+        self._save_ui_state()
+        self._rebuild_library_theme_browser()
+        if next_name:
+            self.append_log(f"[theme-startup] Ustawiono motyw startowy: {next_name}")
+        else:
+            self.append_log("[theme-startup] Wyczyszczono motyw startowy.")
+
+    def _apply_startup_theme_if_needed(self) -> None:
+        if self._startup_theme_applied:
+            return
+        theme_name = self._startup_theme_name.strip()
+        if not theme_name or theme_name not in self.theme_items:
+            return
+        self._startup_theme_applied = True
+        self._apply_runtime_theme_card(theme_name)
 
     def _theme_type_badge(self, theme_item: dict[str, Any]) -> str:
         theme_type = str(theme_item.get("type", "image")).strip()
