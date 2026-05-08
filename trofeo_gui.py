@@ -2073,6 +2073,11 @@ class TrofeoGui(QMainWindow):
         self.header_device_combo.addItem("Trofeo LCD")
         self.header_ready_label = QLabel("Start")
         self.header_ready_label.setObjectName("headerReadyBadge")
+        self.header_donate_btn = QPushButton("Donate / Wspomóż")
+        self.header_donate_btn.setObjectName("primaryButton")
+        self.header_donate_btn.setMinimumHeight(40)
+        self.header_donate_btn.clicked.connect(lambda: self._open_external_link(PROJECT_SPONSOR_URL, "strony wsparcia"))
+        self.header_donate_btn.setToolTip("Otwórz GitHub Sponsors dla Open Trofeo LCD")
 
         chrome_layout.addLayout(title_stack, 1)
         mode_label = QLabel("Tryb")
@@ -2097,8 +2102,9 @@ class TrofeoGui(QMainWindow):
         chrome_layout.addWidget(device_label)
         chrome_layout.addWidget(self.header_device_combo)
         chrome_layout.addWidget(self.header_ready_label)
+        chrome_layout.addSpacing(8)
+        chrome_layout.addWidget(self.header_donate_btn)
         outer.addWidget(chrome_box)
-        chrome_box.hide()
 
         tabs = QTabWidget()
         tabs.setObjectName("mainSectionTabs")
@@ -2667,28 +2673,6 @@ class TrofeoGui(QMainWindow):
         paths_form.addRow("Tryb komunikacji:", self.cfg_comm_mode_combo)
         config_grid.addWidget(paths_box, 1, 1, 1, 2)
 
-        support_box = QGroupBox("Wesprzyj Projekt")
-        support_box.setObjectName("configCardBox")
-        support_layout = QVBoxLayout(support_box)
-        support_copy = QLabel(
-            "Jeśli Open Trofeo LCD oszczędza Ci czas, możesz wesprzeć dalszy rozwój projektu "
-            "albo przejść bezpośrednio do repozytorium GitHub."
-        )
-        support_copy.setWordWrap(True)
-        support_copy.setObjectName("studioHeroText")
-        support_layout.addWidget(support_copy)
-        self.cfg_donate_btn = QPushButton("Donate / Wspomóż programistę")
-        self.cfg_repo_btn = QPushButton("Otwórz repozytorium GitHub")
-        self.cfg_donate_btn.setObjectName("primaryButton")
-        self.cfg_repo_btn.setObjectName("secondaryAccentButton")
-        self.cfg_donate_btn.clicked.connect(lambda: self._open_external_link(PROJECT_SPONSOR_URL, "strony wsparcia"))
-        self.cfg_repo_btn.clicked.connect(lambda: self._open_external_link(PROJECT_REPOSITORY_URL, "repozytorium projektu"))
-        for button in (self.cfg_donate_btn, self.cfg_repo_btn):
-            button.setMinimumHeight(44)
-            support_layout.addWidget(button)
-        support_layout.addStretch(1)
-        config_grid.addWidget(support_box, 1, 3)
-
         quick_cfg_box = QGroupBox("Szybkie Akcje")
         quick_cfg_box.setObjectName("configCardBox")
         quick_cfg_layout = QVBoxLayout(quick_cfg_box)
@@ -2713,7 +2697,7 @@ class TrofeoGui(QMainWindow):
             button.setObjectName("quickActionButton")
             quick_cfg_layout.addWidget(button)
         quick_cfg_layout.addStretch(1)
-        config_grid.addWidget(quick_cfg_box, 0, 4, 2, 1)
+        config_grid.addWidget(quick_cfg_box, 0, 3, 2, 1)
         automation_layout.addLayout(config_grid)
 
         self.playlist_list = QListWidget()
