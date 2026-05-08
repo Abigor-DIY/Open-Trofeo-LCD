@@ -68,6 +68,7 @@ try:
         QVBoxLayout,
         QWidget,
         QMenu,
+        QPlainTextEdit,
         QSystemTrayIcon,
         QToolButton,
     )
@@ -1577,7 +1578,7 @@ class TrofeoGui(QMainWindow):
 
     def __init__(self, base_url: str):
         super().__init__()
-        self.setWindowTitle("Open Trofeo LCD - Backend Control")
+        self.setWindowTitle("Open Trofeo LCD")
         self.resize(1680, 1040)
         self.setMinimumSize(1480, 920)
         self._status_in_flight = False
@@ -1596,6 +1597,7 @@ class TrofeoGui(QMainWindow):
         self._template_thumb_map: dict[str, QLabel] = {}
         self._log_entries: list[str] = []
         self._max_log_entries = 1500
+        self._log_refresh_pending = False
         self._history_undo: list[dict[str, Any]] = []
         self._history_redo: list[dict[str, Any]] = []
         self._history_suspended = False
@@ -1981,7 +1983,7 @@ class TrofeoGui(QMainWindow):
         brand_row = QHBoxLayout()
         brand_icon = QLabel("⟡")
         brand_icon.setObjectName("shellBrandIcon")
-        self.brand_label = QLabel("THERMALIGHT")
+        self.brand_label = QLabel("THERMALRIGHT")
         self.brand_label.setObjectName("shellBrandLabel")
         self.brand_sub = QLabel("TROFEO LCD")
         self.brand_sub.setObjectName("shellBrandSubLabel")
@@ -1995,13 +1997,13 @@ class TrofeoGui(QMainWindow):
         sidebar_layout.addLayout(brand_row)
         sidebar_layout.addWidget(self.brand_sub)
 
-        self.nav_library_btn = QPushButton("🗂  Menedżer\nmotywów")
+        self.nav_library_btn = QPushButton("🗂  Galeria\nmotywów")
         self.nav_designer_btn = QPushButton("✎  Projektant\nmotywów")
         self.nav_system_btn = QPushButton("◉  System")
         self.nav_logs_btn = QPushButton("☰  Logi")
         self.nav_config_btn = QPushButton("⚙  Konfiguracja")
         self._nav_button_meta = {
-            self.nav_library_btn: ("🗂", "Menedżer motywów"),
+            self.nav_library_btn: ("🗂", "Galeria motywów"),
             self.nav_designer_btn: ("✎", "Projektant motywów"),
             self.nav_system_btn: ("◉", "System"),
             self.nav_logs_btn: ("☰", "Logi"),
@@ -2039,19 +2041,20 @@ class TrofeoGui(QMainWindow):
         content = QWidget()
         outer = QVBoxLayout(content)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(14)
+        outer.setSpacing(12)
         shell_layout.addWidget(content, 1)
 
         chrome_box = QGroupBox("Sterowanie")
         self.chrome_box = chrome_box
         chrome_box.setObjectName("shellHeader")
+        chrome_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         chrome_layout = QHBoxLayout(chrome_box)
-        chrome_layout.setContentsMargins(18, 16, 18, 16)
-        chrome_layout.setSpacing(16)
+        chrome_layout.setContentsMargins(16, 10, 16, 10)
+        chrome_layout.setSpacing(10)
 
-        title_label = QLabel("Trofeo LCD – Backend Control")
+        title_label = QLabel("Open Trofeo LCD")
         title_label.setObjectName("shellTitleLabel")
-        title_sub = QLabel("Sterowanie urządzeniem, projektowanie motywów i monitoring runtime.")
+        title_sub = QLabel("Thermalright Trofeo LCD: sterowanie urządzeniem, motywy i monitoring runtime.")
         title_sub.setObjectName("shellTitleMeta")
         title_stack = QVBoxLayout()
         title_stack.setContentsMargins(0, 0, 0, 0)
@@ -2066,16 +2069,20 @@ class TrofeoGui(QMainWindow):
         for value in (90, 100, 110, 125, 140):
             self.ui_scale_combo.addItem(f"{value}%", value)
         self.ui_scale_combo.setCurrentIndex(1)
+        for combo in (self.ui_mode_combo, self.ui_theme_combo, self.ui_scale_combo):
+            combo.setMinimumHeight(34)
+            combo.setMaxVisibleItems(8)
 
         self.header_connection_label = QLabel("● Rozłączono")
         self.header_connection_label.setObjectName("headerStatusBadge")
         self.header_device_combo = QComboBox()
         self.header_device_combo.addItem("Trofeo LCD")
+        self.header_device_combo.setMinimumHeight(34)
         self.header_ready_label = QLabel("Start")
         self.header_ready_label.setObjectName("headerReadyBadge")
         self.header_donate_btn = QPushButton("Donate / Wspomóż")
         self.header_donate_btn.setObjectName("primaryButton")
-        self.header_donate_btn.setMinimumHeight(40)
+        self.header_donate_btn.setMinimumHeight(34)
         self.header_donate_btn.clicked.connect(lambda: self._open_external_link(PROJECT_SPONSOR_URL, "strony wsparcia"))
         self.header_donate_btn.setToolTip("Otwórz GitHub Sponsors dla Open Trofeo LCD")
 
@@ -2096,7 +2103,7 @@ class TrofeoGui(QMainWindow):
         chrome_layout.addWidget(self.ui_theme_combo)
         chrome_layout.addWidget(scale_label)
         chrome_layout.addWidget(self.ui_scale_combo)
-        chrome_layout.addSpacing(12)
+        chrome_layout.addSpacing(6)
         chrome_layout.addWidget(conn_label)
         chrome_layout.addWidget(self.header_connection_label)
         chrome_layout.addWidget(device_label)
@@ -2755,15 +2762,6 @@ class TrofeoGui(QMainWindow):
         automation_layout.addLayout(cfg_actions_row)
         automation_layout.addStretch(1)
 
-        self._hidden_ui_theme_combo = self.ui_theme_combo
-        self._hidden_ui_mode_combo = self.ui_mode_combo
-        self._hidden_ui_scale_combo = self.ui_scale_combo
-        self.ui_theme_combo = self.cfg_ui_theme_combo
-        self.ui_mode_combo = self.cfg_ui_mode_combo
-        self.ui_scale_combo = self.cfg_ui_scale_combo
-        self.ui_theme_combo.currentTextChanged.connect(self.apply_ui_chrome)
-        self.ui_mode_combo.currentTextChanged.connect(self.apply_ui_chrome)
-        self.ui_scale_combo.currentIndexChanged.connect(self.apply_ui_chrome)
         self._sync_config_ui_controls_from_header()
 
         studio_sections_tabs = QTabWidget()
@@ -2781,7 +2779,7 @@ class TrofeoGui(QMainWindow):
         designer_workspace_layout = QVBoxLayout(designer_workspace_tab)
         designer_workspace_layout.setContentsMargins(0, 0, 0, 0)
         designer_workspace_layout.setSpacing(10)
-        studio_sections_tabs.addTab(library_tab, "Biblioteka motywów")
+        studio_sections_tabs.addTab(library_tab, "Galeria motywów")
         studio_sections_tabs.addTab(designer_workspace_tab, "Designer")
         self.nav_library_btn.clicked.connect(lambda: self._go_library())
         self.nav_designer_btn.clicked.connect(lambda: self._go_designer())
@@ -2841,16 +2839,19 @@ class TrofeoGui(QMainWindow):
         self.quick_preset_minimal_btn.clicked.connect(lambda: self.apply_builtin_layout_preset("minimal"))
         self.quick_preset_focus_btn.clicked.connect(lambda: self.apply_builtin_layout_preset("focus"))
 
-        library_intro_box = QGroupBox("Menedżer motywów")
+        library_intro_box = QGroupBox("Galeria motywów")
         library_intro_box.setObjectName("librarySectionBox")
+        library_intro_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         library_intro_layout = QHBoxLayout(library_intro_box)
+        library_intro_layout.setContentsMargins(14, 12, 14, 12)
+        library_intro_layout.setSpacing(10)
         self.library_summary_label = QLabel(
-            "Wybierz gotowy szablon, utwórz nowy motyw albo edytuj zapisane motywy w projektancie."
+            "Biblioteka motywów: importuj, odśwież i otwieraj wybrane motywy do edycji."
         )
         self.library_summary_label.setObjectName("selectionSummaryLabel")
-        self.library_summary_label.setWordWrap(True)
-        self.library_refresh_btn = QPushButton("Odśwież bibliotekę")
-        self.library_import_ttcr_btn = QPushButton("Importuj z TTCR")
+        self.library_summary_label.setWordWrap(False)
+        self.library_refresh_btn = QPushButton("Odśwież")
+        self.library_import_ttcr_btn = QPushButton("Import TTCR")
         self.library_refresh_btn.clicked.connect(self.refresh_themes)
         self.library_import_ttcr_btn.clicked.connect(self.import_ttcr_theme_bundle)
         library_intro_layout.addWidget(self.library_summary_label, 1)
@@ -2859,9 +2860,10 @@ class TrofeoGui(QMainWindow):
         library_layout.addWidget(library_intro_box)
         self.new_theme_options_box = QGroupBox("Nowy motyw")
         self.new_theme_options_box.setObjectName("librarySectionBox")
+        self.new_theme_options_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         new_theme_box_layout = QVBoxLayout(self.new_theme_options_box)
-        new_theme_box_layout.setContentsMargins(14, 14, 14, 14)
-        new_theme_box_layout.setSpacing(10)
+        new_theme_box_layout.setContentsMargins(14, 12, 14, 12)
+        new_theme_box_layout.setSpacing(8)
         self.new_theme_name_edit = QLineEdit("Nowy Motyw")
         self.new_theme_name_edit.setObjectName("newThemeNameEdit")
         self.new_theme_name_edit.setPlaceholderText("Np. Mój dashboard")
@@ -2896,10 +2898,10 @@ class TrofeoGui(QMainWindow):
         new_theme_box_layout.addWidget(self.new_theme_path_row)
         self.new_theme_path_row.hide()
         self.new_theme_hint_label = QLabel(
-            "Podaj nazwę i styl startowy. Aplikacja sama zaproponuje plik motywu w katalogu `themes`."
+            "Podaj nazwę i styl startowy. Plik motywu zostanie zaproponowany automatycznie."
         )
         self.new_theme_hint_label.setObjectName("selectionSummaryLabel")
-        self.new_theme_hint_label.setWordWrap(True)
+        self.new_theme_hint_label.setWordWrap(False)
         new_theme_box_layout.addWidget(self.new_theme_hint_label)
         self.new_theme_browse_btn.clicked.connect(self.browse_new_theme_path)
         self.new_theme_create_btn.clicked.connect(self.create_new_theme_from_template)
@@ -2908,7 +2910,7 @@ class TrofeoGui(QMainWindow):
         self.new_theme_path_edit.textEdited.connect(self._mark_new_theme_path_customized)
         self.new_theme_advanced_btn.toggled.connect(self._toggle_new_theme_advanced)
         library_layout.addWidget(self.new_theme_options_box)
-        theme_browser_box = QGroupBox("Moje motywy")
+        theme_browser_box = QGroupBox("Motywy")
         self.theme_browser_box = theme_browser_box
         theme_browser_box.setObjectName("librarySectionBox")
         theme_browser_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
@@ -3265,24 +3267,34 @@ class TrofeoGui(QMainWindow):
         designer_tab_layout.addWidget(designer_box, 1)
 
         # LOGI API (Przeniesione na osobny layout, by nie przeszkadzały w Designerze)
-        log_box = QGroupBox("Odpowiedź API")
+        log_box = QGroupBox("Logi API i aplikacji")
+        log_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         log_layout = QVBoxLayout(log_box)
+        log_layout.setContentsMargins(14, 14, 14, 14)
+        log_layout.setSpacing(10)
         
         log_toolbar = QHBoxLayout()
         self.log_filter_edit = QLineEdit(); self.log_filter_edit.setPlaceholderText("Filtr logów...")
-        self.log_filter_edit.textChanged.connect(self._refresh_log_view)
+        self.log_filter_edit.textChanged.connect(lambda: self._refresh_log_view(force=True))
         self.log_only_errors_chk = QCheckBox("Tylko błędy")
-        self.log_only_errors_chk.toggled.connect(self._refresh_log_view)
+        self.log_only_errors_chk.toggled.connect(lambda: self._refresh_log_view(force=True))
         self.log_hide_status_chk = QCheckBox("Ukryj status"); self.log_hide_status_chk.setChecked(True)
-        self.log_hide_status_chk.toggled.connect(self._refresh_log_view)
+        self.log_hide_status_chk.toggled.connect(lambda: self._refresh_log_view(force=True))
+        self.log_copy_btn = QPushButton("Kopiuj widok"); self.log_copy_btn.clicked.connect(self.copy_filtered_logs)
+        self.log_copy_selection_btn = QPushButton("Kopiuj zaznaczenie"); self.log_copy_selection_btn.clicked.connect(self.copy_selected_logs)
         self.log_clear_btn = QPushButton("Wyczyść"); self.log_clear_btn.clicked.connect(self.clear_logs)
         
         log_toolbar.addWidget(QLabel("Szukaj:")); log_toolbar.addWidget(self.log_filter_edit, 1)
         log_toolbar.addWidget(self.log_only_errors_chk); log_toolbar.addWidget(self.log_hide_status_chk)
+        log_toolbar.addWidget(self.log_copy_btn); log_toolbar.addWidget(self.log_copy_selection_btn)
         log_toolbar.addWidget(self.log_clear_btn)
         log_layout.addLayout(log_toolbar)
         
-        self.log_view = QTextEdit(); self.log_view.setReadOnly(True); self.log_view.setMaximumHeight(120)
+        self.log_view = QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.log_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.log_view.setMinimumHeight(420)
         log_layout.addWidget(self.log_view)
         logs_layout.addWidget(log_box, 1)
 
@@ -3312,18 +3324,22 @@ class TrofeoGui(QMainWindow):
         self.layout_preset_load_btn.clicked.connect(self.load_layout_preset)
 
         for widget, signal in [
-            (self.designer_id_edit, "textEdited"), (self.designer_x_spin, "valueChanged"),
+            (self.designer_id_edit, "textChanged"), (self.designer_x_spin, "valueChanged"),
             (self.designer_y_spin, "valueChanged"), (self.designer_w_spin, "valueChanged"),
             (self.designer_h_spin, "valueChanged"), (self.designer_z_spin, "valueChanged"),
             (self.designer_rotation_spin, "valueChanged"), (self.designer_opacity_spin, "valueChanged"),
-            (self.designer_text_edit, "textEdited"), (self.designer_label_edit, "textEdited"),
-            (self.designer_format_edit, "textEdited"), (self.designer_path_edit, "textEdited"),
+            (self.designer_text_edit, "textChanged"), (self.designer_label_edit, "textChanged"),
+            (self.designer_format_edit, "textChanged"), (self.designer_path_edit, "textChanged"),
             (self.designer_visible_chk, "toggled"), (self.designer_locked_chk, "toggled"),
             (self.designer_source_combo, "currentIndexChanged"), (self.designer_align_combo, "currentIndexChanged"),
             (self.designer_font_family_combo, "currentTextChanged"), (self.designer_font_size_spin, "valueChanged"),
+            (self.designer_font_bold_chk, "toggled"), (self.designer_font_italic_chk, "toggled"),
+            (self.designer_font_underline_chk, "toggled"),
+            (self.designer_color_edit, "textChanged"), (self.designer_label_color_edit, "textChanged"),
+            (self.designer_value_color_edit, "textChanged"),
             (self.bg_kind_combo, "currentTextChanged"), (self.bg_path_edit, "textChanged")
         ]:
-            try: getattr(widget, signal).connect(self.on_designer_prop_changed)
+            try: getattr(widget, signal).connect(self.on_designer_field_changed)
             except: pass
         self.bg_animation_timeline.frame_selected.connect(self.select_animation_frame)
         self.layout_preset_save_btn.clicked.connect(self.save_layout_preset)
@@ -3376,6 +3392,7 @@ class TrofeoGui(QMainWindow):
 
     def clear_logs(self) -> None:
         self._log_entries = []
+        self._log_refresh_pending = False
         self.log_view.clear()
 
     def copy_filtered_logs(self) -> None:
@@ -3384,7 +3401,19 @@ class TrofeoGui(QMainWindow):
             QMessageBox.information(self, "Logi", "Brak logów do skopiowania.")
             return
         QApplication.clipboard().setText(text)
+        self._refresh_log_view(force=True)
         self.append_log("[logs] Skopiowano przefiltrowane logi do schowka.")
+
+    def copy_selected_logs(self) -> None:
+        if not hasattr(self, "log_view"):
+            return
+        selected = self.log_view.textCursor().selectedText().replace("\u2029", "\n").strip()
+        if not selected:
+            QMessageBox.information(self, "Logi", "Brak zaznaczonego fragmentu logów.")
+            return
+        QApplication.clipboard().setText(selected)
+        self._refresh_log_view(force=True)
+        self.append_log("[logs] Skopiowano zaznaczony fragment logów do schowka.")
 
     def _filtered_log_entries(self) -> list[str]:
         needle = self.log_filter_edit.text().strip().lower()
@@ -3422,13 +3451,25 @@ class TrofeoGui(QMainWindow):
             f"System nie otworzył {label}.\nSkopiuj adres ręcznie:\n{url}",
         )
 
-    def _refresh_log_view(self) -> None:
+    def _refresh_log_view(self, *, force: bool = False) -> None:
         if not hasattr(self, "log_view"):
             return
-        self.log_view.setPlainText(self._filtered_log_text())
+        next_text = self._filtered_log_text()
+        current_text = self.log_view.toPlainText()
+        if not force and current_text == next_text:
+            return
         cursor = self.log_view.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        self.log_view.setTextCursor(cursor)
+        if not force and cursor.hasSelection():
+            self._log_refresh_pending = True
+            return
+        self._log_refresh_pending = False
+        self.log_view.setPlainText(next_text)
+        if cursor.position() >= len(current_text):
+            end_cursor = self.log_view.textCursor()
+            end_cursor.movePosition(end_cursor.MoveOperation.End)
+            self.log_view.setTextCursor(end_cursor)
+        elif force and cursor.hasSelection():
+            self.log_view.setTextCursor(cursor)
 
     def _summarize_status_payload(self, data: dict[str, Any]) -> str:
         mode = data.get("mode", "?")
@@ -4156,6 +4197,8 @@ class TrofeoGui(QMainWindow):
                 border: 1px solid {border_main};
                 border-radius: 16px;
                 background: {bg_panel};
+                margin-top: 8px;
+                padding: 10px 12px 12px 12px;
             }}
             QGroupBox#designerToolbarBox {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
@@ -4177,7 +4220,7 @@ class TrofeoGui(QMainWindow):
                 color: {text_soft};
                 font-size: {small_font}px;
                 font-weight: 700;
-                padding-right: 4px;
+                padding-right: 2px;
             }}
             QPushButton#shellNavButton {{
                 background: {bg_input};
@@ -4208,7 +4251,7 @@ class TrofeoGui(QMainWindow):
                 background: {bg_input};
                 border: 1px solid {border_soft};
                 border-radius: 10px;
-                padding: 6px 10px;
+                padding: 5px 10px;
                 color: {text_main};
                 font-weight: 700;
             }}
@@ -4216,7 +4259,7 @@ class TrofeoGui(QMainWindow):
                 background: #17361f;
                 border: 1px solid #1f7a39;
                 border-radius: 10px;
-                padding: 6px 10px;
+                padding: 5px 10px;
                 color: #7cf59a;
                 font-weight: 800;
             }}
@@ -4830,6 +4873,7 @@ class TrofeoGui(QMainWindow):
                 widget = getattr(self, attr, None)
                 if widget is not None:
                     widget.setChecked(bool(payload.get(key, default)))
+            self._sync_config_ui_controls_from_header()
         except Exception:
             pass
 
@@ -6396,7 +6440,7 @@ class TrofeoGui(QMainWindow):
         current = self.theme_combo.currentText().strip() if hasattr(self, "theme_combo") else ""
         if hasattr(self, "library_current_theme_label"):
             self.library_current_theme_label.setText(
-                f"Aktywny: {current}" if current else "Brak aktywnego motywu."
+                f"Aktualnie wybrany: {current}" if current else "Brak aktywnego motywu."
             )
         if not items:
             empty = QLabel("Brak motywów pasujących do filtra.")
@@ -6434,8 +6478,8 @@ class TrofeoGui(QMainWindow):
             card = AnimatedCardFrame("libraryCard")
             card.setObjectName("libraryCard")
             card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            card.setMinimumHeight(214)
-            card.setMaximumHeight(214)
+            card.setMinimumHeight(198)
+            card.setMaximumHeight(198)
             layout = QVBoxLayout(card)
             layout.setContentsMargins(10, 10, 10, 10)
             layout.setSpacing(5)
@@ -6517,18 +6561,18 @@ class TrofeoGui(QMainWindow):
         for col in range(columns):
             self.library_theme_cards_layout.setColumnStretch(col, 1)
         row_count = max(1, (len(items) + columns - 1) // columns)
-        visible_rows = min(row_count, 2)
-        card_height = 214
+        visible_rows = min(row_count, 3)
+        card_height = 198
         row_gap = self.library_theme_cards_layout.verticalSpacing()
         viewport_height = 14 + (visible_rows * card_height) + (max(0, visible_rows - 1) * row_gap) + 10
         if hasattr(self, "theme_browser_scroll"):
             self.theme_browser_scroll.setMinimumHeight(viewport_height)
-            self.theme_browser_scroll.setMaximumHeight(viewport_height if row_count <= 2 else 460)
+            self.theme_browser_scroll.setMaximumHeight(viewport_height if row_count <= 3 else 680)
         if hasattr(self, "theme_browser_box"):
-            controls_height = 116
+            controls_height = 110
             box_height = controls_height + viewport_height
             self.theme_browser_box.setMinimumHeight(box_height)
-            self.theme_browser_box.setMaximumHeight(box_height if row_count <= 2 else 590)
+            self.theme_browser_box.setMaximumHeight(box_height if row_count <= 3 else 820)
 
     def _library_select_theme(self, theme_name: str, theme_item: dict[str, Any]) -> None:
         self.theme_combo.setCurrentText(theme_name)
@@ -10219,7 +10263,7 @@ def main() -> None:
     args = parser.parse_args()
 
     app = QApplication([])
-    app.setApplicationName("Open Trofeo LCD GUI")
+    app.setApplicationName("Open Trofeo LCD")
     win = TrofeoGui(base_url=args.url)
     win.show()
     app.exec()
