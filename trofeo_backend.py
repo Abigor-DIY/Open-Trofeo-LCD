@@ -66,6 +66,7 @@ class BackendConfig:
     replay_script: Path
     trofeo_script: Path
     trcc_static_script: Path
+    trcc_static_overlay_script: Path
     trcc_animation_script: Path
     child_log_file: Path
     themes_file: Path
@@ -81,6 +82,7 @@ class BackendConfig:
             "replay_script",
             "trofeo_script",
             "trcc_static_script",
+            "trcc_static_overlay_script",
             "trcc_animation_script",
             "child_log_file",
             "themes_file",
@@ -559,8 +561,10 @@ class ReplayController:
         if self.cfg.display_backend == "trcc":
             overlay_doc = None
             theme_for_animation = theme_input
+            static_base_doc = None
             if self._theme_has_media_sources(theme_input):
                 theme_for_animation, overlay_doc = self._split_media_overlay_document(theme_input)
+                static_base_doc = theme_for_animation
             animation_spec = self._theme_animation_spec(path=path, document=theme_for_animation, max_frames=None)
             if animation_spec is not None:
                 if overlay_doc is not None:
@@ -574,6 +578,19 @@ class ReplayController:
                 send_result["rendered_animation"] = animation_spec
                 if overlay_doc is not None:
                     send_result["overlay_render"] = overlay_render
+            elif overlay_doc is not None and static_base_doc is not None:
+                rendered = self._render_theme_doc_to_file(path=path, document=static_base_doc)
+                overlay_render = self._render_theme_overlay_to_file(
+                    overlay_doc,
+                    path=path,
+                    stats_override=self.stats_provider._read_media_now_playing(),
+                )
+                send_result = self._start_trcc_static_overlay_worker(
+                    Path(rendered["image_path"]),
+                    Path(overlay_render["image_path"]),
+                )
+                send_result["rendered_theme"] = rendered
+                send_result["overlay_render"] = overlay_render
             else:
                 rendered = self._render_theme_doc_to_file(path=path, document=document)
                 send_result = self.send_image(
@@ -599,7 +616,7 @@ class ReplayController:
             if self._theme_has_media_sources(theme_for_scan):
                 overlay_doc = None
                 overlay_path = None
-                if self.cfg.display_backend == "trcc" and self._theme_has_background_animation(theme_for_scan):
+                if self.cfg.display_backend == "trcc":
                     _base_doc, overlay_doc = self._split_media_overlay_document(theme_for_scan)
                     overlay_render = send_result.get("overlay_render")
                     if isinstance(overlay_render, dict):
@@ -1455,6 +1472,63 @@ class ReplayController:
 
         return {"running": True, "pid": self.proc.pid, "mode": self.mode}
 
+    def _start_trcc_static_overlay_worker(self, image_path: Path, overlay_path: Path) -> dict[str, Any]:
+        self._preflight_trcc_display_start()
+        trcc_bin = Path(self.cfg.trcc_bin).expanduser()
+        if not trcc_bin.is_absolute():
+            trcc_bin = (self.cfg.workdir / trcc_bin).resolve()
+        if not trcc_bin.exists():
+            raise RuntimeError(f"Brak binarki trcc: {trcc_bin}")
+
+        trcc_python = trcc_bin.parent / "python"
+        if not trcc_python.exists():
+            raise RuntimeError(f"Brak interpretera venv trcc: {trcc_python}")
+        if not self.cfg.trcc_static_overlay_script.exists():
+            raise RuntimeError(f"Brak skryptu TRCC static overlay worker: {self.cfg.trcc_static_overlay_script}")
+
+        ensure_parent(self.cfg.child_log_file)
+        child_log = open(self.cfg.child_log_file, "a", encoding="utf-8")
+        child_log.write(f"\n[{now_iso()}] start static overlay base={image_path} overlay={overlay_path}\n")
+        child_log.flush()
+
+        cmd = [
+            str(trcc_python),
+            str(self.cfg.trcc_static_overlay_script),
+            str(image_path),
+            "--overlay",
+            str(overlay_path),
+            "--interval",
+            "0.5",
+        ]
+        self._log("start static overlay worker: " + " ".join(cmd))
+        try:
+            self.proc = subprocess.Popen(
+                cmd,
+                cwd=self.cfg.workdir,
+                stdout=child_log,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.proc_started_at = time.time()
+            self.mode = "static-image"
+            self.last_error = None
+            child_log.close()
+        except Exception:
+            child_log.close()
+            raise
+
+        time.sleep(1.2)
+        self._cleanup_proc_locked()
+        if self.proc is None or self.proc.poll() is not None:
+            tail = ""
+            try:
+                tail = self.cfg.child_log_file.read_text(encoding="utf-8", errors="replace")[-1200:]
+            except Exception:
+                pass
+            raise RuntimeError(f"static overlay worker failed to start: {tail.strip() or 'unknown error'}")
+
+        return {"running": True, "pid": self.proc.pid, "mode": self.mode}
+
     def _start_trcc_animation_worker(self, animation_spec: dict[str, Any]) -> dict[str, Any]:
         self._preflight_trcc_display_start()
         trcc_bin = Path(self.cfg.trcc_bin).expanduser()
@@ -2040,6 +2114,7 @@ def main() -> None:
         replay_script=(workdir / "replay_from_pcap.py"),
         trofeo_script=(workdir / "trofeo_lcd.py"),
         trcc_static_script=(workdir / "scripts" / "trcc_static_image.py"),
+        trcc_static_overlay_script=(workdir / "scripts" / "trcc_static_overlay_image.py"),
         trcc_animation_script=(workdir / "scripts" / "trcc_animated_image.py"),
         child_log_file=Path(args.child_log_file).expanduser(),
         themes_file=to_abs(workdir, str(args.themes_file)).resolve(),
@@ -2054,6 +2129,8 @@ def main() -> None:
         raise RuntimeError(f"Brak skryptu drivera: {cfg.trofeo_script}")
     if not cfg.trcc_static_script.exists():
         raise RuntimeError(f"Brak skryptu static worker: {cfg.trcc_static_script}")
+    if not cfg.trcc_static_overlay_script.exists():
+        raise RuntimeError(f"Brak skryptu static overlay worker: {cfg.trcc_static_overlay_script}")
     if not cfg.trcc_animation_script.exists():
         raise RuntimeError(f"Brak skryptu animation worker: {cfg.trcc_animation_script}")
     if not cfg.pcap_path.exists():
