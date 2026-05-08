@@ -2,6 +2,12 @@
 
 Reverse-engineered driver for the Thermalright Trofeo LCD cooler display.
 
+## Support
+
+If this project is useful, you can support development here:
+- GitHub Sponsors: https://github.com/sponsors/Abigor-DIY
+- Repository: https://github.com/Abigor-DIY/Open-Trofeo-LCD
+
 ## Discovered Protocol
 
 | Parameter       | Value                                    |

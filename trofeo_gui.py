@@ -29,8 +29,8 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 try:
-    from PySide6.QtCore import QEasingCurve, QPoint, QRect, QSize, Qt, QTimer, Signal, QPropertyAnimation
-    from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPen, QPixmap, QTransform
+    from PySide6.QtCore import QEasingCurve, QPoint, QRect, QSize, Qt, QTimer, Signal, QPropertyAnimation, QUrl
+    from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPen, QPixmap, QTransform
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -176,6 +176,8 @@ UI_THEMES = {
     "Graphite": {"primary": "#596273", "primary_border": "#7d889a", "accent": "#c7d2e2"},
     "Emerald": {"primary": "#1f8f6b", "primary_border": "#34b087", "accent": "#7bf0c9"},
 }
+PROJECT_REPOSITORY_URL = "https://github.com/Abigor-DIY/Open-Trofeo-LCD"
+PROJECT_SPONSOR_URL = "https://github.com/sponsors/Abigor-DIY"
 
 
 def available_font_families() -> list[str]:
@@ -2665,6 +2667,28 @@ class TrofeoGui(QMainWindow):
         paths_form.addRow("Tryb komunikacji:", self.cfg_comm_mode_combo)
         config_grid.addWidget(paths_box, 1, 1, 1, 2)
 
+        support_box = QGroupBox("Wesprzyj Projekt")
+        support_box.setObjectName("configCardBox")
+        support_layout = QVBoxLayout(support_box)
+        support_copy = QLabel(
+            "Jeśli Open Trofeo LCD oszczędza Ci czas, możesz wesprzeć dalszy rozwój projektu "
+            "albo przejść bezpośrednio do repozytorium GitHub."
+        )
+        support_copy.setWordWrap(True)
+        support_copy.setObjectName("studioHeroText")
+        support_layout.addWidget(support_copy)
+        self.cfg_donate_btn = QPushButton("Donate / Wspomóż programistę")
+        self.cfg_repo_btn = QPushButton("Otwórz repozytorium GitHub")
+        self.cfg_donate_btn.setObjectName("primaryButton")
+        self.cfg_repo_btn.setObjectName("secondaryAccentButton")
+        self.cfg_donate_btn.clicked.connect(lambda: self._open_external_link(PROJECT_SPONSOR_URL, "strony wsparcia"))
+        self.cfg_repo_btn.clicked.connect(lambda: self._open_external_link(PROJECT_REPOSITORY_URL, "repozytorium projektu"))
+        for button in (self.cfg_donate_btn, self.cfg_repo_btn):
+            button.setMinimumHeight(44)
+            support_layout.addWidget(button)
+        support_layout.addStretch(1)
+        config_grid.addWidget(support_box, 1, 3)
+
         quick_cfg_box = QGroupBox("Szybkie Akcje")
         quick_cfg_box.setObjectName("configCardBox")
         quick_cfg_layout = QVBoxLayout(quick_cfg_box)
@@ -2689,7 +2713,7 @@ class TrofeoGui(QMainWindow):
             button.setObjectName("quickActionButton")
             quick_cfg_layout.addWidget(button)
         quick_cfg_layout.addStretch(1)
-        config_grid.addWidget(quick_cfg_box, 0, 3, 2, 1)
+        config_grid.addWidget(quick_cfg_box, 0, 4, 2, 1)
         automation_layout.addLayout(config_grid)
 
         self.playlist_list = QListWidget()
@@ -3399,6 +3423,20 @@ class TrofeoGui(QMainWindow):
         if len(entries) > 250:
             entries = entries[-250:]
         return "\n".join(entries)
+
+    def _open_external_link(self, url: str, label: str) -> None:
+        target = QUrl(url)
+        if not target.isValid():
+            QMessageBox.warning(self, "Niepoprawny link", f"Nie udało się przygotować adresu do {label}:\n{url}")
+            return
+        if QDesktopServices.openUrl(target):
+            self.append_log(f"[link] Otwarto {label}: {url}")
+            return
+        QMessageBox.warning(
+            self,
+            "Nie udało się otworzyć linku",
+            f"System nie otworzył {label}.\nSkopiuj adres ręcznie:\n{url}",
+        )
 
     def _refresh_log_view(self) -> None:
         if not hasattr(self, "log_view"):
