@@ -3954,6 +3954,14 @@ class TrofeoGui(QMainWindow):
         self.designer_path_browse_btn.clicked.connect(self.browse_designer_image_path)
         self.designer_path_prepare_btn = QPushButton("Przygotuj")
         self.designer_path_prepare_btn.clicked.connect(self.browse_designer_image_path)
+        self.designer_image_fullscreen_btn = QPushButton("Ustaw fullscreen")
+        self.designer_image_fullscreen_btn.clicked.connect(lambda: self.apply_image_rect_preset("fullscreen"))
+        self.designer_image_left_half_btn = QPushButton("Lewa połowa")
+        self.designer_image_left_half_btn.clicked.connect(lambda: self.apply_image_rect_preset("left-half"))
+        self.designer_image_right_half_btn = QPushButton("Prawa połowa")
+        self.designer_image_right_half_btn.clicked.connect(lambda: self.apply_image_rect_preset("right-half"))
+        self.designer_image_reset_btn = QPushButton("Reset kadru")
+        self.designer_image_reset_btn.clicked.connect(lambda: self.apply_image_rect_preset("contain-full"))
         self.designer_import_image_btn = QPushButton("Importuj obraz do motywu")
         self.designer_import_image_btn.clicked.connect(self.import_image_as_designer_element)
         self.designer_path_row = wrap_row(
@@ -3972,6 +3980,14 @@ class TrofeoGui(QMainWindow):
         self.inspector_image_layout.addRow(self.row_image_rotation, self.designer_rotation_spin)
         self.row_image_import = make_label("Import")
         self.inspector_image_layout.addRow(self.row_image_import, self.designer_import_image_btn)
+        self.row_image_actions = make_label("Szybkie akcje")
+        self.designer_image_actions_row = wrap_row(
+            self.designer_image_fullscreen_btn,
+            self.designer_image_left_half_btn,
+            self.designer_image_right_half_btn,
+            self.designer_image_reset_btn,
+        )
+        self.inspector_image_layout.addRow(self.row_image_actions, self.designer_image_actions_row)
         self.row_image_preview = make_label("Podgląd")
         self.designer_image_preview_label = QLabel("Podgląd obrazu")
         self.designer_image_preview_label.setAlignment(Qt.AlignCenter)
@@ -9022,6 +9038,7 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(image_layout, self.row_image_opacity, self.designer_opacity_spin, is_image)
         self._set_form_row_visible(image_layout, self.row_image_rotation, self.designer_rotation_spin, is_image)
         self._set_form_row_visible(image_layout, self.row_image_import, self.designer_import_image_btn, is_image)
+        self._set_form_row_visible(image_layout, self.row_image_actions, self.designer_image_actions_row, is_image)
         self._set_form_row_visible(image_layout, self.row_image_preview, self.designer_image_preview_label, is_image)
 
         self.designer_import_image_btn.setVisible(collection == "images")
@@ -9464,6 +9481,46 @@ class TrofeoGui(QMainWindow):
             "Obraz zaimportowany. Przeciągnij go na preview albo zmień kadr, fit i przezroczystość w zakładce Obraz."
         )
         self.append_log(f"[designer-image-import] {source} -> {prepared_path}")
+        self._update_preview_canvas_overlay()
+        self.schedule_preview_theme_doc()
+
+    def apply_image_rect_preset(self, preset: str) -> None:
+        if self.theme_doc_model is None:
+            return
+        collection = self._selected_collection()
+        items, row, item = self._selected_item()
+        if item is None or collection != "images":
+            QMessageBox.information(self, "Info", "Najpierw wybierz element obrazu.")
+            return
+        canvas = self.theme_doc_model.get("canvas", {}) if isinstance(self.theme_doc_model, dict) else {}
+        canvas_width = int(canvas.get("width", 1920))
+        canvas_height = int(canvas.get("height", 462))
+        if preset == "fullscreen":
+            rect = [0, 0, canvas_width, canvas_height]
+            fit = "cover"
+        elif preset == "left-half":
+            rect = [0, 0, canvas_width // 2, canvas_height]
+            fit = "cover"
+        elif preset == "right-half":
+            rect = [canvas_width // 2, 0, canvas_width - (canvas_width // 2), canvas_height]
+            fit = "cover"
+        else:
+            rect = [0, 0, canvas_width, canvas_height]
+            fit = "contain"
+        self.push_designer_history()
+        item["rect"] = [self._snap_value(int(v)) for v in rect]
+        item["fit"] = fit
+        self._designer_updating = True
+        try:
+            self.designer_x_spin.setValue(int(item["rect"][0]))
+            self.designer_y_spin.setValue(int(item["rect"][1]))
+            self.designer_w_spin.setValue(int(item["rect"][2]))
+            self.designer_h_spin.setValue(int(item["rect"][3]))
+            self.designer_fit_combo.setCurrentText(fit)
+        finally:
+            self._designer_updating = False
+        self.write_designer_to_json()
+        self._refresh_designer_list_row(row)
         self._update_preview_canvas_overlay()
         self.schedule_preview_theme_doc()
 
