@@ -6481,15 +6481,15 @@ class TrofeoGui(QMainWindow):
             card = AnimatedCardFrame("libraryCard")
             card.setObjectName("libraryCard")
             card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            card.setMinimumHeight(198)
-            card.setMaximumHeight(198)
+            card.setMinimumHeight(228)
+            card.setMaximumHeight(228)
             layout = QVBoxLayout(card)
             layout.setContentsMargins(10, 10, 10, 10)
-            layout.setSpacing(5)
+            layout.setSpacing(6)
             thumb = QLabel()
             thumb.setObjectName("templateCardThumb")
-            thumb.setMinimumSize(180, 64)
-            thumb.setMaximumHeight(64)
+            thumb.setMinimumSize(220, 92)
+            thumb.setMaximumHeight(92)
             thumb.setAlignment(Qt.AlignCenter)
             thumb.setPixmap(
                 self._runtime_theme_card_pixmap(item, thumb.size()).scaled(
@@ -6565,17 +6565,17 @@ class TrofeoGui(QMainWindow):
             self.library_theme_cards_layout.setColumnStretch(col, 1)
         row_count = max(1, (len(items) + columns - 1) // columns)
         visible_rows = min(row_count, 3)
-        card_height = 198
+        card_height = 228
         row_gap = self.library_theme_cards_layout.verticalSpacing()
         viewport_height = 14 + (visible_rows * card_height) + (max(0, visible_rows - 1) * row_gap) + 10
         if hasattr(self, "theme_browser_scroll"):
             self.theme_browser_scroll.setMinimumHeight(viewport_height)
-            self.theme_browser_scroll.setMaximumHeight(viewport_height if row_count <= 3 else 680)
+            self.theme_browser_scroll.setMaximumHeight(viewport_height if row_count <= 3 else 760)
         if hasattr(self, "theme_browser_box"):
             controls_height = 110
             box_height = controls_height + viewport_height
             self.theme_browser_box.setMinimumHeight(box_height)
-            self.theme_browser_box.setMaximumHeight(box_height if row_count <= 3 else 820)
+            self.theme_browser_box.setMaximumHeight(box_height if row_count <= 3 else 900)
 
     def _library_select_theme(self, theme_name: str, theme_item: dict[str, Any]) -> None:
         self.theme_combo.setCurrentText(theme_name)
