@@ -56,9 +56,7 @@
     {"id": "media_app", "label": "Player", "source": "media_app", "format": "{value}", "x": 924, "y": 386, "box_width": 246, "box_height": 22, "font_family": "Ubuntu", "font_size": 18, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [152, 168, 176], "value_color": [152, 168, 176], "align": "left", "z_index": 210, "visible": true, "locked": false},
     {"id": "media_state", "label": "State", "source": "media_state", "format": "{value}", "x": 1190, "y": 386, "box_width": 220, "box_height": 22, "font_family": "Ubuntu", "font_size": 18, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [152, 168, 176], "value_color": [152, 168, 176], "align": "left", "z_index": 210, "visible": true, "locked": false}
   ],
-  "images": [
-    {"id": "media_cover", "path": "", "source": "media_cover", "rect": [760, 300, 150, 150], "fit": "cover", "opacity": 1.0, "radius": 24, "border_width": 2, "border_color": [230, 214, 162, 180], "glow_radius": 18, "glow_opacity": 0.32, "rotation": 0, "z_index": 230, "visible": true, "locked": false}
-  ],
+  "images": [],
   "effects": {
     "animation": {"enabled": false, "current_frame": 0, "frame_paths": []}
   }

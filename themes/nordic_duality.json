@@ -254,36 +254,7 @@
       "locked": false
     }
   ],
-  "images": [
-    {
-      "id": "media_cover",
-      "path": "",
-      "source": "media_cover",
-      "rect": [724, 306, 132, 132],
-      "fit": "cover",
-      "opacity": 1.0,
-      "radius": 24,
-      "border_width": 2,
-      "border_color": [236, 224, 184, 180],
-      "glow_radius": 18,
-      "glow_opacity": 0.34,
-      "rotation": 0,
-      "z_index": 230,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "overlay_frame",
-      "path": "nordic_duality_assets/2026-05-08/overlay/frame.png",
-      "rect": [0, 0, 1920, 462],
-      "fit": "stretch",
-      "opacity": 1.0,
-      "rotation": 0,
-      "z_index": 260,
-      "visible": true,
-      "locked": false
-    }
-  ],
+  "images": [],
   "effects": {
     "animation": {"enabled": false, "current_frame": 0, "frame_paths": []}
   }
