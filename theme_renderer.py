@@ -377,8 +377,9 @@ def render_generated_background(canvas_size: tuple[int, int], background: dict[s
             continue
         x, y, w, h = panel["rect"]
         fill = list(_rgba(panel["fill"]))
+        base_opacity = max(0.0, min(1.0, float(panel.get("opacity", 1.0))))
         render_opacity = max(0.0, min(1.0, float(panel.get("_render_opacity", 1.0))))
-        fill[3] = int(fill[3] * render_opacity)
+        fill[3] = int(fill[3] * base_opacity * render_opacity)
         draw.rounded_rectangle((x, y, x + w, y + h), radius=panel["radius"], fill=tuple(fill))
 
     texture = Image.effect_noise((width, height), 22).convert("L")

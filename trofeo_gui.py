@@ -3177,6 +3177,7 @@ class TrofeoGui(QMainWindow):
         self.bg_show_grid_chk = QCheckBox("Siatka"); self.bg_show_safe_chk = QCheckBox("Safe Area")
         self.panel_fill_edit = QLineEdit(); self.panel_fill_btn = QPushButton("🎨")
         self.panel_radius_spin = QSpinBox(); self.panel_radius_spin.setRange(0, 500)
+        self.panel_opacity_spin = QDoubleSpinBox(); self.panel_opacity_spin.setRange(0.0, 1.0); self.panel_opacity_spin.setSingleStep(0.05)
         self.background_preview_label = QLabel("Podgląd tła")
         
         # Inicjalizacja widżetów animacji tła
@@ -3431,7 +3432,7 @@ class TrofeoGui(QMainWindow):
             (self.bg_animation_enabled_chk, "toggled"), (self.bg_animation_use_bg_chk, "toggled"),
             (self.bg_animation_fps_spin, "valueChanged"), (self.bg_animation_frame_spin, "valueChanged"),
             (self.bg_animation_duration_spin, "valueChanged"),
-            (self.panel_fill_edit, "textChanged"), (self.panel_radius_spin, "valueChanged"),
+            (self.panel_fill_edit, "textChanged"), (self.panel_opacity_spin, "valueChanged"), (self.panel_radius_spin, "valueChanged"),
         ]:
             try: getattr(widget, signal).connect(self.on_background_field_changed)
             except: pass
@@ -3997,6 +3998,8 @@ class TrofeoGui(QMainWindow):
         self.panel_fill_row = wrap_row(self.panel_fill_edit, self.panel_fill_btn, stretch_first=True)
         self.panel_fill_btn.clicked.connect(lambda _checked=False: self.pick_color_for_edit(self.panel_fill_edit))
         self.inspector_appearance_layout.addRow(self.row_panel_fill, self.panel_fill_row)
+        self.row_panel_opacity = make_label("Przezroczystość panelu")
+        self.inspector_appearance_layout.addRow(self.row_panel_opacity, self.panel_opacity_spin)
         self.row_panel_radius = make_label("Promień narożników")
         self.inspector_appearance_layout.addRow(self.row_panel_radius, self.panel_radius_spin)
 
@@ -7994,6 +7997,7 @@ class TrofeoGui(QMainWindow):
                 "rect": [100, 100, 240, 100],
                 "radius": 16,
                 "fill": [0, 0, 0],
+                "opacity": 1.0,
                 "z_index": 50,
             }
         return {
@@ -9335,6 +9339,7 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(appearance_layout, self.row_appearance_label_color, self.designer_label_color_row, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_appearance_value_color, self.designer_value_color_row, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_panel_fill, self.panel_fill_row, is_panel)
+        self._set_form_row_visible(appearance_layout, self.row_panel_opacity, self.panel_opacity_spin, is_panel)
         self._set_form_row_visible(appearance_layout, self.row_panel_radius, self.panel_radius_spin, is_panel)
 
         geometry_layout = self.inspector_geometry.layout()
@@ -9447,6 +9452,7 @@ class TrofeoGui(QMainWindow):
                 self.designer_visible_chk.setChecked(True)
                 self.designer_locked_chk.setChecked(False)
                 self.panel_fill_edit.clear()
+                self.panel_opacity_spin.setValue(1.0)
                 self.panel_radius_spin.setValue(0)
                 self._load_motion_track_fields(None, collection)
                 return
@@ -9490,9 +9496,11 @@ class TrofeoGui(QMainWindow):
             self.designer_locked_chk.setChecked(bool(active_item.get("locked", False)))
             if active_collection == "panels":
                 self.panel_fill_edit.setText(json.dumps(active_item.get("fill", [0, 0, 0]), ensure_ascii=False))
+                self.panel_opacity_spin.setValue(float(active_item.get("opacity", 1.0)))
                 self.panel_radius_spin.setValue(int(active_item.get("radius", 0)))
             else:
                 self.panel_fill_edit.clear()
+                self.panel_opacity_spin.setValue(1.0)
                 self.panel_radius_spin.setValue(0)
             self._load_motion_track_fields(active_item, active_collection)
         finally:
@@ -9719,6 +9727,7 @@ class TrofeoGui(QMainWindow):
                 self._snap_value(int(self.designer_h_spin.value())),
             ]
             item["fill"] = self._parse_color_line(self.panel_fill_edit.text(), item.get("fill", [0, 0, 0]))
+            item["opacity"] = float(self.panel_opacity_spin.value())
             item["radius"] = int(self.panel_radius_spin.value())
 
         self.write_designer_to_json()
@@ -10021,6 +10030,7 @@ class TrofeoGui(QMainWindow):
         items, _row, item = self._selected_item()
         if self._selected_collection() == "panels" and item is not None:
             item["fill"] = self._parse_color_line(self.panel_fill_edit.text(), item.get("fill", [0, 0, 0]))
+            item["opacity"] = float(self.panel_opacity_spin.value())
             item["radius"] = int(self.panel_radius_spin.value())
         self.write_designer_to_json()
         self._refresh_animation_frame_list()

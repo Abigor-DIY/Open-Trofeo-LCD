@@ -175,11 +175,14 @@ def _normalize_background(raw: Any) -> dict[str, Any]:
                 "rect": _normalize_rect(p.get("rect"), f"background.panels[{idx}].rect"),
                 "radius": int(_expect_number(p.get("radius", 0), f"background.panels[{idx}].radius")),
                 "fill": _normalize_color(p.get("fill", [0, 0, 0]), f"background.panels[{idx}].fill"),
+                "opacity": float(_expect_number(p.get("opacity", 1.0), f"background.panels[{idx}].opacity")),
                 "z_index": int(_expect_number(p.get("z_index", 50), f"background.panels[{idx}].z_index")),
                 "visible": bool(p.get("visible", True)),
                 "locked": bool(p.get("locked", False)),
             }
         )
+        if not (0.0 <= out["panels"][-1]["opacity"] <= 1.0):
+            raise _fail(f"background.panels[{idx}].opacity", "must be in range 0.0..1.0")
     return out
 
 
