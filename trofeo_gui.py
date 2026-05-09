@@ -1624,6 +1624,7 @@ class TrofeoGui(QMainWindow):
 
     def __init__(self, base_url: str):
         super().__init__()
+        self._ui_language = "en"
         self.setWindowTitle("Open Trofeo LCD")
         self.resize(1680, 1040)
         self.setMinimumSize(1480, 920)
@@ -2221,11 +2222,12 @@ class TrofeoGui(QMainWindow):
         self.nav_config_btn.clicked.connect(lambda: self._go_config())
 
         endpoint_box = QGroupBox("Backend")
+        self.endpoint_box = endpoint_box
         endpoint_layout = QHBoxLayout(endpoint_box)
         self.url_edit = QLineEdit(base_url)
-        self.apply_url_btn = QPushButton("Ustaw URL")
+        self.apply_url_btn = QPushButton("Set URL")
         self.apply_url_btn.clicked.connect(self.apply_url)
-        self.refresh_btn = QPushButton("Odśwież status")
+        self.refresh_btn = QPushButton("Refresh status")
         self.refresh_btn.clicked.connect(self.refresh_status)
         endpoint_layout.addWidget(QLabel("URL:"))
         endpoint_layout.addWidget(self.url_edit, 1)
@@ -2233,7 +2235,8 @@ class TrofeoGui(QMainWindow):
         endpoint_layout.addWidget(self.refresh_btn)
         runtime_layout.addWidget(endpoint_box)
 
-        control_box = QGroupBox("Kontrola Urządzenia")
+        control_box = QGroupBox("Device control")
+        self.control_box = control_box
         control_layout = QHBoxLayout(control_box)
         control_layout.setContentsMargins(16, 20, 16, 16)
         control_layout.setSpacing(12)
@@ -2243,7 +2246,7 @@ class TrofeoGui(QMainWindow):
         self.stop_btn = QPushButton("⏹ Stop")
         self.restart_btn = QPushButton("🔄 Restart")
         self.scan_btn = QPushButton("🔍 Scan")
-        self.hide_to_tray_btn = QPushButton("📥 Do Tray")
+        self.hide_to_tray_btn = QPushButton("📥 Minimize to tray")
         
         self.start_btn.setMinimumHeight(44)
         self.stop_btn.setMinimumHeight(44)
@@ -2266,15 +2269,17 @@ class TrofeoGui(QMainWindow):
         runtime_hero_layout = QHBoxLayout(runtime_hero)
         runtime_hero_layout.setContentsMargins(18, 16, 18, 16)
         runtime_hero_text = QLabel(
-            "Steruj wyświetlaczem jak natywną aplikacją Plasma: uruchamiaj runtime, wysyłaj pojedyncze obrazy "
-            "i zarządzaj motywami z czytelnych kart zamiast surowych pól."
+            "Control the panel like a native Plasma app: start the runtime, push single frames "
+            "and manage themes from clear cards instead of raw fields."
         )
+        self.runtime_hero_text_label = runtime_hero_text
         runtime_hero_text.setObjectName("studioHeroText")
         runtime_hero_text.setWordWrap(True)
         runtime_hero_layout.addWidget(runtime_hero_text, 1)
         runtime_layout.addWidget(runtime_hero)
 
         runtime_sections_tabs = QTabWidget()
+        self.runtime_sections_tabs = runtime_sections_tabs
         runtime_sections_tabs.setDocumentMode(True)
         runtime_layout.addWidget(runtime_sections_tabs, 1)
         runtime_sections_tabs.currentChanged.connect(lambda _idx: self._animate_widget_fade(runtime_sections_tabs.currentWidget()))
@@ -7874,8 +7879,18 @@ class TrofeoGui(QMainWindow):
     def _set_theme_doc_editor_document(self, document: dict[str, Any]) -> None:
         self.theme_doc_editor.setPlainText(json.dumps(document, ensure_ascii=False, indent=2))
 
+    def _theme_doc_editor_differs_from_model(self) -> bool:
+        if not isinstance(self.theme_doc_model, dict):
+            return bool(self.theme_doc_editor.toPlainText().strip())
+        try:
+            model_text = json.dumps(self.theme_doc_model, ensure_ascii=False, indent=2).strip()
+        except Exception:
+            return True
+        editor_text = self.theme_doc_editor.toPlainText().strip()
+        return editor_text != model_text
+
     def _current_theme_document(self, *, allow_editor_fallback: bool = True) -> dict[str, Any] | None:
-        if isinstance(self.theme_doc_model, dict):
+        if isinstance(self.theme_doc_model, dict) and not self._theme_doc_editor_differs_from_model():
             return deepcopy(self.theme_doc_model)
         if not allow_editor_fallback:
             QMessageBox.information(self, "Info", "Najpierw wczytaj albo utwórz motyw.")
@@ -7890,6 +7905,11 @@ class TrofeoGui(QMainWindow):
             return None
         self.theme_doc_model = deepcopy(normalized)
         self._set_theme_doc_editor_document(normalized)
+        self._sync_designer_preview_policy()
+        self._load_background_fields()
+        self.refresh_designer_element_list()
+        self.load_selected_designer_item()
+        self._update_preview_canvas_overlay()
         return deepcopy(normalized)
 
     def load_theme_doc(self) -> None:
