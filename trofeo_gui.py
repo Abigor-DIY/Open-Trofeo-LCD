@@ -4892,6 +4892,7 @@ class TrofeoGui(QMainWindow):
             "studio-theme-save": getattr(self, "designer_write_btn", None),
             "theme-doc-preview": getattr(self, "designer_preview_btn", None),
             "studio-theme-apply": getattr(self, "designer_apply_btn", None),
+            "theme-doc-apply": getattr(self, "designer_apply_btn", None),
         }
         btn = mapping.get(action)
         if btn is not None:
@@ -4913,9 +4914,9 @@ class TrofeoGui(QMainWindow):
         self.preview_theme_doc()
 
     def _trigger_designer_apply(self) -> None:
-        self._set_designer_toolbar_busy("studio-theme-apply", True)
+        self._set_designer_toolbar_busy("theme-doc-apply", True)
         self._set_designer_toolbar_feedback("Wysyłanie motywu na LCD...", auto_clear_ms=None)
-        self.apply_current_theme_to_lcd()
+        self.apply_theme_doc()
 
     def _load_ui_state_payload(self) -> dict[str, Any]:
         try:
@@ -7791,19 +7792,7 @@ class TrofeoGui(QMainWindow):
         )
 
     def apply_current_theme_to_lcd(self) -> None:
-        theme_path = self.theme_doc_path_edit.text().strip()
-        if not theme_path:
-            QMessageBox.information(self, "Info", "Najpierw wybierz lub utwórz motyw.")
-            return
-        document = self._current_theme_document()
-        if document is None:
-            return
-        self._run_theme_library_workflow(
-            action="studio-theme-apply",
-            theme_path=theme_path,
-            document=document,
-            apply_after=True,
-        )
+        self.apply_theme_doc()
 
     def apply_theme_doc(self) -> None:
         theme_path = self.theme_doc_path_edit.text().strip()
