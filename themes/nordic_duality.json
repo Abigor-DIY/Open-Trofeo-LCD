@@ -2,9 +2,13 @@
   "schema_version": 1,
   "meta": {
     "name": "Nordic Duality",
-    "description": "Wersja publikacyjna z ciemnym tlem, zloto-blykitnym kontrastem i bez nakladek z efektem szachownicy.",
+    "description": "Static Nordic duality theme rebuilt without overlays or transparency.",
     "author": "Open-Trofeo-LCD",
-    "tags": ["monitor", "media", "nordic", "slavic", "custom"]
+    "tags": [
+      "monitor",
+      "safe-pack",
+      "static"
+    ]
   },
   "canvas": {
     "width": 1920,
@@ -13,33 +17,158 @@
   },
   "background": {
     "kind": "image",
-    "base_color": [6, 8, 12],
-    "accent_color": [92, 194, 255],
-    "texture_alpha": 0.16,
-    "path": "nordic_duality_assets/2026-05-08/image/background_safe.png",
-    "fit": "fill",
+    "base_color": [
+      8,
+      10,
+      14
+    ],
+    "accent_color": [
+      112,
+      208,
+      255
+    ],
+    "texture_alpha": 0.0,
+    "path": "nordic_duality_assets/2026-05-09/image/background_flat.png",
+    "fit": "stretch",
     "opacity": 1.0,
     "panels": [
-      {"id": "clock_panel", "rect": [1372, 18, 438, 82], "radius": 22, "fill": [46, 28, 4, 228], "z_index": 80, "visible": true, "locked": false},
-      {"id": "stats_panel", "rect": [84, 292, 590, 126], "radius": 22, "fill": [2, 30, 56, 228], "z_index": 80, "visible": true, "locked": false},
-      {"id": "media_panel", "rect": [694, 274, 1140, 144], "radius": 26, "fill": [8, 14, 20, 226], "z_index": 80, "visible": true, "locked": false},
-      {"id": "nordic_mark", "rect": [82, 86, 560, 120], "radius": 28, "fill": [238, 184, 62, 230], "z_index": 78, "visible": true, "locked": false}
+      {
+        "id": "header",
+        "rect": [
+          82,
+          18,
+          1756,
+          64
+        ],
+        "radius": 24,
+        "fill": [
+          10,
+          14,
+          20,
+          214
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "stats_left",
+        "rect": [
+          88,
+          290,
+          734,
+          126
+        ],
+        "radius": 24,
+        "fill": [
+          8,
+          18,
+          28,
+          220
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "stats_right",
+        "rect": [
+          850,
+          290,
+          982,
+          126
+        ],
+        "radius": 24,
+        "fill": [
+          18,
+          18,
+          22,
+          214
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "accent_left",
+        "rect": [
+          92,
+          96,
+          342,
+          118
+        ],
+        "radius": 26,
+        "fill": [
+          112,
+          208,
+          255,
+          226
+        ],
+        "z_index": 78,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "accent_right",
+        "rect": [
+          1472,
+          102,
+          306,
+          108
+        ],
+        "radius": 26,
+        "fill": [
+          246,
+          210,
+          134,
+          224
+        ],
+        "z_index": 78,
+        "visible": true,
+        "locked": false
+      }
     ]
   },
   "texts": [
     {
       "id": "title",
-      "text": "NORDIC",
-      "x": 778,
-      "y": 22,
-      "box_width": 378,
-      "box_height": 48,
-      "font_family": "Noto Serif Display",
+      "text": "NORDIC DUALITY",
+      "x": 616,
+      "y": 26,
+      "box_width": 688,
+      "box_height": 42,
+      "font_family": "DejaVu Serif",
       "font_size": 30,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
-      "color": [250, 240, 214],
+      "color": [
+        246,
+        242,
+        232
+      ],
+      "align": "center",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "subtitle",
+      "text": "STABLE STATIC EDITION",
+      "x": 628,
+      "y": 62,
+      "box_width": 664,
+      "box_height": 20,
+      "font_family": "Ubuntu",
+      "font_size": 16,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "color": [
+        192,
+        206,
+        216
+      ],
       "align": "center",
       "z_index": 200,
       "visible": true,
@@ -52,10 +181,10 @@
       "label": "",
       "source": "hostname",
       "format": "{value}",
-      "x": 112,
-      "y": 26,
-      "box_width": 280,
-      "box_height": 32,
+      "x": 110,
+      "y": 34,
+      "box_width": 300,
+      "box_height": 28,
       "font_family": "Ubuntu",
       "font_size": 24,
       "font_bold": true,
@@ -63,8 +192,16 @@
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
-      "label_color": [210, 228, 244],
-      "value_color": [210, 228, 244],
+      "label_color": [
+        242,
+        246,
+        248
+      ],
+      "value_color": [
+        242,
+        246,
+        248
+      ],
       "align": "left",
       "z_index": 210,
       "visible": true,
@@ -75,10 +212,10 @@
       "label": "",
       "source": "time_hms",
       "format": "{value}",
-      "x": 1418,
-      "y": 26,
-      "box_width": 354,
-      "box_height": 50,
+      "x": 1404,
+      "y": 22,
+      "box_width": 332,
+      "box_height": 48,
       "font_family": "Ubuntu",
       "font_size": 56,
       "font_bold": true,
@@ -86,8 +223,16 @@
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
-      "label_color": [255, 232, 178],
-      "value_color": [255, 232, 178],
+      "label_color": [
+        250,
+        236,
+        196
+      ],
+      "value_color": [
+        250,
+        236,
+        196
+      ],
       "align": "center",
       "z_index": 210,
       "visible": true,
@@ -98,10 +243,10 @@
       "label": "CPU",
       "source": "cpu_usage_percent",
       "format": "{value}",
-      "x": 110,
+      "x": 118,
       "y": 324,
-      "box_width": 182,
-      "box_height": 42,
+      "box_width": 196,
+      "box_height": 40,
       "font_family": "Ubuntu",
       "font_size": 40,
       "font_bold": true,
@@ -109,8 +254,16 @@
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
-      "label_color": [230, 240, 248],
-      "value_color": [106, 214, 255],
+      "label_color": [
+        236,
+        242,
+        246
+      ],
+      "value_color": [
+        112,
+        208,
+        255
+      ],
       "align": "left",
       "z_index": 210,
       "visible": true,
@@ -121,10 +274,10 @@
       "label": "GPU",
       "source": "gpu_load",
       "format": "{value}",
-      "x": 312,
+      "x": 330,
       "y": 324,
-      "box_width": 182,
-      "box_height": 42,
+      "box_width": 196,
+      "box_height": 40,
       "font_family": "Ubuntu",
       "font_size": 40,
       "font_bold": true,
@@ -132,8 +285,16 @@
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
-      "label_color": [230, 240, 248],
-      "value_color": [106, 214, 255],
+      "label_color": [
+        236,
+        242,
+        246
+      ],
+      "value_color": [
+        112,
+        208,
+        255
+      ],
       "align": "left",
       "z_index": 210,
       "visible": true,
@@ -144,10 +305,10 @@
       "label": "RAM",
       "source": "mem_percent",
       "format": "{value}",
-      "x": 516,
+      "x": 542,
       "y": 324,
-      "box_width": 154,
-      "box_height": 42,
+      "box_width": 196,
+      "box_height": 40,
       "font_family": "Ubuntu",
       "font_size": 40,
       "font_bold": true,
@@ -155,100 +316,140 @@
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
-      "label_color": [230, 240, 248],
-      "value_color": [255, 226, 164],
+      "label_color": [
+        236,
+        242,
+        246
+      ],
+      "value_color": [
+        246,
+        210,
+        134
+      ],
       "align": "left",
       "z_index": 210,
       "visible": true,
       "locked": false
     },
     {
-      "id": "media_title",
-      "label": "",
-      "source": "media_title",
+      "id": "cpu_temp",
+      "label": "TEMP",
+      "source": "cpu_temp_c",
       "format": "{value}",
-      "x": 736,
-      "y": 290,
-      "box_width": 1042,
-      "box_height": 48,
+      "x": 884,
+      "y": 320,
+      "box_width": 200,
+      "box_height": 34,
       "font_family": "Ubuntu",
-      "font_size": 42,
+      "font_size": 30,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
-      "marquee": true,
+      "marquee": false,
       "marquee_speed": 62.0,
-      "label_color": [238, 246, 252],
-      "value_color": [248, 252, 255],
+      "label_color": [
+        236,
+        242,
+        246
+      ],
+      "value_color": [
+        246,
+        210,
+        134
+      ],
       "align": "left",
       "z_index": 210,
       "visible": true,
       "locked": false
     },
     {
-      "id": "media_artist",
-      "label": "",
-      "source": "media_artist",
+      "id": "uptime",
+      "label": "UPTIME",
+      "source": "uptime_human",
       "format": "{value}",
-      "x": 736,
-      "y": 342,
-      "box_width": 1042,
+      "x": 1100,
+      "y": 320,
+      "box_width": 336,
+      "box_height": 34,
+      "font_family": "Ubuntu",
+      "font_size": 30,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        236,
+        242,
+        246
+      ],
+      "value_color": [
+        236,
+        242,
+        246
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "ip_local",
+      "label": "IP",
+      "source": "ip_local",
+      "format": "{value}",
+      "x": 884,
+      "y": 364,
+      "box_width": 340,
       "box_height": 30,
       "font_family": "Ubuntu",
-      "font_size": 28,
+      "font_size": 24,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
-      "label_color": [214, 224, 232],
-      "value_color": [214, 224, 232],
+      "label_color": [
+        194,
+        206,
+        214
+      ],
+      "value_color": [
+        194,
+        206,
+        214
+      ],
       "align": "left",
       "z_index": 210,
       "visible": true,
       "locked": false
     },
     {
-      "id": "media_app",
-      "label": "PLAYER",
-      "source": "media_app",
+      "id": "date_ymd",
+      "label": "DATE",
+      "source": "date_ymd",
       "format": "{value}",
-      "x": 736,
-      "y": 384,
-      "box_width": 286,
-      "box_height": 24,
+      "x": 1242,
+      "y": 364,
+      "box_width": 300,
+      "box_height": 30,
       "font_family": "Ubuntu",
-      "font_size": 20,
+      "font_size": 24,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
-      "label_color": [184, 206, 222],
-      "value_color": [184, 206, 222],
-      "align": "left",
-      "z_index": 210,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "media_state",
-      "label": "STATE",
-      "source": "media_state",
-      "format": "{value}",
-      "x": 1060,
-      "y": 384,
-      "box_width": 286,
-      "box_height": 24,
-      "font_family": "Ubuntu",
-      "font_size": 20,
-      "font_bold": true,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": false,
-      "marquee_speed": 62.0,
-      "label_color": [184, 206, 222],
-      "value_color": [184, 206, 222],
+      "label_color": [
+        194,
+        206,
+        214
+      ],
+      "value_color": [
+        194,
+        206,
+        214
+      ],
       "align": "left",
       "z_index": 210,
       "visible": true,
@@ -257,6 +458,10 @@
   ],
   "images": [],
   "effects": {
-    "animation": {"enabled": false, "current_frame": 0, "frame_paths": []}
+    "animation": {
+      "enabled": false,
+      "current_frame": 0,
+      "frame_paths": []
+    }
   }
 }

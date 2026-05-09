@@ -2,13 +2,12 @@
   "schema_version": 1,
   "meta": {
     "name": "Linux Matrix Green",
-    "description": "Zielony motyw z panelem media i monitoringiem CPU/GPU/RAM.",
+    "description": "Static green Linux monitor theme without overlays or transparency.",
     "author": "Open-Trofeo-LCD",
     "tags": [
       "monitor",
-      "media",
-      "green",
-      "custom"
+      "safe-pack",
+      "static"
     ]
   },
   "canvas": {
@@ -19,93 +18,112 @@
   "background": {
     "kind": "image",
     "base_color": [
-      4,
+      8,
       10,
-      8
+      14
     ],
     "accent_color": [
-      0,
-      255,
-      140
+      82,
+      232,
+      112
     ],
-    "texture_alpha": 0.18,
-    "path": "linux_matrix_green_assets/2026-05-08/image/background.png",
-    "fit": "cover",
+    "texture_alpha": 0.0,
+    "path": "linux_matrix_green_assets/2026-05-09/image/background_flat.png",
+    "fit": "stretch",
     "opacity": 1.0,
     "panels": [
       {
-        "id": "top_bar",
+        "id": "header",
         "rect": [
-          80,
+          82,
           18,
-          1760,
-          40
-        ],
-        "radius": 14,
-        "fill": [
-          0,
-          0,
-          0,
-          150
-        ],
-        "z_index": 80,
-        "visible": true,
-        "locked": false
-      },
-      {
-        "id": "left_stats",
-        "rect": [
-          86,
-          78,
-          360,
-          168
-        ],
-        "radius": 22,
-        "fill": [
-          0,
-          0,
-          0,
-          112
-        ],
-        "z_index": 80,
-        "visible": true,
-        "locked": false
-      },
-      {
-        "id": "right_stats",
-        "rect": [
-          1478,
-          78,
-          350,
-          168
-        ],
-        "radius": 22,
-        "fill": [
-          0,
-          0,
-          0,
-          112
-        ],
-        "z_index": 80,
-        "visible": true,
-        "locked": false
-      },
-      {
-        "id": "media_bar",
-        "rect": [
-          480,
-          330,
-          960,
-          100
+          1756,
+          64
         ],
         "radius": 24,
         "fill": [
-          0,
-          0,
-          0,
-          170
+          10,
+          14,
+          20,
+          214
         ],
         "z_index": 80,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "stats_left",
+        "rect": [
+          88,
+          290,
+          734,
+          126
+        ],
+        "radius": 24,
+        "fill": [
+          8,
+          18,
+          28,
+          220
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "stats_right",
+        "rect": [
+          850,
+          290,
+          982,
+          126
+        ],
+        "radius": 24,
+        "fill": [
+          18,
+          18,
+          22,
+          214
+        ],
+        "z_index": 80,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "accent_left",
+        "rect": [
+          92,
+          96,
+          342,
+          118
+        ],
+        "radius": 26,
+        "fill": [
+          82,
+          232,
+          112,
+          226
+        ],
+        "z_index": 78,
+        "visible": true,
+        "locked": false
+      },
+      {
+        "id": "accent_right",
+        "rect": [
+          1472,
+          102,
+          306,
+          108
+        ],
+        "radius": 26,
+        "fill": [
+          126,
+          255,
+          192,
+          224
+        ],
+        "z_index": 78,
         "visible": true,
         "locked": false
       }
@@ -113,67 +131,45 @@
   },
   "texts": [
     {
-      "id": "title_left",
-      "text": "SYSTEM",
-      "x": 110,
-      "y": 88,
-      "box_width": 220,
-      "box_height": 36,
-      "font_family": "DejaVu Sans",
-      "font_size": 24,
-      "font_bold": true,
-      "font_italic": false,
-      "font_underline": false,
-      "color": [
-        80,
-        255,
-        160
-      ],
-      "align": "left",
-      "z_index": 200,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "title_right",
-      "text": "MEDIA",
-      "x": 1510,
-      "y": 88,
-      "box_width": 220,
-      "box_height": 36,
-      "font_family": "DejaVu Sans",
-      "font_size": 24,
-      "font_bold": true,
-      "font_italic": false,
-      "font_underline": false,
-      "color": [
-        80,
-        255,
-        160
-      ],
-      "align": "left",
-      "z_index": 200,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "footer_brand",
-      "text": "Open Trofeo LCD",
-      "x": 862,
+      "id": "title",
+      "text": "LINUX MATRIX GREEN",
+      "x": 616,
       "y": 26,
-      "box_width": 260,
-      "box_height": 36,
-      "font_family": "DejaVu Sans",
-      "font_size": 20,
+      "box_width": 688,
+      "box_height": 42,
+      "font_family": "Ubuntu",
+      "font_size": 30,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "color": [
-        120,
-        255,
-        180
+        246,
+        242,
+        232
       ],
-      "align": "left",
+      "align": "center",
+      "z_index": 200,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "subtitle",
+      "text": "STABLE STATIC EDITION",
+      "x": 628,
+      "y": 62,
+      "box_width": 664,
+      "box_height": 20,
+      "font_family": "Ubuntu",
+      "font_size": 16,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "color": [
+        192,
+        206,
+        216
+      ],
+      "align": "center",
       "z_index": 200,
       "visible": true,
       "locked": false
@@ -181,30 +177,30 @@
   ],
   "stats": [
     {
-      "id": "clock",
+      "id": "host",
       "label": "",
-      "source": "time_hms",
+      "source": "hostname",
       "format": "{value}",
-      "x": 1610,
-      "y": 24,
-      "box_width": 180,
+      "x": 110,
+      "y": 34,
+      "box_width": 300,
       "box_height": 28,
-      "font_family": "DejaVu Sans",
-      "font_size": 28,
+      "font_family": "Ubuntu",
+      "font_size": 24,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
       "label_color": [
-        210,
-        255,
-        220
+        242,
+        246,
+        248
       ],
       "value_color": [
-        255,
-        240,
-        180
+        242,
+        246,
+        248
       ],
       "align": "left",
       "z_index": 210,
@@ -212,32 +208,32 @@
       "locked": false
     },
     {
-      "id": "host",
+      "id": "clock",
       "label": "",
-      "source": "hostname",
+      "source": "time_hms",
       "format": "{value}",
-      "x": 110,
-      "y": 24,
-      "box_width": 260,
-      "box_height": 28,
-      "font_family": "DejaVu Sans",
-      "font_size": 22,
+      "x": 1404,
+      "y": 22,
+      "box_width": 332,
+      "box_height": 48,
+      "font_family": "Ubuntu",
+      "font_size": 56,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
       "label_color": [
-        120,
-        255,
-        180
+        250,
+        236,
+        196
       ],
       "value_color": [
-        120,
-        255,
-        180
+        250,
+        236,
+        196
       ],
-      "align": "left",
+      "align": "center",
       "z_index": 210,
       "visible": true,
       "locked": false
@@ -247,26 +243,26 @@
       "label": "CPU",
       "source": "cpu_usage_percent",
       "format": "{value}",
-      "x": 112,
-      "y": 126,
-      "box_width": 260,
-      "box_height": 28,
-      "font_family": "DejaVu Sans",
-      "font_size": 26,
+      "x": 118,
+      "y": 324,
+      "box_width": 196,
+      "box_height": 40,
+      "font_family": "Ubuntu",
+      "font_size": 40,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
       "label_color": [
-        170,
-        255,
-        190
+        236,
+        242,
+        246
       ],
       "value_color": [
-        235,
-        255,
-        240
+        82,
+        232,
+        112
       ],
       "align": "left",
       "z_index": 210,
@@ -278,26 +274,26 @@
       "label": "GPU",
       "source": "gpu_load",
       "format": "{value}",
-      "x": 112,
-      "y": 164,
-      "box_width": 260,
-      "box_height": 28,
-      "font_family": "DejaVu Sans",
-      "font_size": 26,
+      "x": 330,
+      "y": 324,
+      "box_width": 196,
+      "box_height": 40,
+      "font_family": "Ubuntu",
+      "font_size": 40,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
       "label_color": [
-        170,
-        255,
-        190
+        236,
+        242,
+        246
       ],
       "value_color": [
-        235,
-        255,
-        240
+        82,
+        232,
+        112
       ],
       "align": "left",
       "z_index": 210,
@@ -309,150 +305,26 @@
       "label": "RAM",
       "source": "mem_percent",
       "format": "{value}",
-      "x": 112,
-      "y": 202,
-      "box_width": 260,
-      "box_height": 28,
-      "font_family": "DejaVu Sans",
-      "font_size": 26,
+      "x": 542,
+      "y": 324,
+      "box_width": 196,
+      "box_height": 40,
+      "font_family": "Ubuntu",
+      "font_size": 40,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
       "label_color": [
-        170,
+        236,
+        242,
+        246
+      ],
+      "value_color": [
+        126,
         255,
-        190
-      ],
-      "value_color": [
-        235,
-        255,
-        240
-      ],
-      "align": "left",
-      "z_index": 210,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "media_title",
-      "label": "",
-      "source": "media_title",
-      "format": "♫ {value}",
-      "x": 626,
-      "y": 346,
-      "box_width": 700,
-      "box_height": 28,
-      "font_family": "DejaVu Sans",
-      "font_size": 24,
-      "font_bold": true,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": true,
-      "marquee_speed": 62.0,
-      "label_color": [
-        180,
-        255,
-        200
-      ],
-      "value_color": [
-        240,
-        255,
-        245
-      ],
-      "align": "left",
-      "z_index": 210,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "media_artist",
-      "label": "",
-      "source": "media_artist",
-      "format": "{value}",
-      "x": 626,
-      "y": 380,
-      "box_width": 700,
-      "box_height": 28,
-      "font_family": "DejaVu Sans",
-      "font_size": 20,
-      "font_bold": false,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": false,
-      "marquee_speed": 62.0,
-      "label_color": [
-        180,
-        220,
-        190
-      ],
-      "value_color": [
-        200,
-        235,
-        210
-      ],
-      "align": "left",
-      "z_index": 210,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "media_state",
-      "label": "Stan",
-      "source": "media_state",
-      "format": "{value}",
-      "x": 626,
-      "y": 408,
-      "box_width": 240,
-      "box_height": 28,
-      "font_family": "DejaVu Sans",
-      "font_size": 18,
-      "font_bold": false,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": false,
-      "marquee_speed": 62.0,
-      "label_color": [
-        160,
-        220,
-        180
-      ],
-      "value_color": [
-        200,
-        235,
-        210
-      ],
-      "align": "left",
-      "z_index": 210,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "media_app",
-      "label": "Player",
-      "source": "media_app",
-      "format": "{value}",
-      "x": 910,
-      "y": 408,
-      "box_width": 300,
-      "box_height": 28,
-      "font_family": "DejaVu Sans",
-      "font_size": 18,
-      "font_bold": false,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": false,
-      "marquee_speed": 62.0,
-      "label_color": [
-        160,
-        220,
-        180
-      ],
-      "value_color": [
-        200,
-        235,
-        210
+        192
       ],
       "align": "left",
       "z_index": 210,
@@ -461,29 +333,29 @@
     },
     {
       "id": "cpu_temp",
-      "label": "CPU Temp",
+      "label": "TEMP",
       "source": "cpu_temp_c",
       "format": "{value}",
-      "x": 1510,
-      "y": 126,
-      "box_width": 250,
-      "box_height": 28,
-      "font_family": "DejaVu Sans",
-      "font_size": 22,
-      "font_bold": false,
+      "x": 884,
+      "y": 320,
+      "box_width": 200,
+      "box_height": 34,
+      "font_family": "Ubuntu",
+      "font_size": 30,
+      "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
       "label_color": [
-        170,
-        255,
-        190
+        236,
+        242,
+        246
       ],
       "value_color": [
-        235,
+        126,
         255,
-        240
+        192
       ],
       "align": "left",
       "z_index": 210,
@@ -491,30 +363,30 @@
       "locked": false
     },
     {
-      "id": "vram",
-      "label": "VRAM",
-      "source": "vram_percent",
+      "id": "uptime",
+      "label": "UPTIME",
+      "source": "uptime_human",
       "format": "{value}",
-      "x": 1510,
-      "y": 160,
-      "box_width": 250,
-      "box_height": 28,
-      "font_family": "DejaVu Sans",
-      "font_size": 22,
-      "font_bold": false,
+      "x": 1100,
+      "y": 320,
+      "box_width": 336,
+      "box_height": 34,
+      "font_family": "Ubuntu",
+      "font_size": 30,
+      "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
       "label_color": [
-        170,
-        255,
-        190
+        236,
+        242,
+        246
       ],
       "value_color": [
-        235,
-        255,
-        240
+        236,
+        242,
+        246
       ],
       "align": "left",
       "z_index": 210,
@@ -522,30 +394,61 @@
       "locked": false
     },
     {
-      "id": "load",
-      "label": "Load",
-      "source": "load_average",
+      "id": "ip_local",
+      "label": "IP",
+      "source": "ip_local",
       "format": "{value}",
-      "x": 1510,
-      "y": 194,
-      "box_width": 250,
-      "box_height": 28,
-      "font_family": "DejaVu Sans",
-      "font_size": 22,
-      "font_bold": false,
+      "x": 884,
+      "y": 364,
+      "box_width": 340,
+      "box_height": 30,
+      "font_family": "Ubuntu",
+      "font_size": 24,
+      "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
       "marquee_speed": 62.0,
       "label_color": [
-        170,
-        255,
-        190
+        194,
+        206,
+        214
       ],
       "value_color": [
-        235,
-        255,
-        240
+        194,
+        206,
+        214
+      ],
+      "align": "left",
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "date_ymd",
+      "label": "DATE",
+      "source": "date_ymd",
+      "format": "{value}",
+      "x": 1242,
+      "y": 364,
+      "box_width": 300,
+      "box_height": 30,
+      "font_family": "Ubuntu",
+      "font_size": 24,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 62.0,
+      "label_color": [
+        194,
+        206,
+        214
+      ],
+      "value_color": [
+        194,
+        206,
+        214
       ],
       "align": "left",
       "z_index": 210,
@@ -553,58 +456,12 @@
       "locked": false
     }
   ],
-  "images": [
-    {
-      "id": "overlay_frame",
-      "path": "linux_matrix_green_assets/2026-05-08/overlay/frame.png",
-      "rect": [
-        0,
-        0,
-        1920,
-        462
-      ],
-      "fit": "stretch",
-      "opacity": 1.0,
-      "rotation": 0,
-      "z_index": 260,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "media_cover",
-      "path": "",
-      "source": "media_cover",
-      "rect": [
-        510,
-        342,
-        86,
-        86
-      ],
-      "fit": "cover",
-      "opacity": 1.0,
-      "radius": 18,
-      "border_width": 2,
-      "border_color": [
-        200,
-        255,
-        220,
-        180
-      ],
-      "glow_radius": 14,
-      "glow_opacity": 0.35,
-      "rotation": 0,
-      "z_index": 230,
-      "visible": true,
-      "locked": false
-    }
-  ],
+  "images": [],
   "effects": {
     "animation": {
       "enabled": false,
       "current_frame": 0,
-      "frame_paths": [],
-      "frame_durations_ms": []
-    },
-    "motion_tracks": []
+      "frame_paths": []
+    }
   }
 }
