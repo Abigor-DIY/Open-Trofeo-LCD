@@ -37,7 +37,7 @@ KNOWN_FIT = {"contain", "cover", "stretch"}
 KNOWN_BACKGROUND_KIND = {"generated", "image", "color"}
 KNOWN_IMAGE_SOURCES = {"media_cover", "media_video_frame", "analog_clock"}
 KNOWN_CLOCK_STYLE = {"classic", "modern", "nordic"}
-KNOWN_STAT_DISPLAY = {"text", "progress", "gauge"}
+KNOWN_STAT_DISPLAY = {"text", "progress", "gauge", "sparkline"}
 KNOWN_GAUGE_VALUE_LAYOUT = frozenset({"center", "below", "beside"})
 
 
@@ -277,6 +277,10 @@ def _normalize_stat_item(raw: Any, idx: int) -> dict[str, Any]:
 
     gauge_inner_alpha = float(_expect_number(data.get("gauge_inner_alpha", 1.0), f"{path}.gauge_inner_alpha"))
     gauge_inner_alpha = max(0.0, min(1.0, gauge_inner_alpha))
+    sparkline_points = int(_expect_number(data.get("sparkline_points", 42), f"{path}.sparkline_points"))
+    sparkline_points = max(8, min(240, sparkline_points))
+    sparkline_fill_opacity = float(_expect_number(data.get("sparkline_fill_opacity", 0.18), f"{path}.sparkline_fill_opacity"))
+    sparkline_fill_opacity = max(0.0, min(1.0, sparkline_fill_opacity))
 
     return {
         "id": str(data.get("id", f"stat_{idx}")).strip() or f"stat_{idx}",
@@ -315,6 +319,9 @@ def _normalize_stat_item(raw: Any, idx: int) -> dict[str, Any]:
         "gauge_ring_size": gauge_ring_size,
         "gauge_value_layout": gauge_value_layout,
         "gauge_inner_alpha": gauge_inner_alpha,
+        "sparkline_points": sparkline_points,
+        "sparkline_fill_opacity": sparkline_fill_opacity,
+        "sparkline_show_points": bool(data.get("sparkline_show_points", True)),
         "align": align,
         "z_index": int(_expect_number(data.get("z_index", 220), f"{path}.z_index")),
         "visible": bool(data.get("visible", True)),

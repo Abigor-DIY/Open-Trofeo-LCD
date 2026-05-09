@@ -3133,7 +3133,7 @@ class TrofeoGui(QMainWindow):
         self.designer_text_edit = QLineEdit(); self.designer_label_edit = QLineEdit(); self.designer_format_edit = QLineEdit()
         self.designer_source_combo = QComboBox(); self._populate_designer_source_combo()
         self.designer_stat_display_combo = QComboBox(); self.designer_stat_display_combo.addItems(
-            [mode for mode in ("text", "progress", "gauge") if mode in KNOWN_STAT_DISPLAY]
+            [mode for mode in ("text", "progress", "gauge", "sparkline") if mode in KNOWN_STAT_DISPLAY]
         )
         self.designer_stat_min_spin = QDoubleSpinBox(); self.designer_stat_min_spin.setRange(-999999.0, 999999.0); self.designer_stat_min_spin.setDecimals(2)
         self.designer_stat_max_spin = QDoubleSpinBox(); self.designer_stat_max_spin.setRange(-999999.0, 999999.0); self.designer_stat_max_spin.setDecimals(2); self.designer_stat_max_spin.setValue(100.0)
@@ -3178,6 +3178,16 @@ class TrofeoGui(QMainWindow):
         self.designer_gauge_value_layout_combo.addItem("W środku pierścienia", "center")
         self.designer_gauge_value_layout_combo.addItem("Pod spodem (wartość pod łukiem)", "below")
         self.designer_gauge_value_layout_combo.addItem("Z boku (wartość po prawej)", "beside")
+        self.designer_sparkline_points_spin = QSpinBox()
+        self.designer_sparkline_points_spin.setRange(8, 240)
+        self.designer_sparkline_points_spin.setValue(42)
+        self.designer_sparkline_fill_opacity_spin = QDoubleSpinBox()
+        self.designer_sparkline_fill_opacity_spin.setRange(0.0, 1.0)
+        self.designer_sparkline_fill_opacity_spin.setSingleStep(0.05)
+        self.designer_sparkline_fill_opacity_spin.setDecimals(2)
+        self.designer_sparkline_fill_opacity_spin.setValue(0.18)
+        self.designer_sparkline_show_points_chk = QCheckBox("Pokaż punkt końcowy")
+        self.designer_sparkline_show_points_chk.setChecked(True)
         self.designer_theme_gauge_style_combo = QComboBox()
         self._populate_designer_theme_gauge_style_combo()
         self.designer_font_bold_chk = QCheckBox("B")
@@ -3472,6 +3482,9 @@ class TrofeoGui(QMainWindow):
             (self.designer_gauge_ring_spin, "valueChanged"),
             (self.designer_gauge_value_layout_combo, "currentIndexChanged"),
             (self.designer_gauge_inner_alpha_spin, "valueChanged"),
+            (self.designer_sparkline_points_spin, "valueChanged"),
+            (self.designer_sparkline_fill_opacity_spin, "valueChanged"),
+            (self.designer_sparkline_show_points_chk, "toggled"),
             (self.bg_kind_combo, "currentTextChanged"), (self.bg_path_edit, "textChanged")
         ]:
             try: getattr(widget, signal).connect(self.on_designer_field_changed)
@@ -4122,13 +4135,19 @@ class TrofeoGui(QMainWindow):
         self.row_appearance_value_color = make_label("Kolor wartości")
         self.inspector_appearance_layout.addRow(self.row_appearance_value_color, self.designer_value_color_row)
         self.designer_track_color_row, self.designer_track_color_btn = add_color_row(self.designer_track_color_edit)
-        self.row_appearance_track_color = make_label("Kolor tła gauge / paska")
+        self.row_appearance_track_color = make_label("Kolor tła gauge / paska / wykresu")
         self.inspector_appearance_layout.addRow(self.row_appearance_track_color, self.designer_track_color_row)
         self.designer_fill_color_row, self.designer_fill_color_btn = add_color_row(self.designer_fill_color_edit)
-        self.row_appearance_fill_color = make_label("Kolor wypełnienia / wartości")
+        self.row_appearance_fill_color = make_label("Kolor linii / wypełnienia / wartości")
         self.inspector_appearance_layout.addRow(self.row_appearance_fill_color, self.designer_fill_color_row)
+        self.row_sparkline_points = make_label("Punkty historii")
+        self.inspector_appearance_layout.addRow(self.row_sparkline_points, self.designer_sparkline_points_spin)
+        self.row_sparkline_fill_opacity = make_label("Przezrocz. wypełnienia")
+        self.inspector_appearance_layout.addRow(self.row_sparkline_fill_opacity, self.designer_sparkline_fill_opacity_spin)
+        self.row_sparkline_show_points = make_label("Punkt końcowy")
+        self.inspector_appearance_layout.addRow(self.row_sparkline_show_points, self.designer_sparkline_show_points_chk)
 
-        self.row_appearance_stroke_width = make_label("Grubość gauge (0 = auto)")
+        self.row_appearance_stroke_width = make_label("Grubość linii / gauge (0 = auto)")
         self.row_gauge_ring = make_label("Średnica pierścienia")
         self.row_gauge_value_layout = make_label("Układ wartości")
         self.designer_gauge_low_row, self.designer_gauge_low_btn = add_color_row(self.designer_gauge_low_edit)
@@ -4337,6 +4356,8 @@ class TrofeoGui(QMainWindow):
             self.designer_gauge_ring_spin,
             self.designer_gauge_value_layout_combo,
             self.designer_gauge_inner_alpha_spin,
+            self.designer_sparkline_points_spin,
+            self.designer_sparkline_fill_opacity_spin,
             self.motion_start_spin,
             self.motion_end_spin,
             self.motion_target_x_spin,
@@ -8168,6 +8189,9 @@ class TrofeoGui(QMainWindow):
                 "fill_color": [220, 220, 220],
                 "stroke_width": 12,
                 "show_value_text": True,
+                "sparkline_points": 42,
+                "sparkline_fill_opacity": 0.18,
+                "sparkline_show_points": True,
                 "align": "left",
                 "z_index": 220,
             }
@@ -9784,6 +9808,9 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(appearance_layout, self.row_appearance_value_color, self.designer_value_color_row, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_appearance_track_color, self.designer_track_color_row, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_appearance_fill_color, self.designer_fill_color_row, is_stat)
+        self._set_form_row_visible(appearance_layout, self.row_sparkline_points, self.designer_sparkline_points_spin, is_stat)
+        self._set_form_row_visible(appearance_layout, self.row_sparkline_fill_opacity, self.designer_sparkline_fill_opacity_spin, is_stat)
+        self._set_form_row_visible(appearance_layout, self.row_sparkline_show_points, self.designer_sparkline_show_points_chk, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_panel_fill, self.panel_fill_row, is_panel)
         self._set_form_row_visible(appearance_layout, self.row_panel_opacity, self.panel_opacity_spin, is_panel)
         self._set_form_row_visible(appearance_layout, self.row_panel_radius, self.panel_radius_spin, is_panel)
@@ -9865,6 +9892,7 @@ class TrofeoGui(QMainWindow):
                 self.panel_fill_edit.clear()
                 self.panel_radius_spin.setValue(0)
                 self._clear_stat_gauge_fields()
+                self._clear_stat_sparkline_fields()
                 self._load_motion_track_fields(None, collection)
                 self.inspector_tabs.setCurrentWidget(self.inspector_general)
                 return
@@ -9899,6 +9927,7 @@ class TrofeoGui(QMainWindow):
                 self.designer_track_color_edit.clear()
                 self.designer_fill_color_edit.clear()
                 self._clear_stat_gauge_fields()
+                self._clear_stat_sparkline_fields()
                 self.designer_stat_stroke_width_spin.setValue(12)
                 self.designer_path_edit.clear()
                 self.designer_w_spin.setValue(1)
@@ -9983,9 +10012,13 @@ class TrofeoGui(QMainWindow):
                     gvl_idx = self.designer_gauge_value_layout_combo.findData(_map.get(gvl, "center"))
                 self.designer_gauge_value_layout_combo.setCurrentIndex(gvl_idx if gvl_idx >= 0 else 0)
                 self.designer_gauge_inner_alpha_spin.setValue(float(active_item.get("gauge_inner_alpha", 1.0)))
+                self.designer_sparkline_points_spin.setValue(int(active_item.get("sparkline_points", 42)))
+                self.designer_sparkline_fill_opacity_spin.setValue(float(active_item.get("sparkline_fill_opacity", 0.18)))
+                self.designer_sparkline_show_points_chk.setChecked(bool(active_item.get("sparkline_show_points", True)))
             else:
                 self.designer_stat_stroke_width_spin.setValue(12)
                 self._clear_stat_gauge_fields()
+                self._clear_stat_sparkline_fields()
             self.designer_path_edit.setText(str(active_item.get("path", "")))
             if active_collection in {"texts", "stats"}:
                 self.designer_w_spin.setValue(int(active_item.get("box_width", 320 if active_collection == "texts" else 160)))
@@ -10108,15 +10141,23 @@ class TrofeoGui(QMainWindow):
         self.designer_gauge_value_layout_combo.setCurrentIndex(0)
         self.designer_gauge_inner_alpha_spin.setValue(1.0)
 
+    def _clear_stat_sparkline_fields(self) -> None:
+        self.designer_sparkline_points_spin.setValue(42)
+        self.designer_sparkline_fill_opacity_spin.setValue(0.18)
+        self.designer_sparkline_show_points_chk.setChecked(True)
+
     def _update_gauge_stat_inspector_visibility(self) -> None:
         gauge_layout = self.inspector_gauge.layout()
         gauge_tab_idx = self.inspector_tabs.indexOf(getattr(self, "inspector_gauge", None))
         selected_multi = self._selected_items_multi_any()
         show_gauge = False
+        show_sparkline = False
         if len(selected_multi) == 1:
             coll, _row, sel_item = selected_multi[0]
             if coll == "stats" and sel_item is not None:
-                show_gauge = str(sel_item.get("display", "text")).strip().lower() == "gauge"
+                display = str(sel_item.get("display", "text")).strip().lower()
+                show_gauge = display == "gauge"
+                show_sparkline = display == "sparkline"
         if gauge_tab_idx >= 0:
             self.inspector_tabs.setTabVisible(gauge_tab_idx, show_gauge)
         gauge_rows = (
@@ -10133,6 +10174,14 @@ class TrofeoGui(QMainWindow):
         )
         for row_label, widget in gauge_rows:
             self._set_form_row_visible(gauge_layout, row_label, widget, show_gauge)
+        appearance_layout = self.inspector_appearance.layout()
+        sparkline_rows = (
+            (self.row_sparkline_points, self.designer_sparkline_points_spin),
+            (self.row_sparkline_fill_opacity, self.designer_sparkline_fill_opacity_spin),
+            (self.row_sparkline_show_points, self.designer_sparkline_show_points_chk),
+        )
+        for row_label, widget in sparkline_rows:
+            self._set_form_row_visible(appearance_layout, row_label, widget, show_sparkline)
 
     def _parse_color_line(self, value: str, fallback: list[int]) -> list[int]:
         raw = value.strip()
@@ -10343,6 +10392,20 @@ class TrofeoGui(QMainWindow):
                     self.designer_w_spin.setValue(gw)
                     self.designer_h_spin.setValue(gh)
                     self.designer_gauge_ring_spin.setValue(int(item["gauge_ring_size"]))
+                finally:
+                    self._designer_updating = False
+            elif item["display"] == "sparkline":
+                sw = max(140, self._snap_value(int(self.designer_w_spin.value())))
+                sh = max(54, self._snap_value(int(self.designer_h_spin.value())))
+                item["box_width"] = sw
+                item["box_height"] = sh
+                item["sparkline_points"] = int(self.designer_sparkline_points_spin.value())
+                item["sparkline_fill_opacity"] = float(self.designer_sparkline_fill_opacity_spin.value())
+                item["sparkline_show_points"] = bool(self.designer_sparkline_show_points_chk.isChecked())
+                self._designer_updating = True
+                try:
+                    self.designer_w_spin.setValue(sw)
+                    self.designer_h_spin.setValue(sh)
                 finally:
                     self._designer_updating = False
             item["min_value"] = min_value

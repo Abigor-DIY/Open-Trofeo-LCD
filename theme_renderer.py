@@ -231,6 +231,7 @@ def _parse_numeric_stat_value(value: str) -> float | None:
 
 
 _GAUGE_ANGLE_SMOOTH: dict[str, float] = {}
+_SPARKLINE_HISTORY: dict[str, list[float]] = {}
 
 
 def _lerp_channel(a: int, b: int, t: float) -> int:
@@ -276,6 +277,15 @@ def _smooth_gauge_ratio(cache_key: str, target_ratio: float, factor: float) -> f
     blended = prev + (t - prev) * adapt
     _GAUGE_ANGLE_SMOOTH[cache_key] = blended
     return max(0.0, min(1.0, blended))
+
+
+def _update_sparkline_history(cache_key: str, value: float, limit: int) -> list[float]:
+    points = max(8, min(240, int(limit)))
+    history = _SPARKLINE_HISTORY.setdefault(cache_key, [])
+    history.append(float(value))
+    if len(history) > points:
+        del history[: len(history) - points]
+    return history[:]
 
 
 def _draw_stat_progress(
@@ -590,6 +600,128 @@ def _draw_stat_gauge(
         ty += (lb[3] - lb[1]) + gap // 2
     if bool(item.get("show_value_text", True)):
         _draw_styled_text(draw, (tx, ty), value_text, font=value_font, fill=value_fill, bold=True, underline=False)
+
+
+def _draw_stat_sparkline(
+    canvas: Image.Image,
+    item: dict[str, Any],
+    *,
+    label: str,
+    value_text: str,
+    history: list[float],
+    min_value: float,
+    max_value: float,
+    label_fill: tuple[int, int, int, int],
+    value_fill: tuple[int, int, int, int],
+    track_fill: tuple[int, int, int, int],
+    fill_color: tuple[int, int, int, int],
+) -> None:
+    draw = ImageDraw.Draw(canvas)
+    x = int(item["x"])
+    y = int(item["y"])
+    box_width = max(1, int(item.get("box_width", 320)))
+    box_height = max(1, int(item.get("box_height", 72)))
+    pad_x = max(6, int(round(box_width * 0.03)))
+    pad_y = max(4, int(round(box_height * 0.08)))
+    header_gap = max(4, int(round(box_height * 0.05)))
+    line_width = max(1, int(item.get("stroke_width", 3) or 3))
+    show_value = bool(item.get("show_value_text", True))
+    show_points = bool(item.get("sparkline_show_points", True))
+    fill_opacity = max(0.0, min(1.0, float(item.get("sparkline_fill_opacity", 0.18))))
+    font_size = int(item.get("font_size", 22))
+    header_font = _load_font(
+        max(10, int(round(font_size * 0.58))),
+        bold=False,
+        italic=False,
+        font_family=str(item.get("font_family", "DejaVu Sans")),
+    )
+    value_font = _load_font(
+        max(12, int(round(font_size * 0.86))),
+        bold=True,
+        italic=False,
+        font_family=str(item.get("font_family", "DejaVu Sans")),
+    )
+
+    header_h = 0
+    if label or show_value:
+        header_h = max(
+            (draw.textbbox((0, 0), label, font=header_font)[3] if label else 0),
+            (draw.textbbox((0, 0), value_text, font=value_font)[3] if show_value else 0),
+        )
+    plot_left = x + pad_x
+    plot_top = y + pad_y + (header_h + header_gap if header_h else 0)
+    plot_right = x + box_width - pad_x
+    plot_bottom = y + box_height - pad_y
+    if plot_bottom <= plot_top:
+        plot_bottom = plot_top + 1
+    if plot_right <= plot_left:
+        plot_right = plot_left + 1
+
+    if track_fill[3] > 0:
+        draw.rounded_rectangle(
+            (x, y, x + box_width, y + box_height),
+            radius=max(8, int(round(min(box_width, box_height) * 0.1))),
+            fill=track_fill,
+        )
+
+    if label:
+        _draw_styled_text(
+            draw,
+            (plot_left, y + pad_y),
+            label,
+            font=header_font,
+            fill=label_fill,
+            bold=False,
+            underline=False,
+        )
+    if show_value:
+        vb = draw.textbbox((0, 0), value_text, font=value_font)
+        vx = plot_right - (vb[2] - vb[0])
+        _draw_styled_text(
+            draw,
+            (vx, y + pad_y),
+            value_text,
+            font=value_font,
+            fill=value_fill,
+            bold=True,
+            underline=False,
+        )
+
+    draw.line((plot_left, plot_bottom, plot_right, plot_bottom), fill=(track_fill[0], track_fill[1], track_fill[2], max(60, track_fill[3])), width=1)
+
+    if not history:
+        return
+    span = max_value - min_value
+    if span <= 0:
+        span = 1.0
+    normalized: list[tuple[float, float]] = []
+    count = max(1, len(history))
+    for idx, raw in enumerate(history):
+        ratio = max(0.0, min(1.0, (raw - min_value) / span))
+        px = plot_left if count == 1 else plot_left + ((plot_right - plot_left) * idx / (count - 1))
+        py = plot_bottom - ratio * max(1, plot_bottom - plot_top)
+        normalized.append((px, py))
+
+    if len(normalized) >= 2 and fill_opacity > 0.0:
+        fill_rgba = (
+            fill_color[0],
+            fill_color[1],
+            fill_color[2],
+            max(0, min(255, int(round(fill_color[3] * fill_opacity)))),
+        )
+        poly = [(normalized[0][0], plot_bottom), *normalized, (normalized[-1][0], plot_bottom)]
+        draw.polygon(poly, fill=fill_rgba)
+
+    if len(normalized) == 1:
+        px, py = normalized[0]
+        draw.line((plot_left, py, plot_right, py), fill=fill_color, width=line_width)
+    else:
+        draw.line(normalized, fill=fill_color, width=line_width)
+
+    if show_points and normalized:
+        end_x, end_y = normalized[-1]
+        dot_r = max(2, line_width + 1)
+        draw.ellipse((end_x - dot_r, end_y - dot_r, end_x + dot_r, end_y + dot_r), fill=value_fill)
 
 
 def _motion_progress(track: dict[str, Any], frame_index: int) -> float:
@@ -1044,7 +1176,7 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
         display = str(item.get("display", "text")).strip().lower()
         marquee = bool(item.get("marquee", False))
         numeric_value = _parse_numeric_stat_value(value)
-        if display in {"progress", "gauge"} and numeric_value is not None:
+        if display in {"progress", "gauge", "sparkline"} and numeric_value is not None:
             min_value = float(item.get("min_value", 0.0))
             max_value = float(item.get("max_value", 100.0))
             if display == "progress":
@@ -1061,7 +1193,7 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
                     track_fill=track_fill,
                     fill_color=fill_color,
                 )
-            else:
+            elif display == "gauge":
                 span = max_value - min_value
                 target_ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
                 cache_key = f"{item.get('id', 'stat')}::{item.get('source', '')}"
@@ -1092,6 +1224,22 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
                     track_fill=track_fill,
                     display_ratio=display_ratio,
                     arc_fill=arc_fill,
+                )
+            else:
+                cache_key = f"{item.get('id', 'stat')}::{item.get('source', '')}"
+                history = _update_sparkline_history(cache_key, numeric_value, int(item.get("sparkline_points", 42)))
+                _draw_stat_sparkline(
+                    canvas,
+                    item,
+                    label=label,
+                    value_text=value_text,
+                    history=history,
+                    min_value=min_value,
+                    max_value=max_value,
+                    label_fill=label_fill,
+                    value_fill=value_fill,
+                    track_fill=track_fill,
+                    fill_color=fill_color,
                 )
             continue
         if not marquee and not label and item["align"] == "left":
