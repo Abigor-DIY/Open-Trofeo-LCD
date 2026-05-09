@@ -33,7 +33,8 @@ KNOWN_STAT_SOURCES = [
 KNOWN_ALIGN = {"left", "center", "right"}
 KNOWN_FIT = {"contain", "cover", "stretch"}
 KNOWN_BACKGROUND_KIND = {"generated", "image", "color"}
-KNOWN_IMAGE_SOURCES = {"media_cover", "media_video_frame"}
+KNOWN_IMAGE_SOURCES = {"media_cover", "media_video_frame", "analog_clock"}
+KNOWN_CLOCK_STYLE = {"classic", "modern", "nordic"}
 KNOWN_STAT_DISPLAY = {"text", "progress", "gauge"}
 
 
@@ -276,6 +277,8 @@ def _normalize_image_item(raw: Any, idx: int) -> dict[str, Any]:
         raise _fail(f"{path}.source", f"must be one of {sorted(KNOWN_IMAGE_SOURCES)}")
     if not src and not source:
         raise _fail(f"{path}.path", "must not be empty when source is not set")
+    if source != "analog_clock" and not src and source not in KNOWN_IMAGE_SOURCES:
+        raise _fail(f"{path}.path", "must not be empty for non-generated image sources")
     fit = _expect_str(data.get("fit", "contain"), f"{path}.fit").strip().lower()
     if fit not in KNOWN_FIT:
         raise _fail(f"{path}.fit", f"must be one of {sorted(KNOWN_FIT)}")
@@ -285,6 +288,9 @@ def _normalize_image_item(raw: Any, idx: int) -> dict[str, Any]:
     glow_opacity = float(_expect_number(data.get("glow_opacity", 0.0), f"{path}.glow_opacity"))
     if not (0.0 <= glow_opacity <= 1.0):
         raise _fail(f"{path}.glow_opacity", "must be in range 0.0..1.0")
+    clock_style = _expect_str(data.get("clock_style", "classic"), f"{path}.clock_style").strip().lower()
+    if clock_style not in KNOWN_CLOCK_STYLE:
+        raise _fail(f"{path}.clock_style", f"must be one of {sorted(KNOWN_CLOCK_STYLE)}")
     return {
         "id": str(data.get("id", f"image_{idx}")).strip() or f"image_{idx}",
         "path": src,
@@ -297,6 +303,13 @@ def _normalize_image_item(raw: Any, idx: int) -> dict[str, Any]:
         "border_color": _normalize_color(data.get("border_color", [255, 255, 255, 0]), f"{path}.border_color"),
         "glow_radius": int(_expect_number(data.get("glow_radius", 0), f"{path}.glow_radius")),
         "glow_opacity": glow_opacity,
+        "clock_style": clock_style,
+        "clock_show_second_hand": bool(data.get("clock_show_second_hand", True)),
+        "clock_face_color": _normalize_color(data.get("clock_face_color", [13, 18, 28, 220]), f"{path}.clock_face_color"),
+        "clock_tick_color": _normalize_color(data.get("clock_tick_color", [220, 232, 245, 220]), f"{path}.clock_tick_color"),
+        "clock_hand_color": _normalize_color(data.get("clock_hand_color", [240, 244, 250, 255]), f"{path}.clock_hand_color"),
+        "clock_second_color": _normalize_color(data.get("clock_second_color", [255, 92, 92, 255]), f"{path}.clock_second_color"),
+        "clock_center_color": _normalize_color(data.get("clock_center_color", [255, 255, 255, 255]), f"{path}.clock_center_color"),
         "rotation": int(_expect_number(data.get("rotation", 0), f"{path}.rotation")),
         "z_index": int(_expect_number(data.get("z_index", 100), f"{path}.z_index")),
         "visible": bool(data.get("visible", True)),

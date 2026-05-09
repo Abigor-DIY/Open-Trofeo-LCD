@@ -3771,6 +3771,9 @@ class TrofeoGui(QMainWindow):
         self.quick_add_now_playing_mini_btn = QPushButton("Now Playing Mini")
         self.quick_add_now_playing_mini_btn.setObjectName("quickAddButton")
         self.quick_add_now_playing_mini_btn.setMinimumHeight(30)
+        self.quick_add_analog_clock_btn = QPushButton("Analog Clock")
+        self.quick_add_analog_clock_btn.setObjectName("quickAddButton")
+        self.quick_add_analog_clock_btn.setMinimumHeight(30)
         self.quick_add_volume_btn = QPushButton("Volume")
         self.quick_add_volume_btn.setObjectName("quickAddButton")
         self.quick_add_volume_btn.setMinimumHeight(30)
@@ -3782,6 +3785,7 @@ class TrofeoGui(QMainWindow):
             self.quick_add_now_playing_btn,
             self.quick_add_now_playing_hero_btn,
             self.quick_add_now_playing_mini_btn,
+            self.quick_add_analog_clock_btn,
             self.quick_add_volume_btn,
         ]
         for i, btn in enumerate(quick_buttons):
@@ -3796,6 +3800,7 @@ class TrofeoGui(QMainWindow):
         self.quick_add_now_playing_btn.clicked.connect(self.add_now_playing_widget)
         self.quick_add_now_playing_hero_btn.clicked.connect(self.add_now_playing_widget_hero)
         self.quick_add_now_playing_mini_btn.clicked.connect(self.add_now_playing_widget_mini)
+        self.quick_add_analog_clock_btn.clicked.connect(lambda: self.add_analog_clock_widget("classic"))
         self.quick_add_volume_btn.clicked.connect(self.add_volume_widget)
         self.designer_quick_add_menu = QMenu(self.designer_quick_add_toggle_btn)
         for label, handler in (
@@ -3806,6 +3811,9 @@ class TrofeoGui(QMainWindow):
             ("Now Playing", self.add_now_playing_widget),
             ("Now Playing Hero", self.add_now_playing_widget_hero),
             ("Now Playing Mini", self.add_now_playing_widget_mini),
+            ("Analog Clock Classic", lambda: self.add_analog_clock_widget("classic")),
+            ("Analog Clock Modern", lambda: self.add_analog_clock_widget("modern")),
+            ("Analog Clock Nordic", lambda: self.add_analog_clock_widget("nordic")),
             ("Volume", self.add_volume_widget),
         ):
             action = self.designer_quick_add_menu.addAction(label)
@@ -4795,6 +4803,7 @@ class TrofeoGui(QMainWindow):
                     self.quick_add_now_playing_btn,
                     self.quick_add_now_playing_hero_btn,
                     self.quick_add_now_playing_mini_btn,
+                    self.quick_add_analog_clock_btn,
                     self.quick_add_volume_btn,
                 ],
                 extra_px=int(24 * scale),
@@ -8397,6 +8406,81 @@ class TrofeoGui(QMainWindow):
         self.preview_info_label.setText("Dodano widget Volume: poziom głośności i stan wyciszenia.")
         self.schedule_preview_theme_doc()
 
+    def add_analog_clock_widget(self, style: str = "classic") -> None:
+        if self.theme_doc_model is None:
+            self.reload_designer_from_json()
+        if self.theme_doc_model is None:
+            return
+        style_key = str(style).strip().lower()
+        presets = {
+            "classic": {
+                "rect": [1508, 22, 180, 180],
+                "face": [18, 24, 36, 230],
+                "tick": [224, 232, 244, 220],
+                "hand": [245, 248, 252, 255],
+                "second": [255, 96, 96, 255],
+                "center": [250, 250, 252, 255],
+                "border": [235, 246, 255, 155],
+                "glow_radius": 14,
+                "glow_opacity": 0.16,
+            },
+            "modern": {
+                "rect": [1508, 22, 180, 180],
+                "face": [8, 16, 28, 210],
+                "tick": [86, 214, 255, 235],
+                "hand": [235, 245, 255, 255],
+                "second": [103, 255, 211, 255],
+                "center": [240, 248, 255, 255],
+                "border": [0, 186, 255, 165],
+                "glow_radius": 18,
+                "glow_opacity": 0.24,
+            },
+            "nordic": {
+                "rect": [1508, 22, 180, 180],
+                "face": [20, 24, 30, 222],
+                "tick": [215, 225, 232, 215],
+                "hand": [244, 240, 232, 255],
+                "second": [196, 162, 108, 255],
+                "center": [252, 248, 242, 255],
+                "border": [208, 186, 152, 160],
+                "glow_radius": 10,
+                "glow_opacity": 0.10,
+            },
+        }
+        preset = presets.get(style_key, presets["classic"])
+        self.push_designer_history()
+        images = self.theme_doc_model.setdefault("images", [])
+        images.append(
+            {
+                "id": self._next_item_id("images", f"img_analog_clock_{style_key}"),
+                "path": "",
+                "source": "analog_clock",
+                "clock_style": style_key,
+                "clock_show_second_hand": True,
+                "clock_face_color": preset["face"],
+                "clock_tick_color": preset["tick"],
+                "clock_hand_color": preset["hand"],
+                "clock_second_color": preset["second"],
+                "clock_center_color": preset["center"],
+                "rect": preset["rect"],
+                "fit": "contain",
+                "opacity": 1.0,
+                "radius": 0,
+                "border_width": 2,
+                "border_color": preset["border"],
+                "glow_radius": preset["glow_radius"],
+                "glow_opacity": preset["glow_opacity"],
+                "rotation": 0,
+                "z_index": 212,
+                "visible": True,
+                "locked": False,
+            }
+        )
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        self.preview_info_label.setText(f"Dodano zegar analogowy: {style_key.title()}.")
+        self.schedule_preview_theme_doc()
+
     def quick_add_designer_element(self, collection: str) -> None:
         combo_index = self.designer_kind_combo.findData(collection)
         if combo_index >= 0:
@@ -8772,6 +8856,9 @@ class TrofeoGui(QMainWindow):
             return f"{prefix}Okładka Now Playing"
         if source == "media_video_frame":
             return f"{prefix}Kadr Media / Video"
+        if source == "analog_clock":
+            style = str(item.get("clock_style", "classic")).strip().title() or "Classic"
+            return f"{prefix}Zegar analogowy {style}"
         name = Path(str(item.get("path", ""))).name or ident
         return f"{prefix}{name[:34]}"
 

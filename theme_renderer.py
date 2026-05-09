@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+import math
 from pathlib import Path
 import re
 import time
@@ -506,6 +507,112 @@ def _draw_image_border(image: Image.Image, radius: int, width: int, color: tuple
     return bordered
 
 
+def _analog_clock_palette(item: dict[str, Any]) -> dict[str, tuple[int, int, int, int]]:
+    style = str(item.get("clock_style", "classic")).strip().lower()
+    palettes = {
+        "classic": {
+            "face": (18, 24, 36, 230),
+            "tick": (224, 232, 244, 220),
+            "hand": (245, 248, 252, 255),
+            "second": (255, 96, 96, 255),
+            "center": (250, 250, 252, 255),
+        },
+        "modern": {
+            "face": (8, 16, 28, 210),
+            "tick": (86, 214, 255, 235),
+            "hand": (235, 245, 255, 255),
+            "second": (103, 255, 211, 255),
+            "center": (240, 248, 255, 255),
+        },
+        "nordic": {
+            "face": (20, 24, 30, 222),
+            "tick": (215, 225, 232, 215),
+            "hand": (244, 240, 232, 255),
+            "second": (196, 162, 108, 255),
+            "center": (252, 248, 242, 255),
+        },
+    }
+    base = palettes.get(style, palettes["classic"])
+    return {
+        "face": _rgba(item.get("clock_face_color", list(base["face"]))),
+        "tick": _rgba(item.get("clock_tick_color", list(base["tick"]))),
+        "hand": _rgba(item.get("clock_hand_color", list(base["hand"]))),
+        "second": _rgba(item.get("clock_second_color", list(base["second"]))),
+        "center": _rgba(item.get("clock_center_color", list(base["center"]))),
+    }
+
+
+def _render_analog_clock(item: dict[str, Any], snapshot: dict[str, str], width: int, height: int) -> Image.Image:
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    palette = _analog_clock_palette(item)
+    size = max(24, min(width, height))
+    pad = max(4, int(size * 0.07))
+    left = (width - size) // 2
+    top = (height - size) // 2
+    box = (left + pad, top + pad, left + size - pad, top + size - pad)
+    cx = (box[0] + box[2]) / 2.0
+    cy = (box[1] + box[3]) / 2.0
+    radius = max(10.0, (box[2] - box[0]) / 2.0)
+    draw.ellipse(box, fill=palette["face"])
+
+    style = str(item.get("clock_style", "classic")).strip().lower()
+    tick_outer = radius - max(2.0, size * 0.04)
+    tick_inner_major = tick_outer - max(8.0, size * 0.12)
+    tick_inner_minor = tick_outer - max(4.0, size * 0.06)
+    tick_width_major = max(2, int(round(size * 0.016)))
+    tick_width_minor = max(1, int(round(size * 0.008)))
+    if style == "modern":
+        tick_inner_major = tick_outer - max(10.0, size * 0.16)
+        tick_inner_minor = tick_outer - max(2.0, size * 0.03)
+    elif style == "nordic":
+        tick_inner_major = tick_outer - max(7.0, size * 0.10)
+        tick_inner_minor = tick_outer - max(3.0, size * 0.05)
+
+    for idx in range(60):
+        angle = (idx / 60.0) * 360.0
+        radians = ((angle - 90.0) * 3.141592653589793) / 180.0
+        outer_x = cx + tick_outer * math.cos(radians)
+        outer_y = cy + tick_outer * math.sin(radians)
+        if idx % 5 == 0:
+            inner = tick_inner_major
+            width_px = tick_width_major
+        else:
+            inner = tick_inner_minor
+            width_px = tick_width_minor
+        inner_x = cx + inner * math.cos(radians)
+        inner_y = cy + inner * math.sin(radians)
+        draw.line((inner_x, inner_y, outer_x, outer_y), fill=palette["tick"], width=width_px)
+
+    time_text = str(snapshot.get("time_hms", "")).strip()
+    try:
+        parts = [int(part) for part in time_text.split(":")[:3]]
+        while len(parts) < 3:
+            parts.append(0)
+        hour, minute, second = parts[0], parts[1], parts[2]
+    except Exception:
+        local_now = time.localtime()
+        hour, minute, second = local_now.tm_hour, local_now.tm_min, local_now.tm_sec
+
+    hour_angle = ((hour % 12) + (minute / 60.0) + (second / 3600.0)) * 30.0
+    minute_angle = (minute + (second / 60.0)) * 6.0
+    second_angle = second * 6.0
+
+    def _hand(angle_deg: float, length: float, width_px: int, fill: tuple[int, int, int, int]) -> None:
+        radians = ((angle_deg - 90.0) * 3.141592653589793) / 180.0
+        hand_x = cx + length * math.cos(radians)
+        hand_y = cy + length * math.sin(radians)
+        draw.line((cx, cy, hand_x, hand_y), fill=fill, width=width_px)
+
+    _hand(hour_angle, radius * 0.5, max(3, int(round(size * 0.026))), palette["hand"])
+    _hand(minute_angle, radius * 0.72, max(2, int(round(size * 0.018))), palette["hand"])
+    if bool(item.get("clock_show_second_hand", True)):
+        _hand(second_angle, radius * 0.78, max(1, int(round(size * 0.010))), palette["second"])
+    center_r = max(3, int(round(size * 0.03)))
+    draw.ellipse((cx - center_r, cy - center_r, cx + center_r, cy + center_r), fill=palette["center"])
+    return image
+
+
 def render_generated_background(canvas_size: tuple[int, int], background: dict[str, Any]) -> Image.Image:
     width, height = canvas_size
     base = background["base_color"]
@@ -585,7 +692,10 @@ def render_images(canvas: Image.Image, theme: ThemeDocument, base_dir: Path, sna
         if not bool(item.get("visible", True)):
             continue
         source = str(item.get("source", "")).strip()
-        if source in {"media_cover", "media_video_frame"}:
+        x, y, w, h = item["rect"]
+        if source == "analog_clock":
+            fitted = _render_analog_clock(item, snapshot, w, h)
+        elif source in {"media_cover", "media_video_frame"}:
             cover_path = ""
             if source == "media_video_frame":
                 cover_path = str(snapshot.get("media_video_frame_path", "")).strip() or str(snapshot.get("media_cover_path", "")).strip()
@@ -594,13 +704,16 @@ def render_images(canvas: Image.Image, theme: ThemeDocument, base_dir: Path, sna
             if not cover_path:
                 continue
             src_path = _resolve_asset_path(base_dir, cover_path)
+            if not src_path.exists():
+                continue
+            src = Image.open(src_path).convert("RGBA")
+            fitted = _fit_image(src, w, h, item["fit"])
         else:
             src_path = _resolve_asset_path(base_dir, item["path"])
-        if not src_path.exists():
-            continue
-        src = Image.open(src_path).convert("RGBA")
-        x, y, w, h = item["rect"]
-        fitted = _fit_image(src, w, h, item["fit"])
+            if not src_path.exists():
+                continue
+            src = Image.open(src_path).convert("RGBA")
+            fitted = _fit_image(src, w, h, item["fit"])
         rotation = int(item.get("rotation", 0)) % 360
         if rotation:
             fitted = fitted.rotate(rotation, expand=True, resample=Image.BICUBIC)
