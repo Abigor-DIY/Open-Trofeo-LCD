@@ -3803,21 +3803,23 @@ class TrofeoGui(QMainWindow):
         layout.addWidget(self.designer_element_list, 1)
         
         move_box = QGroupBox("Przesuwanie zaznaczenia")
+        move_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         move_layout = QVBoxLayout(move_box)
         move_layout.setContentsMargins(6, 6, 6, 6)
-        move_layout.setSpacing(3)
+        move_layout.setSpacing(2)
         move_step_row = QHBoxLayout()
-        move_step_row.setSpacing(6)
+        move_step_row.setSpacing(5)
         move_step_row.addWidget(QLabel("Krok:"))
         self.designer_nudge_step_combo = QComboBox()
         for step in (1, 2, 3, 5, 8, 10, 16, 24, 32):
             self.designer_nudge_step_combo.addItem(f"{step} px", step)
         self.designer_nudge_step_combo.setCurrentIndex(3)  # 5 px
+        self.designer_nudge_step_combo.setMaximumWidth(120)
         move_step_row.addWidget(self.designer_nudge_step_combo, 1)
         move_layout.addLayout(move_step_row)
         dpad = QGridLayout()
-        dpad.setHorizontalSpacing(6)
-        dpad.setVerticalSpacing(6)
+        dpad.setHorizontalSpacing(5)
+        dpad.setVerticalSpacing(4)
         self.designer_nudge_up_btn = QPushButton("↑")
         self.designer_nudge_left_btn = QPushButton("←")
         self.designer_nudge_right_btn = QPushButton("→")
@@ -3828,8 +3830,10 @@ class TrofeoGui(QMainWindow):
             self.designer_nudge_right_btn,
             self.designer_nudge_down_btn,
         ):
-            btn.setMinimumHeight(24)
-            btn.setMinimumWidth(32)
+            btn.setMinimumHeight(18)
+            btn.setMaximumHeight(30)
+            btn.setMinimumWidth(28)
+            btn.setMaximumWidth(88)
         dpad.addWidget(self.designer_nudge_up_btn, 0, 1)
         dpad.addWidget(self.designer_nudge_left_btn, 1, 0)
         dpad.addWidget(self.designer_nudge_right_btn, 1, 2)
@@ -3839,6 +3843,7 @@ class TrofeoGui(QMainWindow):
         self.designer_nudge_left_btn.clicked.connect(lambda: self.nudge_selected_elements(-1, 0, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
         self.designer_nudge_right_btn.clicked.connect(lambda: self.nudge_selected_elements(1, 0, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
         self.designer_nudge_down_btn.clicked.connect(lambda: self.nudge_selected_elements(0, 1, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
+        move_box.setMaximumHeight(180)
         layout.addWidget(move_box)
 
         ctrl_row = QHBoxLayout()
@@ -4389,10 +4394,28 @@ class TrofeoGui(QMainWindow):
             QPushButton#primaryButton:hover {{
                 background: {theme['primary_border']};
             }}
+            QPushButton#primaryButton:pressed {{
+                background: {theme['primary_border']};
+                border: 1px solid {theme['primary_border']};
+                padding-top: 9px;
+                padding-bottom: 7px;
+            }}
             QPushButton#secondaryAccentButton {{
                 background: #2d3748;
                 border: 1px solid {accent_color};
                 color: {accent_color};
+            }}
+            QPushButton#secondaryAccentButton:hover {{
+                background: #344358;
+                border: 1px solid #8fdcff;
+                color: #f0fbff;
+            }}
+            QPushButton#secondaryAccentButton:pressed {{
+                background: #233146;
+                border: 1px solid #67d2ff;
+                color: #ffffff;
+                padding-top: 9px;
+                padding-bottom: 7px;
             }}
             QPushButton#modeToggleButton {{
                 background: #233044;
@@ -6855,6 +6878,7 @@ class TrofeoGui(QMainWindow):
             apply_btn.setObjectName("primaryButton" if name == current else "secondaryAccentButton")
             for btn in (select_btn, preview_btn, apply_btn, duplicate_btn, remove_btn):
                 btn.setMinimumHeight(28)
+                btn.setCursor(Qt.PointingHandCursor)
             select_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item: self._library_select_theme(theme_name, theme_item))
             preview_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item: self._open_theme_preview_dialog(theme_name, theme_item))
             apply_btn.clicked.connect(lambda _checked=False, theme_name=name: self._apply_runtime_theme_card(theme_name))
@@ -8670,6 +8694,7 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             self.designer_element_list.clear()
             self.designer_element_list.setEnabled(False)
+            self._update_designer_element_list_height()
             self.load_selected_designer_item()
             self._update_preview_canvas_overlay()
             return
@@ -8734,6 +8759,7 @@ class TrofeoGui(QMainWindow):
         self.filter_designer_element_list()
         self.update_layer_row_visuals()
         self.load_selected_designer_item()
+        self._update_designer_element_list_height()
 
     def _refresh_designer_list_row(self, row: int) -> None:
         if self.theme_doc_model is None:
@@ -8923,6 +8949,29 @@ class TrofeoGui(QMainWindow):
             else:
                 hay = (item.text() or "").lower()
             item.setHidden(bool(needle) and needle not in hay)
+        self._update_designer_element_list_height()
+
+    def _update_designer_element_list_height(self) -> None:
+        if not hasattr(self, "designer_element_list"):
+            return
+        row_heights: list[int] = []
+        for row in range(self.designer_element_list.count()):
+            item = self.designer_element_list.item(row)
+            if item is None or item.isHidden():
+                continue
+            hint = item.sizeHint()
+            row_heights.append(max(40, hint.height()))
+        visible_rows = len(row_heights)
+        spacing = max(0, self.designer_element_list.spacing())
+        frame = max(6, self.designer_element_list.frameWidth() * 2)
+        if visible_rows <= 0:
+            target_height = 190
+        else:
+            body_height = sum(row_heights[:6]) + max(0, min(visible_rows, 6) - 1) * spacing
+            target_height = frame + body_height + 8
+        target_height = max(190, min(420, target_height))
+        self.designer_element_list.setMinimumHeight(target_height)
+        self.designer_element_list.setMaximumHeight(target_height)
 
     def apply_studio_layout_preset(self, preset_name: str) -> None:
         splitter = getattr(self, "studio_splitter", None)
