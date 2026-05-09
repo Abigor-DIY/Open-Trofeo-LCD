@@ -71,15 +71,22 @@ def get_venv_python(venv_name: str) -> str:
         return str(path)
     return sys.executable
 
-def start_backend():
+def start_backend(force_replace: bool = False):
     """Uruchamia backend w tle, jeśli nie działa. Zwraca proces lub None."""
     managed_pid = _read_managed_backend_pid()
     if is_backend_running():
+        if force_replace:
+            print("[+] Wymuszony restart istniejącego backendu.")
+            stop_backend()
+            time.sleep(0.8)
         if _pid_is_alive(managed_pid):
             print(f"[-] Wykryto stary backend launchera (PID: {managed_pid}), restartuję go.")
             stop_backend()
             time.sleep(0.6)
         else:
+            if force_replace and is_backend_running():
+                print("[-] Nie udało się wyłączyć istniejącego backendu, pozostawiam aktywny proces.")
+                return None
             print("[-] Backend już działa (prawdopodobnie jako usługa systemowa).")
             return None
 
@@ -174,6 +181,7 @@ def main():
     parser.add_argument("--cli", action="store_true", help="Uruchom narzędzie diagnostyczne CLI")
     parser.add_argument("--backend-only", action="store_true", help="Uruchom tylko backend")
     parser.add_argument("--gui-only", action="store_true", help="Uruchom tylko GUI")
+    parser.add_argument("--replace-existing-backend", action="store_true", help="Wymuś restart istniejącego backendu")
     
     args, _ = parser.parse_known_args()
     
@@ -184,7 +192,7 @@ def main():
 
     backend_proc = None
     if not args.gui_only:
-        backend_proc = start_backend()
+        backend_proc = start_backend(force_replace=bool(args.replace_existing_backend))
 
     if not args.backend_only:
         run_gui()

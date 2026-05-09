@@ -1998,7 +1998,10 @@ class TrofeoGui(QMainWindow):
 
     def _restart_application(self) -> None:
         try:
-            subprocess.Popen([sys.executable, str(Path(__file__).resolve())])
+            launcher_path = Path(__file__).resolve().with_name("main.py")
+            if not launcher_path.exists():
+                raise FileNotFoundError(f"Launcher not found: {launcher_path}")
+            subprocess.Popen([sys.executable, str(launcher_path), "--replace-existing-backend"])
             self._close_to_tray_enabled = False
             QApplication.quit()
         except Exception as exc:
@@ -5000,7 +5003,7 @@ class TrofeoGui(QMainWindow):
         if hasattr(self, "cfg_clear_cache_btn"):
             self.cfg_clear_cache_btn.setText(self._tr("Clear Cache", "Wyczyść cache"))
         if hasattr(self, "cfg_restart_app_btn"):
-            self.cfg_restart_app_btn.setText(self._tr("Restart Application", "Uruchom ponownie aplikację"))
+            self.cfg_restart_app_btn.setText(self._tr("Restart Whole App", "Uruchom całą aplikację ponownie"))
         if hasattr(self, "library_summary_label"):
             self.library_summary_label.setText(self._tr("Theme gallery quick actions", "Szybkie akcje galerii motywów"))
         if hasattr(self, "library_import_ttcr_btn"):
