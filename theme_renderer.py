@@ -313,59 +313,116 @@ def _draw_stat_gauge(
     fill_color: tuple[int, int, int, int],
 ) -> None:
     draw = ImageDraw.Draw(canvas)
+    base_font_size = int(item["font_size"])
     font = _load_font(
-        int(item["font_size"]),
+        base_font_size,
         bold=bool(item.get("font_bold", False)),
         italic=bool(item.get("font_italic", False)),
+        font_family=str(item.get("font_family", "DejaVu Sans")),
+    )
+    value_font = _load_font(
+        max(16, int(round(base_font_size * 1.45))),
+        bold=True,
+        italic=False,
+        font_family=str(item.get("font_family", "DejaVu Sans")),
+    )
+    label_font = _load_font(
+        max(10, int(round(base_font_size * 0.72))),
+        bold=False,
+        italic=False,
         font_family=str(item.get("font_family", "DejaVu Sans")),
     )
     x = int(item["x"])
     y = int(item["y"])
     box_width = max(1, int(item.get("box_width", 320)))
     box_height = max(1, int(item.get("box_height", 40)))
-    label_height = 0
-    if label:
-        label_bbox = draw.textbbox((0, 0), label, font=font)
-        label_x = x + max(0, (box_width - (label_bbox[2] - label_bbox[0])) // 2)
-        _draw_styled_text(
-            draw,
-            (label_x, y),
-            label,
-            font=font,
-            fill=label_fill,
-            bold=bool(item.get("font_bold", False)),
-            underline=bool(item.get("font_underline", False)),
-        )
-        label_height = (label_bbox[3] - label_bbox[1]) + 6
-    gauge_size = max(28, min(box_width, box_height - label_height))
+    gauge_size = max(40, min(box_width, box_height))
     gauge_left = x + max(0, (box_width - gauge_size) // 2)
-    gauge_top = y + label_height
-    gauge_box = (gauge_left, gauge_top, gauge_left + gauge_size, gauge_top + gauge_size)
-    stroke_width = max(4, int(item.get("stroke_width", 12)))
-    start_angle = 135
-    sweep = 270
-    draw.arc(gauge_box, start=start_angle, end=start_angle + sweep, fill=track_fill, width=stroke_width)
+    gauge_top = y + max(0, (box_height - gauge_size) // 2)
+    outer_pad = max(4, int(round(gauge_size * 0.035)))
+    ring_box = (
+        gauge_left + outer_pad,
+        gauge_top + outer_pad,
+        gauge_left + gauge_size - outer_pad,
+        gauge_top + gauge_size - outer_pad,
+    )
+    stroke_width = max(6, int(item.get("stroke_width", 12)))
+    start_angle = 132
+    sweep = 276
+    outer_ring_color = (
+        min(255, track_fill[0] + 12),
+        min(255, track_fill[1] + 12),
+        min(255, track_fill[2] + 12),
+        max(0, min(255, int(track_fill[3] * 0.38))),
+    )
+    inner_face_color = (
+        max(0, track_fill[0] - 18),
+        max(0, track_fill[1] - 18),
+        max(0, track_fill[2] - 18),
+        max(0, min(255, int(track_fill[3] * 0.52))),
+    )
+    draw.ellipse(
+        (
+            gauge_left + 1,
+            gauge_top + 1,
+            gauge_left + gauge_size - 1,
+            gauge_top + gauge_size - 1,
+        ),
+        outline=outer_ring_color,
+        width=max(1, int(round(stroke_width * 0.35))),
+    )
+    draw.arc(ring_box, start=start_angle, end=start_angle + sweep, fill=track_fill, width=stroke_width)
     span = max_value - min_value
     ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
     if ratio > 0.0:
+        end_angle = start_angle + int(round(sweep * ratio))
         draw.arc(
-            gauge_box,
+            ring_box,
             start=start_angle,
-            end=start_angle + int(round(sweep * ratio)),
+            end=end_angle,
             fill=fill_color,
             width=stroke_width,
         )
+        end_radians = math.radians(end_angle - 90)
+        ring_radius = (ring_box[2] - ring_box[0]) / 2.0
+        cx = (ring_box[0] + ring_box[2]) / 2.0
+        cy = (ring_box[1] + ring_box[3]) / 2.0
+        end_x = cx + ring_radius * math.cos(end_radians)
+        end_y = cy + ring_radius * math.sin(end_radians)
+        cap_r = max(3, stroke_width // 2)
+        draw.ellipse((end_x - cap_r, end_y - cap_r, end_x + cap_r, end_y + cap_r), fill=fill_color)
+    inner_margin = stroke_width + max(5, int(round(gauge_size * 0.05)))
+    inner_box = (
+        gauge_left + inner_margin,
+        gauge_top + inner_margin,
+        gauge_left + gauge_size - inner_margin,
+        gauge_top + gauge_size - inner_margin,
+    )
+    draw.ellipse(inner_box, fill=inner_face_color)
     if bool(item.get("show_value_text", True)):
-        value_bbox = draw.textbbox((0, 0), value_text, font=font)
+        value_bbox = draw.textbbox((0, 0), value_text, font=value_font)
         value_x = gauge_left + max(0, (gauge_size - (value_bbox[2] - value_bbox[0])) // 2)
-        value_y = gauge_top + max(0, (gauge_size - (value_bbox[3] - value_bbox[1])) // 2) - 1
+        value_y = gauge_top + max(0, int(gauge_size * 0.35) - (value_bbox[3] - value_bbox[1]) // 2)
         _draw_styled_text(
             draw,
             (value_x, value_y),
             value_text,
-            font=font,
+            font=value_font,
             fill=value_fill,
-            bold=bool(item.get("font_bold", False)),
+            bold=True,
+            underline=False,
+        )
+    if label:
+        label_bbox = draw.textbbox((0, 0), label, font=label_font)
+        label_x = gauge_left + max(0, (gauge_size - (label_bbox[2] - label_bbox[0])) // 2)
+        label_y = gauge_top + int(gauge_size * 0.68)
+        _draw_styled_text(
+            draw,
+            (label_x, label_y),
+            label,
+            font=label_font,
+            fill=label_fill,
+            bold=False,
             underline=False,
         )
 
