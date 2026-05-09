@@ -1782,11 +1782,6 @@ class ReplayController:
             if not resolved.exists():
                 raise RuntimeError(f"Brak pliku obrazu: {resolved}")
 
-            was_running = self.proc is not None and self.proc.poll() is None
-
-        if was_running:
-            self.stop_loop()
-
         with self.lock:
             result = self._start_native_static_worker(
                 resolved,
