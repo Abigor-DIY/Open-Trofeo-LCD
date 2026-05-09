@@ -560,6 +560,12 @@ class StatsProvider:
                 ).start()
         return fallback
 
+    def should_disable_browser_video_frame(self, player_name: str, raw_url: str) -> bool:
+        if not self._is_browser_player(player_name):
+            return False
+        media_path = self._normalize_media_source_path(raw_url)
+        return not media_path or not self._is_local_video_path(media_path)
+
     def _detect_gpu_type(self) -> str | None:
         if os.path.exists("/usr/bin/nvidia-smi"):
             return "nvidia"

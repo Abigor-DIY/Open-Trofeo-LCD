@@ -843,7 +843,12 @@ class ReplayController:
                 album=str(out.get("media_album", "")),
             )
             video_raw = str(raw.get("media_video_frame_path", "")).strip()
-            if video_raw:
+            if self.stats_provider.should_disable_browser_video_frame(
+                str(out.get("media_app", "")),
+                str(out.get("media_source_url", "")),
+            ):
+                out["media_video_frame_path"] = out["media_cover_path"]
+            elif video_raw:
                 out["media_video_frame_path"] = video_raw
             else:
                 out["media_video_frame_path"] = self.stats_provider.resolve_media_video_frame_path(
@@ -914,10 +919,16 @@ class ReplayController:
             if state == "stopped":
                 candidate["media_video_frame_path"] = ""
             else:
-                candidate["media_video_frame_path"] = self.stats_provider.resolve_media_video_frame_path(
+                if self.stats_provider.should_disable_browser_video_frame(
+                    player or str(candidate.get("media_app", "")),
                     candidate.get("media_source_url", ""),
-                    candidate.get("media_cover_path", ""),
-                )
+                ):
+                    candidate["media_video_frame_path"] = candidate.get("media_cover_path", "")
+                else:
+                    candidate["media_video_frame_path"] = self.stats_provider.resolve_media_video_frame_path(
+                        candidate.get("media_source_url", ""),
+                        candidate.get("media_cover_path", ""),
+                    )
             return player or candidate.get("media_app", ""), candidate
 
         media_cache = _normalize_media(self.stats_provider._read_media_now_playing())
