@@ -1486,6 +1486,66 @@ class ReplayController:
 
         return {"running": True, "pid": self.proc.pid, "mode": self.mode}
 
+    def _start_native_static_worker(self, image_path: Path, raw_jpeg_passthrough: bool = False) -> dict[str, Any]:
+        self._stop_live_theme_refresh()
+        self._stop_display_worker(timeout=2.0)
+        killed = self._kill_orphan_display_helpers()
+        time.sleep(1.0 if killed else 0.35)
+
+        ensure_parent(self.cfg.child_log_file)
+        child_log = open(self.cfg.child_log_file, "a", encoding="utf-8")
+        child_log.write(f"\n[{now_iso()}] start native static image {image_path}\n")
+        child_log.flush()
+
+        cmd = [
+            self.cfg.python_bin,
+            str(self.cfg.trofeo_script),
+            "--trcc-compatible",
+            "--recover-before-send",
+            "--drain-in-before-send",
+            "--ack-every-packet",
+            "--ack-on-seq0-only",
+            "--ack-timeout-ms",
+            "500",
+            "--inter-packet-delay",
+            "0.01",
+            "--loop",
+            "--interval",
+            "0.5",
+        ]
+        if raw_jpeg_passthrough:
+            cmd.append("--raw-jpeg-passthrough")
+        cmd.append(str(image_path))
+
+        self._log("start native static worker: " + " ".join(cmd))
+        try:
+            self.proc = subprocess.Popen(
+                cmd,
+                cwd=self.cfg.workdir,
+                stdout=child_log,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.proc_started_at = time.time()
+            self.mode = "static-image"
+            self.last_error = None
+            child_log.close()
+        except Exception:
+            child_log.close()
+            raise
+
+        time.sleep(1.2)
+        self._cleanup_proc_locked()
+        if self.proc is None or self.proc.poll() is not None:
+            tail = ""
+            try:
+                tail = self.cfg.child_log_file.read_text(encoding="utf-8", errors="replace")[-1200:]
+            except Exception:
+                pass
+            raise RuntimeError(f"native static worker failed to start: {tail.strip() or 'unknown error'}")
+
+        return {"running": True, "pid": self.proc.pid, "mode": self.mode}
+
     def _start_trcc_static_overlay_worker(self, image_path: Path, overlay_path: Path) -> dict[str, Any]:
         self._preflight_trcc_display_start()
         trcc_bin = Path(self.cfg.trcc_bin).expanduser()
@@ -1715,66 +1775,14 @@ class ReplayController:
                 raise RuntimeError(f"Brak pliku obrazu: {resolved}")
 
             was_running = self.proc is not None and self.proc.poll() is None
-            if self.cfg.display_backend == "trcc":
-                cmd = None
-            else:
-                cmd = [
-                    self.cfg.python_bin,
-                    str(self.cfg.trofeo_script),
-                    "--trcc-compatible",
-                    "--recover-before-send",
-                    "--drain-in-before-send",
-                    "--ack-every-packet",
-                    "--ack-on-seq0-only",
-                    "--ack-timeout-ms",
-                    "500",
-                    "--inter-packet-delay",
-                    "0.01",
-                ]
-                if raw_jpeg_passthrough:
-                    cmd.append("--raw-jpeg-passthrough")
-                cmd.append(str(resolved))
 
         if was_running:
             self.stop_loop()
 
-        if self.cfg.display_backend == "trcc":
-            with self.lock:
-                result = self._start_trcc_static_worker(resolved)
-                result["image_path"] = str(resolved)
-                return result
-
-        self._log("send-image: " + " ".join(cmd))
-        env = os.environ.copy()
-        completed = subprocess.run(
-            cmd,
-            cwd=self.cfg.workdir,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=max(1.0, timeout_s),
-            check=False,
-        )
-        result = {
-            "exit_code": completed.returncode,
-            "stdout_tail": completed.stdout[-1200:],
-            "stderr_tail": completed.stderr[-1200:],
-            "image_path": str(resolved),
-        }
         with self.lock:
-            if completed.returncode != 0:
-                self.last_error = f"send-image failed code={completed.returncode}"
-
-        if was_running and resume_loop:
-            self.start_loop()
-
-        if completed.returncode != 0:
-            details = completed.stdout[-800:].strip() or completed.stderr[-800:].strip() or "unknown error"
-            raise RuntimeError(
-                f"send-image failed code={completed.returncode}: {details}"
-            )
-
-        return result
+            result = self._start_native_static_worker(resolved, raw_jpeg_passthrough=raw_jpeg_passthrough)
+            result["image_path"] = str(resolved)
+            return result
 
     def is_running(self) -> bool:
         with self.lock:
