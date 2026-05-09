@@ -138,20 +138,22 @@ class StatsProvider:
             return art_url
         return ""
 
-    def _copy_media_cover_to_runtime(self, cover_path: str) -> str:
+    def _copy_media_cover_to_runtime(self, cover_path: str, stable_key: str = "") -> str:
         os.makedirs(self._media_cover_runtime_dir, exist_ok=True)
         stat = os.stat(cover_path)
-        cache_key = hashlib.sha1(
+        source_key = hashlib.sha1(
             f"{os.path.abspath(cover_path)}:{stat.st_mtime_ns}:{stat.st_size}".encode("utf-8")
         ).hexdigest()
+        runtime_key = stable_key.strip() or source_key
         suffix = os.path.splitext(cover_path)[1].lower() or ".img"
-        out_path = os.path.join(self._media_cover_runtime_dir, f"{cache_key}{suffix}")
-        cached = self._media_cover_cache.get(cache_key, "")
+        out_path = os.path.join(self._media_cover_runtime_dir, f"{runtime_key}{suffix}")
+        cached = self._media_cover_cache.get(runtime_key, "") or self._media_cover_cache.get(source_key, "")
         if cached and os.path.exists(cached):
             return cached
         if not os.path.exists(out_path):
             shutil.copyfile(cover_path, out_path)
-        self._media_cover_cache[cache_key] = out_path
+        self._media_cover_cache[runtime_key] = out_path
+        self._media_cover_cache[source_key] = out_path
         return out_path
 
     def _cached_cover_for_key(self, cache_key: str) -> str:
@@ -440,7 +442,10 @@ class StatsProvider:
         cover_path = self._normalize_media_cover_path(raw_path)
         if cover_path:
             try:
-                return self._copy_media_cover_to_runtime(cover_path)
+                stable_key = ""
+                if any(part and part != "N/A" for part in (title, artist, album)):
+                    stable_key = self._cover_lookup_key(player_name, title, artist, album)
+                return self._copy_media_cover_to_runtime(cover_path, stable_key=stable_key)
             except Exception:
                 return cover_path
         return self._resolve_browser_cover_path(player_name, title, artist, album)
