@@ -79,14 +79,17 @@ def start_backend(force_replace: bool = False):
             print("[+] Wymuszony restart istniejącego backendu.")
             stop_backend()
             time.sleep(0.8)
-        if _pid_is_alive(managed_pid):
+            if is_backend_running():
+                print("[-] Nie udało się wyłączyć istniejącego backendu, pozostawiam aktywny proces.")
+                return None
+        elif _pid_is_alive(managed_pid):
             print(f"[-] Wykryto stary backend launchera (PID: {managed_pid}), restartuję go.")
             stop_backend()
             time.sleep(0.6)
-        else:
-            if force_replace and is_backend_running():
-                print("[-] Nie udało się wyłączyć istniejącego backendu, pozostawiam aktywny proces.")
+            if is_backend_running():
+                print("[-] Nie udało się wyłączyć starego backendu launchera.")
                 return None
+        else:
             print("[-] Backend już działa (prawdopodobnie jako usługa systemowa).")
             return None
 
