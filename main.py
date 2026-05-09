@@ -17,6 +17,8 @@ from pathlib import Path
 WORKDIR = Path(__file__).parent.resolve()
 BACKEND_PORT = 18777
 BACKEND_URL = f"http://127.0.0.1:{BACKEND_PORT}"
+STATE_DIR = Path.home() / ".local/state/open-trofeo-lcd"
+MANAGED_BACKEND_PID = STATE_DIR / "launcher-backend.pid"
 
 def is_backend_running() -> bool:
     """Sprawdza, czy backend odpowiada na /health."""
@@ -25,6 +27,40 @@ def is_backend_running() -> bool:
             return resp.status == 200
     except (urllib.error.URLError, ConnectionRefusedError):
         return False
+    except Exception:
+        return False
+
+def _read_managed_backend_pid() -> int | None:
+    try:
+        raw = MANAGED_BACKEND_PID.read_text(encoding="utf-8").strip()
+        return int(raw) if raw else None
+    except Exception:
+        return None
+
+def _write_managed_backend_pid(pid: int) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    MANAGED_BACKEND_PID.write_text(f"{pid}\n", encoding="utf-8")
+
+def _clear_managed_backend_pid() -> None:
+    try:
+        MANAGED_BACKEND_PID.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+def _pid_is_alive(pid: int | None) -> bool:
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+def _shutdown_backend_api(timeout: float = 5.0) -> bool:
+    try:
+        req = urllib.request.Request(f"{BACKEND_URL}/v1/shutdown", method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 200
     except Exception:
         return False
 
@@ -37,14 +73,19 @@ def get_venv_python(venv_name: str) -> str:
 
 def start_backend():
     """Uruchamia backend w tle, jeśli nie działa. Zwraca proces lub None."""
+    managed_pid = _read_managed_backend_pid()
     if is_backend_running():
-        print("[-] Backend już działa (prawdopodobnie jako usługa systemowa).")
-        return None
+        if _pid_is_alive(managed_pid):
+            print(f"[-] Wykryto stary backend launchera (PID: {managed_pid}), restartuję go.")
+            stop_backend()
+            time.sleep(0.6)
+        else:
+            print("[-] Backend już działa (prawdopodobnie jako usługa systemowa).")
+            return None
 
     print("[+] Uruchamiam backend...")
-    log_dir = Path.home() / ".local/state/open-trofeo-lcd"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "backend.log"
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = STATE_DIR / "backend.log"
     
     python_bin = get_venv_python(".venv-trcc")
     
@@ -59,6 +100,7 @@ def start_backend():
         cwd=WORKDIR,
         start_new_session=True 
     )
+    _write_managed_backend_pid(proc.pid)
     
     # Czekaj na gotowość
     for _ in range(20):
@@ -73,22 +115,42 @@ def start_backend():
 def stop_backend(proc=None):
     """Zatrzymuje backend wysyłając żądanie API, a potem kill jeśli trzeba."""
     print("[+] Zamykanie backendu...")
-    try:
-        req = urllib.request.Request(f"{BACKEND_URL}/v1/stop", method="POST")
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            if resp.status == 200:
-                print("[+] Backend zatrzymany przez API.")
+    managed_pid = _read_managed_backend_pid()
+
+    if is_backend_running() and _shutdown_backend_api(timeout=5.0):
+        for _ in range(30):
+            if not is_backend_running():
+                _clear_managed_backend_pid()
+                print("[+] Backend zamknięty przez API.")
                 return
-    except Exception:
-        pass
+            time.sleep(0.2)
 
     if proc:
-        print("[-] API nie odpowiedziało, używam terminate().")
+        print("[-] API nie odpowiedziało, używam terminate() na procesie launchera.")
         proc.terminate()
         try:
             proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
             proc.kill()
+        _clear_managed_backend_pid()
+        return
+
+    if _pid_is_alive(managed_pid):
+        print(f"[-] API nie odpowiedziało, kończę zapisany backend PID={managed_pid}.")
+        try:
+            os.kill(managed_pid, 15)
+        except Exception:
+            pass
+        for _ in range(20):
+            if not _pid_is_alive(managed_pid):
+                _clear_managed_backend_pid()
+                return
+            time.sleep(0.2)
+        try:
+            os.kill(managed_pid, 9)
+        except Exception:
+            pass
+        _clear_managed_backend_pid()
 
 def run_gui():
     """Uruchamia GUI i czeka na jego zakończenie."""

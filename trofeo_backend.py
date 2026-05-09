@@ -1800,6 +1800,7 @@ class ReplayController:
 
 class ApiHandler(BaseHTTPRequestHandler):
     controller: ReplayController | None = None
+    request_shutdown_cb: Any = None
 
     def _write_json(self, code: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -1865,6 +1866,13 @@ class ApiHandler(BaseHTTPRequestHandler):
             if path == "/v1/stop":
                 result = ctl.stop_loop()
                 self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/shutdown":
+                result = ctl.stop_loop()
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                callback = getattr(self, "request_shutdown_cb", None)
+                if callable(callback):
+                    callback("api shutdown")
                 return
             if path == "/v1/restart":
                 result = ctl.restart_loop()
@@ -2166,6 +2174,7 @@ def main() -> None:
     def shutdown_handler(_signum, _frame):
         request_shutdown("sygnał stop")
 
+    ApiHandler.request_shutdown_cb = request_shutdown
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
