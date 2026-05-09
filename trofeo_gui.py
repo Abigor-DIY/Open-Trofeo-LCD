@@ -3841,6 +3841,9 @@ class TrofeoGui(QMainWindow):
         self.quick_add_analog_clock_btn = QPushButton("Analog Clock")
         self.quick_add_analog_clock_btn.setObjectName("quickAddButton")
         self.quick_add_analog_clock_btn.setMinimumHeight(24)
+        self.quick_add_gauge_set_btn = QPushButton("Gauge Set")
+        self.quick_add_gauge_set_btn.setObjectName("quickAddButton")
+        self.quick_add_gauge_set_btn.setMinimumHeight(24)
         self.quick_add_volume_btn = QPushButton("Volume")
         self.quick_add_volume_btn.setObjectName("quickAddButton")
         self.quick_add_volume_btn.setMinimumHeight(24)
@@ -3853,6 +3856,7 @@ class TrofeoGui(QMainWindow):
             self.quick_add_now_playing_hero_btn,
             self.quick_add_now_playing_mini_btn,
             self.quick_add_analog_clock_btn,
+            self.quick_add_gauge_set_btn,
             self.quick_add_volume_btn,
         ]
         for i, btn in enumerate(quick_buttons):
@@ -3868,6 +3872,7 @@ class TrofeoGui(QMainWindow):
         self.quick_add_now_playing_hero_btn.clicked.connect(self.add_now_playing_widget_hero)
         self.quick_add_now_playing_mini_btn.clicked.connect(self.add_now_playing_widget_mini)
         self.quick_add_analog_clock_btn.clicked.connect(lambda: self.add_analog_clock_widget("classic"))
+        self.quick_add_gauge_set_btn.clicked.connect(lambda: self.add_gauge_ring_bundle("system"))
         self.quick_add_volume_btn.clicked.connect(self.add_volume_widget)
         self.designer_quick_add_menu = QMenu(self.designer_quick_add_toggle_btn)
         for label, handler in (
@@ -3881,6 +3886,10 @@ class TrofeoGui(QMainWindow):
             ("Analog Clock Classic", lambda: self.add_analog_clock_widget("classic")),
             ("Analog Clock Modern", lambda: self.add_analog_clock_widget("modern")),
             ("Analog Clock Nordic", lambda: self.add_analog_clock_widget("nordic")),
+            ("Gauge Set: System Trio", lambda: self.add_gauge_ring_bundle("system")),
+            ("Gauge Set: Nordic Trio", lambda: self.add_gauge_ring_bundle("nordic")),
+            ("Gauge Set: Cyber Trio", lambda: self.add_gauge_ring_bundle("cyber")),
+            ("Gauge Set: Thermal Trio", lambda: self.add_gauge_ring_bundle("thermal")),
             ("Volume", self.add_volume_widget),
         ):
             action = self.designer_quick_add_menu.addAction(label)
@@ -8595,6 +8604,109 @@ class TrofeoGui(QMainWindow):
         self.write_designer_to_json()
         self.refresh_designer_element_list()
         self.preview_info_label.setText(f"Dodano zegar analogowy: {style_key.title()}.")
+        self.schedule_preview_theme_doc()
+
+    def _gauge_bundle_stat_item(
+        self,
+        *,
+        item_id_prefix: str,
+        label: str,
+        source: str,
+        fmt: str,
+        x: int,
+        y: int,
+        size: int,
+        preset: str,
+        font_family: str = "DejaVu Sans",
+        font_size: int = 22,
+        label_color: list[int] | None = None,
+        value_color: list[int] | None = None,
+        min_value: float = 0.0,
+        max_value: float = 100.0,
+    ) -> dict[str, Any]:
+        return {
+            "id": self._next_item_id("stats", item_id_prefix),
+            "label": label,
+            "source": source,
+            "format": fmt,
+            "x": x,
+            "y": y,
+            "box_width": size,
+            "box_height": size,
+            "font_family": font_family,
+            "font_size": font_size,
+            "font_bold": True,
+            "font_italic": False,
+            "font_underline": False,
+            "marquee": False,
+            "marquee_speed": 55.0,
+            "label_color": label_color or [214, 224, 238],
+            "value_color": value_color or [244, 248, 252],
+            "display": "gauge",
+            "gauge_preset": preset,
+            "gauge_smooth": 0.26,
+            "gauge_match_value_color": True,
+            "gauge_ring_size": max(96, size - 12),
+            "gauge_value_layout": "center",
+            "gauge_inner_alpha": 0.82,
+            "stroke_width": 0,
+            "min_value": min_value,
+            "max_value": max_value,
+            "show_value_text": True,
+            "align": "center",
+            "z_index": 216,
+            "visible": True,
+            "locked": False,
+        }
+
+    def add_gauge_ring_bundle(self, style: str = "system") -> None:
+        if self.theme_doc_model is None:
+            self.reload_designer_from_json()
+        if self.theme_doc_model is None:
+            return
+        style_key = str(style).strip().lower()
+        bundles: dict[str, dict[str, Any]] = {
+            "system": {
+                "title": "System Trio",
+                "items": [
+                    dict(item_id_prefix="stat_cpu_ring", label="CPU", source="cpu_usage_percent", fmt="{value}%", x=120, y=126, size=170, preset="usage"),
+                    dict(item_id_prefix="stat_ram_ring", label="RAM", source="mem_percent", fmt="{value}%", x=324, y=126, size=170, preset="usage"),
+                    dict(item_id_prefix="stat_gpu_ring", label="GPU", source="gpu_load", fmt="{value}%", x=528, y=126, size=170, preset="usage"),
+                ],
+            },
+            "nordic": {
+                "title": "Nordic Trio",
+                "items": [
+                    dict(item_id_prefix="stat_cpu_ring_nordic", label="CPU", source="cpu_usage_percent", fmt="{value}%", x=96, y=118, size=184, preset="nordic", font_family="DejaVu Serif", label_color=[223, 230, 238], value_color=[252, 248, 240]),
+                    dict(item_id_prefix="stat_ram_ring_nordic", label="RAM", source="mem_percent", fmt="{value}%", x=314, y=118, size=184, preset="runic_gold", font_family="DejaVu Serif", label_color=[229, 210, 170], value_color=[255, 248, 232]),
+                    dict(item_id_prefix="stat_gpu_ring_nordic", label="GPU", source="gpu_load", fmt="{value}%", x=532, y=118, size=184, preset="nordic", font_family="DejaVu Serif", label_color=[223, 230, 238], value_color=[252, 248, 240]),
+                ],
+            },
+            "cyber": {
+                "title": "Cyber Trio",
+                "items": [
+                    dict(item_id_prefix="stat_cpu_ring_cyber", label="CPU LOAD", source="cpu_usage_percent", fmt="{value}%", x=96, y=124, size=204, preset="cyber", font_size=24),
+                    dict(item_id_prefix="stat_ram_ring_cyber", label="RAM", source="mem_percent", fmt="{value}%", x=340, y=124, size=204, preset="plasma_blue", font_size=24),
+                    dict(item_id_prefix="stat_gpu_ring_cyber", label="GPU", source="gpu_load", fmt="{value}%", x=584, y=124, size=204, preset="cyber", font_size=24),
+                ],
+            },
+            "thermal": {
+                "title": "Thermal Trio",
+                "items": [
+                    dict(item_id_prefix="stat_cpu_temp_ring", label="CPU TEMP", source="cpu_temp_c", fmt="{value}°C", x=96, y=118, size=184, preset="thermal", min_value=35.0, max_value=92.0),
+                    dict(item_id_prefix="stat_gpu_temp_ring", label="GPU TEMP", source="gpu_temp", fmt="{value}°C", x=314, y=118, size=184, preset="thermal", min_value=35.0, max_value=95.0),
+                    dict(item_id_prefix="stat_cpu_freq_ring", label="CPU GHz", source="cpu_freq_ghz", fmt="{value}", x=532, y=118, size=184, preset="freq", min_value=0.8, max_value=5.5),
+                ],
+            },
+        }
+        spec = bundles.get(style_key, bundles["system"])
+        self.push_designer_history()
+        stats = self.theme_doc_model.setdefault("stats", [])
+        for item_spec in spec["items"]:
+            stats.append(self._gauge_bundle_stat_item(**item_spec))
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        self.preview_info_label.setText(f"Dodano zestaw gauge: {spec['title']}.")
         self.schedule_preview_theme_doc()
 
     def quick_add_designer_element(self, collection: str) -> None:
