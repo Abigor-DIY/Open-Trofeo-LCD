@@ -575,6 +575,8 @@ class ReplayController:
         keep_live_refresh_running: bool = False,
     ) -> dict[str, Any]:
         send_result: dict[str, Any]
+        live_refresh_overlay_doc: dict[str, Any] | None = None
+        live_refresh_overlay_path: str | None = None
         theme_input = document
         if theme_input is None and path:
             try:
@@ -593,10 +595,8 @@ class ReplayController:
         if self.cfg.display_backend == "trcc":
             overlay_doc = None
             theme_for_animation = theme_input
-            static_base_doc = None
             if self._theme_has_media_sources(theme_input):
                 theme_for_animation, overlay_doc = self._split_media_overlay_document(theme_input)
-                static_base_doc = theme_for_animation
             animation_spec = self._theme_animation_spec(path=path, document=theme_for_animation, max_frames=None)
             if animation_spec is not None:
                 if overlay_doc is not None:
@@ -606,23 +606,12 @@ class ReplayController:
                         stats_override=self.stats_provider._read_media_now_playing(),
                     )
                     animation_spec["overlay_path"] = overlay_render["image_path"]
+                    live_refresh_overlay_doc = overlay_doc
+                    live_refresh_overlay_path = str(overlay_render["image_path"])
                 send_result = self._start_trcc_animation_worker(animation_spec)
                 send_result["rendered_animation"] = animation_spec
                 if overlay_doc is not None:
                     send_result["overlay_render"] = overlay_render
-            elif overlay_doc is not None and static_base_doc is not None:
-                rendered = self._render_theme_doc_to_file(path=path, document=static_base_doc)
-                overlay_render = self._render_theme_overlay_to_file(
-                    overlay_doc,
-                    path=path,
-                    stats_override=self.stats_provider._read_media_now_playing(),
-                )
-                send_result = self._start_trcc_static_overlay_worker(
-                    Path(rendered["image_path"]),
-                    Path(overlay_render["image_path"]),
-                )
-                send_result["rendered_theme"] = rendered
-                send_result["overlay_render"] = overlay_render
             else:
                 rendered = self._render_theme_doc_to_file(path=path, document=document)
                 send_result = self.send_image(
@@ -646,19 +635,12 @@ class ReplayController:
         if live_refresh:
             theme_for_scan = theme_input
             if self._theme_has_media_sources(theme_for_scan):
-                overlay_doc = None
-                overlay_path = None
-                if self.cfg.display_backend == "trcc":
-                    _base_doc, overlay_doc = self._split_media_overlay_document(theme_for_scan)
-                    overlay_render = send_result.get("overlay_render")
-                    if isinstance(overlay_render, dict):
-                        overlay_path = str(overlay_render.get("image_path", "")).strip() or None
                 self._start_live_theme_refresh(
                     path=path,
                     document=theme_for_scan,
                     interval_s=1.0,
-                    overlay_document=overlay_doc,
-                    overlay_path=overlay_path,
+                    overlay_document=live_refresh_overlay_doc,
+                    overlay_path=live_refresh_overlay_path,
                 )
             else:
                 self._stop_live_theme_refresh()
