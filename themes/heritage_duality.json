@@ -16,8 +16,8 @@
     "base_color": [8, 10, 8],
     "accent_color": [120, 214, 255],
     "texture_alpha": 0.18,
-    "path": "heritage_duality_assets/2026-05-08/image/background.png",
-    "fit": "cover",
+    "path": "heritage_duality_assets/2026-05-08/image/background_safe.png",
+    "fit": "fill",
     "opacity": 1.0,
     "panels": [
       {"id": "head_bar", "rect": [96, 16, 1728, 64], "radius": 22, "fill": [6, 14, 18, 214], "z_index": 80, "visible": true, "locked": false},

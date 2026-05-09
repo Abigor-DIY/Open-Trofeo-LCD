@@ -16,8 +16,8 @@
     "base_color": [6, 8, 12],
     "accent_color": [86, 196, 255],
     "texture_alpha": 0.18,
-    "path": "wolfstorm_forge_assets/2026-05-08/image/background.png",
-    "fit": "cover",
+    "path": "wolfstorm_forge_assets/2026-05-08/image/background_safe.png",
+    "fit": "fill",
     "opacity": 1.0,
     "panels": [
       {"id": "head_bar", "rect": [86, 14, 1748, 66], "radius": 22, "fill": [0, 18, 44, 218], "z_index": 80, "visible": true, "locked": false},

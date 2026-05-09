@@ -16,8 +16,8 @@
     "base_color": [6, 8, 12],
     "accent_color": [92, 194, 255],
     "texture_alpha": 0.16,
-    "path": "nordic_duality_assets/2026-05-08/image/background.png",
-    "fit": "cover",
+    "path": "nordic_duality_assets/2026-05-08/image/background_safe.png",
+    "fit": "fill",
     "opacity": 1.0,
     "panels": [
       {"id": "clock_panel", "rect": [1372, 18, 438, 82], "radius": 22, "fill": [46, 28, 4, 228], "z_index": 80, "visible": true, "locked": false},
