@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from copy import deepcopy
 from pathlib import Path
+import re
 import time
 from typing import Any
 
@@ -212,6 +213,160 @@ def _ellipsize_text(
         else:
             hi = mid - 1
     return best
+
+
+def _parse_numeric_stat_value(value: str) -> float | None:
+    text = str(value).strip()
+    if not text:
+        return None
+    normalized = text.replace(",", ".")
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", normalized)
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except Exception:
+        return None
+
+
+def _draw_stat_progress(
+    canvas: Image.Image,
+    item: dict[str, Any],
+    *,
+    label: str,
+    value_text: str,
+    numeric_value: float,
+    min_value: float,
+    max_value: float,
+    label_fill: tuple[int, int, int, int],
+    value_fill: tuple[int, int, int, int],
+    track_fill: tuple[int, int, int, int],
+    fill_color: tuple[int, int, int, int],
+) -> None:
+    draw = ImageDraw.Draw(canvas)
+    font = _load_font(
+        int(item["font_size"]),
+        bold=bool(item.get("font_bold", False)),
+        italic=bool(item.get("font_italic", False)),
+        font_family=str(item.get("font_family", "DejaVu Sans")),
+    )
+    x = int(item["x"])
+    y = int(item["y"])
+    box_width = max(1, int(item.get("box_width", 320)))
+    box_height = max(1, int(item.get("box_height", 40)))
+    label_height = 0
+    if label:
+        _draw_styled_text(
+            draw,
+            (x, y),
+            label,
+            font=font,
+            fill=label_fill,
+            bold=bool(item.get("font_bold", False)),
+            underline=bool(item.get("font_underline", False)),
+        )
+        label_bbox = draw.textbbox((0, 0), label, font=font)
+        label_height = (label_bbox[3] - label_bbox[1]) + 6
+    bar_left = x
+    bar_top = y + label_height
+    bar_width = box_width
+    bar_height = max(10, min(24, box_height - label_height))
+    radius = max(5, min(12, bar_height // 2))
+    draw.rounded_rectangle((bar_left, bar_top, bar_left + bar_width, bar_top + bar_height), radius=radius, fill=track_fill)
+    span = max_value - min_value
+    ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
+    fill_width = int(round(bar_width * ratio))
+    if fill_width > 0:
+        draw.rounded_rectangle(
+            (bar_left, bar_top, bar_left + fill_width, bar_top + bar_height),
+            radius=radius,
+            fill=fill_color,
+        )
+    if bool(item.get("show_value_text", True)):
+        value_bbox = draw.textbbox((0, 0), value_text, font=font)
+        value_x = bar_left + max(0, (bar_width - (value_bbox[2] - value_bbox[0])) // 2)
+        value_y = bar_top + max(0, (bar_height - (value_bbox[3] - value_bbox[1])) // 2) - 1
+        _draw_styled_text(
+            draw,
+            (value_x, value_y),
+            value_text,
+            font=font,
+            fill=value_fill,
+            bold=bool(item.get("font_bold", False)),
+            underline=False,
+        )
+
+
+def _draw_stat_gauge(
+    canvas: Image.Image,
+    item: dict[str, Any],
+    *,
+    label: str,
+    value_text: str,
+    numeric_value: float,
+    min_value: float,
+    max_value: float,
+    label_fill: tuple[int, int, int, int],
+    value_fill: tuple[int, int, int, int],
+    track_fill: tuple[int, int, int, int],
+    fill_color: tuple[int, int, int, int],
+) -> None:
+    draw = ImageDraw.Draw(canvas)
+    font = _load_font(
+        int(item["font_size"]),
+        bold=bool(item.get("font_bold", False)),
+        italic=bool(item.get("font_italic", False)),
+        font_family=str(item.get("font_family", "DejaVu Sans")),
+    )
+    x = int(item["x"])
+    y = int(item["y"])
+    box_width = max(1, int(item.get("box_width", 320)))
+    box_height = max(1, int(item.get("box_height", 40)))
+    label_height = 0
+    if label:
+        label_bbox = draw.textbbox((0, 0), label, font=font)
+        label_x = x + max(0, (box_width - (label_bbox[2] - label_bbox[0])) // 2)
+        _draw_styled_text(
+            draw,
+            (label_x, y),
+            label,
+            font=font,
+            fill=label_fill,
+            bold=bool(item.get("font_bold", False)),
+            underline=bool(item.get("font_underline", False)),
+        )
+        label_height = (label_bbox[3] - label_bbox[1]) + 6
+    gauge_size = max(28, min(box_width, box_height - label_height))
+    gauge_left = x + max(0, (box_width - gauge_size) // 2)
+    gauge_top = y + label_height
+    gauge_box = (gauge_left, gauge_top, gauge_left + gauge_size, gauge_top + gauge_size)
+    stroke_width = max(4, int(item.get("stroke_width", 12)))
+    start_angle = 135
+    sweep = 270
+    draw.arc(gauge_box, start=start_angle, end=start_angle + sweep, fill=track_fill, width=stroke_width)
+    span = max_value - min_value
+    ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
+    if ratio > 0.0:
+        draw.arc(
+            gauge_box,
+            start=start_angle,
+            end=start_angle + int(round(sweep * ratio)),
+            fill=fill_color,
+            width=stroke_width,
+        )
+    if bool(item.get("show_value_text", True)):
+        value_bbox = draw.textbbox((0, 0), value_text, font=font)
+        value_x = gauge_left + max(0, (gauge_size - (value_bbox[2] - value_bbox[0])) // 2)
+        value_y = gauge_top + max(0, (gauge_size - (value_bbox[3] - value_bbox[1])) // 2) - 1
+        _draw_styled_text(
+            draw,
+            (value_x, value_y),
+            value_text,
+            font=font,
+            fill=value_fill,
+            bold=bool(item.get("font_bold", False)),
+            underline=False,
+        )
 
 
 def _motion_progress(track: dict[str, Any], frame_index: int) -> float:
@@ -538,8 +693,12 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
         render_opacity = max(0.0, min(1.0, float(item.get("_render_opacity", 1.0))))
         label_fill_rgba = _rgba(item["label_color"])
         value_fill_rgba = _rgba(item["value_color"])
+        track_fill_rgba = _rgba(item.get("track_color", [34, 44, 58, 210]))
+        fill_color_rgba = _rgba(item.get("fill_color", item["value_color"]))
         label_fill = (label_fill_rgba[0], label_fill_rgba[1], label_fill_rgba[2], int(label_fill_rgba[3] * render_opacity))
         value_fill = (value_fill_rgba[0], value_fill_rgba[1], value_fill_rgba[2], int(value_fill_rgba[3] * render_opacity))
+        track_fill = (track_fill_rgba[0], track_fill_rgba[1], track_fill_rgba[2], int(track_fill_rgba[3] * render_opacity))
+        fill_color = (fill_color_rgba[0], fill_color_rgba[1], fill_color_rgba[2], int(fill_color_rgba[3] * render_opacity))
         x = int(item["x"])
         y = int(item["y"])
         box_width = max(1, int(item.get("box_width", 320)))
@@ -547,7 +706,41 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
         label = item["label"]
         value = snapshot.get(item["source"], "N/A")
         value_text = item["format"].format(value=value)
+        display = str(item.get("display", "text")).strip().lower()
         marquee = bool(item.get("marquee", False))
+        numeric_value = _parse_numeric_stat_value(value)
+        if display in {"progress", "gauge"} and numeric_value is not None:
+            min_value = float(item.get("min_value", 0.0))
+            max_value = float(item.get("max_value", 100.0))
+            if display == "progress":
+                _draw_stat_progress(
+                    canvas,
+                    item,
+                    label=label,
+                    value_text=value_text,
+                    numeric_value=numeric_value,
+                    min_value=min_value,
+                    max_value=max_value,
+                    label_fill=label_fill,
+                    value_fill=value_fill,
+                    track_fill=track_fill,
+                    fill_color=fill_color,
+                )
+            else:
+                _draw_stat_gauge(
+                    canvas,
+                    item,
+                    label=label,
+                    value_text=value_text,
+                    numeric_value=numeric_value,
+                    min_value=min_value,
+                    max_value=max_value,
+                    label_fill=label_fill,
+                    value_fill=value_fill,
+                    track_fill=track_fill,
+                    fill_color=fill_color,
+                )
+            continue
         if not marquee and not label and item["align"] == "left":
             value_text = _ellipsize_text(draw, value_text, font, box_width)
 

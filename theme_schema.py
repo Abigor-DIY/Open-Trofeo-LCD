@@ -34,6 +34,7 @@ KNOWN_ALIGN = {"left", "center", "right"}
 KNOWN_FIT = {"contain", "cover", "stretch"}
 KNOWN_BACKGROUND_KIND = {"generated", "image", "color"}
 KNOWN_IMAGE_SOURCES = {"media_cover", "media_video_frame"}
+KNOWN_STAT_DISPLAY = {"text", "progress", "gauge"}
 
 
 class ThemeValidationError(RuntimeError):
@@ -227,6 +228,13 @@ def _normalize_stat_item(raw: Any, idx: int) -> dict[str, Any]:
     align = _expect_str(data.get("align", "left"), f"{path}.align").strip().lower()
     if align not in KNOWN_ALIGN:
         raise _fail(f"{path}.align", f"must be one of {sorted(KNOWN_ALIGN)}")
+    display = _expect_str(data.get("display", "text"), f"{path}.display").strip().lower()
+    if display not in KNOWN_STAT_DISPLAY:
+        raise _fail(f"{path}.display", f"must be one of {sorted(KNOWN_STAT_DISPLAY)}")
+    min_value = float(_expect_number(data.get("min_value", 0.0), f"{path}.min_value"))
+    max_value = float(_expect_number(data.get("max_value", 100.0), f"{path}.max_value"))
+    if max_value <= min_value:
+        raise _fail(f"{path}.max_value", "must be greater than min_value")
     return {
         "id": str(data.get("id", f"stat_{idx}")).strip() or f"stat_{idx}",
         "label": str(data.get("label", "")).strip(),
@@ -245,6 +253,13 @@ def _normalize_stat_item(raw: Any, idx: int) -> dict[str, Any]:
         "marquee_speed": float(data.get("marquee_speed", 55.0)),
         "label_color": _normalize_color(data.get("label_color", [255, 255, 255]), f"{path}.label_color"),
         "value_color": _normalize_color(data.get("value_color", [220, 220, 220]), f"{path}.value_color"),
+        "display": display,
+        "min_value": min_value,
+        "max_value": max_value,
+        "track_color": _normalize_color(data.get("track_color", [34, 44, 58, 210]), f"{path}.track_color"),
+        "fill_color": _normalize_color(data.get("fill_color", data.get("value_color", [220, 220, 220])), f"{path}.fill_color"),
+        "stroke_width": int(_expect_number(data.get("stroke_width", 12), f"{path}.stroke_width")),
+        "show_value_text": bool(data.get("show_value_text", True)),
         "align": align,
         "z_index": int(_expect_number(data.get("z_index", 220), f"{path}.z_index")),
         "visible": bool(data.get("visible", True)),

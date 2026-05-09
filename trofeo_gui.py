@@ -78,7 +78,7 @@ except ImportError:
     print("albo: ~/trofeo-venv/bin/pip install PySide6")
     raise SystemExit(1)
 
-from theme_schema import KNOWN_STAT_SOURCES, ThemeDocument, normalize_theme_document, save_theme_document
+from theme_schema import KNOWN_STAT_DISPLAY, KNOWN_STAT_SOURCES, ThemeDocument, normalize_theme_document, save_theme_document
 from stats_sources import StatsProvider
 
 try:
@@ -3131,10 +3131,18 @@ class TrofeoGui(QMainWindow):
         self.designer_opacity_spin = QDoubleSpinBox(); self.designer_opacity_spin.setRange(0.0, 1.0); self.designer_opacity_spin.setSingleStep(0.1)
         self.designer_text_edit = QLineEdit(); self.designer_label_edit = QLineEdit(); self.designer_format_edit = QLineEdit()
         self.designer_source_combo = QComboBox(); self._populate_designer_source_combo()
+        self.designer_stat_display_combo = QComboBox(); self.designer_stat_display_combo.addItems(
+            [mode for mode in ("text", "progress", "gauge") if mode in KNOWN_STAT_DISPLAY]
+        )
+        self.designer_stat_min_spin = QDoubleSpinBox(); self.designer_stat_min_spin.setRange(-999999.0, 999999.0); self.designer_stat_min_spin.setDecimals(2)
+        self.designer_stat_max_spin = QDoubleSpinBox(); self.designer_stat_max_spin.setRange(-999999.0, 999999.0); self.designer_stat_max_spin.setDecimals(2); self.designer_stat_max_spin.setValue(100.0)
+        self.designer_stat_show_value_chk = QCheckBox("Pokaż wartość")
         self.designer_color_edit = QLineEdit(); self.designer_label_color_edit = QLineEdit(); self.designer_value_color_edit = QLineEdit()
+        self.designer_track_color_edit = QLineEdit(); self.designer_fill_color_edit = QLineEdit()
         self.designer_align_combo = QComboBox(); self.designer_align_combo.addItems(["left", "center", "right"])
         self.designer_font_family_combo = QComboBox(); self.designer_font_family_combo.addItems(available_font_families())
         self.designer_font_size_spin = QSpinBox(); self.designer_font_size_spin.setRange(6, 200)
+        self.designer_stat_stroke_width_spin = QSpinBox(); self.designer_stat_stroke_width_spin.setRange(1, 64); self.designer_stat_stroke_width_spin.setValue(12)
         self.designer_font_bold_chk = QCheckBox("B")
         self.designer_font_italic_chk = QCheckBox("I")
         self.designer_font_underline_chk = QCheckBox("U")
@@ -3398,11 +3406,14 @@ class TrofeoGui(QMainWindow):
             (self.designer_format_edit, "textChanged"), (self.designer_path_edit, "textChanged"),
             (self.designer_visible_chk, "toggled"), (self.designer_locked_chk, "toggled"),
             (self.designer_source_combo, "currentIndexChanged"), (self.designer_align_combo, "currentIndexChanged"),
+            (self.designer_stat_display_combo, "currentTextChanged"), (self.designer_stat_min_spin, "valueChanged"),
+            (self.designer_stat_max_spin, "valueChanged"), (self.designer_stat_show_value_chk, "toggled"),
             (self.designer_font_family_combo, "currentTextChanged"), (self.designer_font_size_spin, "valueChanged"),
             (self.designer_font_bold_chk, "toggled"), (self.designer_font_italic_chk, "toggled"),
             (self.designer_font_underline_chk, "toggled"),
             (self.designer_color_edit, "textChanged"), (self.designer_label_color_edit, "textChanged"),
-            (self.designer_value_color_edit, "textChanged"),
+            (self.designer_value_color_edit, "textChanged"), (self.designer_track_color_edit, "textChanged"),
+            (self.designer_fill_color_edit, "textChanged"), (self.designer_stat_stroke_width_spin, "valueChanged"),
             (self.bg_kind_combo, "currentTextChanged"), (self.bg_path_edit, "textChanged")
         ]:
             try: getattr(widget, signal).connect(self.on_designer_field_changed)
@@ -3962,6 +3973,13 @@ class TrofeoGui(QMainWindow):
         self.inspector_content_layout.addRow(self.row_content_source, self.designer_source_combo)
         self.row_content_format = make_label("Format wartości")
         self.inspector_content_layout.addRow(self.row_content_format, self.designer_format_edit)
+        self.row_content_stat_display = make_label("Tryb wyświetlania")
+        self.inspector_content_layout.addRow(self.row_content_stat_display, self.designer_stat_display_combo)
+        self.row_content_stat_range = make_label("Zakres")
+        self.designer_stat_range_row = wrap_row(self.designer_stat_min_spin, self.designer_stat_max_spin)
+        self.inspector_content_layout.addRow(self.row_content_stat_range, self.designer_stat_range_row)
+        self.row_content_stat_show_value = make_label("Tekst wartości")
+        self.inspector_content_layout.addRow(self.row_content_stat_show_value, self.designer_stat_show_value_chk)
 
         self.designer_font_minus_btn = QPushButton("−")
         self.designer_font_minus_btn.setMinimumWidth(36)
@@ -4003,6 +4021,14 @@ class TrofeoGui(QMainWindow):
         self.designer_value_color_row, self.designer_value_color_btn = add_color_row(self.designer_value_color_edit)
         self.row_appearance_value_color = make_label("Kolor wartości")
         self.inspector_appearance_layout.addRow(self.row_appearance_value_color, self.designer_value_color_row)
+        self.designer_track_color_row, self.designer_track_color_btn = add_color_row(self.designer_track_color_edit)
+        self.row_appearance_track_color = make_label("Kolor tła gauge")
+        self.inspector_appearance_layout.addRow(self.row_appearance_track_color, self.designer_track_color_row)
+        self.designer_fill_color_row, self.designer_fill_color_btn = add_color_row(self.designer_fill_color_edit)
+        self.row_appearance_fill_color = make_label("Kolor wypełnienia")
+        self.inspector_appearance_layout.addRow(self.row_appearance_fill_color, self.designer_fill_color_row)
+        self.row_appearance_stroke_width = make_label("Grubość gauge")
+        self.inspector_appearance_layout.addRow(self.row_appearance_stroke_width, self.designer_stat_stroke_width_spin)
 
         self.row_panel_fill = make_label("Wypełnienie panelu")
         self.panel_fill_row = wrap_row(self.panel_fill_edit, self.panel_fill_btn, stretch_first=True)
@@ -4157,12 +4183,17 @@ class TrofeoGui(QMainWindow):
             self.designer_label_edit,
             self.designer_format_edit,
             self.designer_source_combo,
+            self.designer_stat_display_combo,
+            self.designer_stat_min_spin,
+            self.designer_stat_max_spin,
             self.designer_align_combo,
             self.designer_font_family_combo,
             self.designer_font_size_spin,
             self.designer_color_edit,
             self.designer_label_color_edit,
             self.designer_value_color_edit,
+            self.designer_track_color_edit,
+            self.designer_fill_color_edit,
             self.designer_x_spin,
             self.designer_y_spin,
             self.designer_w_spin,
@@ -4173,7 +4204,9 @@ class TrofeoGui(QMainWindow):
             self.designer_opacity_spin,
             self.designer_rotation_spin,
             self.panel_fill_edit,
+            self.panel_opacity_spin,
             self.panel_radius_spin,
+            self.designer_stat_stroke_width_spin,
             self.motion_start_spin,
             self.motion_end_spin,
             self.motion_target_x_spin,
@@ -7984,6 +8017,9 @@ class TrofeoGui(QMainWindow):
                 "label": "Label",
                 "source": self.theme_stat_sources[0] if self.theme_stat_sources else "hostname",
                 "format": "{value}",
+                "display": "text",
+                "min_value": 0.0,
+                "max_value": 100.0,
                 "x": 100,
                 "y": 100,
                 "box_width": 320,
@@ -7994,6 +8030,10 @@ class TrofeoGui(QMainWindow):
                 "font_underline": False,
                 "label_color": [220, 220, 220],
                 "value_color": [220, 220, 220],
+                "track_color": [34, 44, 58, 210],
+                "fill_color": [220, 220, 220],
+                "stroke_width": 12,
+                "show_value_text": True,
                 "align": "left",
                 "z_index": 220,
             }
@@ -9408,6 +9448,9 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(inspector_content_layout, self.row_content_label, self.designer_label_edit, is_stat)
         self._set_form_row_visible(inspector_content_layout, self.row_content_source, self.designer_source_combo, is_stat)
         self._set_form_row_visible(inspector_content_layout, self.row_content_format, self.designer_format_edit, is_stat)
+        self._set_form_row_visible(inspector_content_layout, self.row_content_stat_display, self.designer_stat_display_combo, is_stat)
+        self._set_form_row_visible(inspector_content_layout, self.row_content_stat_range, self.designer_stat_range_row, is_stat)
+        self._set_form_row_visible(inspector_content_layout, self.row_content_stat_show_value, self.designer_stat_show_value_chk, is_stat)
         self.designer_source_combo.setToolTip("Źródło danych dla tej statystyki.")
         self.designer_format_edit.setPlaceholderText("{value}")
         self.designer_label_edit.setPlaceholderText("Np. CPU, RAM, Temp")
@@ -9419,6 +9462,9 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(appearance_layout, self.row_appearance_color, self.designer_color_row, is_text)
         self._set_form_row_visible(appearance_layout, self.row_appearance_label_color, self.designer_label_color_row, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_appearance_value_color, self.designer_value_color_row, is_stat)
+        self._set_form_row_visible(appearance_layout, self.row_appearance_track_color, self.designer_track_color_row, is_stat)
+        self._set_form_row_visible(appearance_layout, self.row_appearance_fill_color, self.designer_fill_color_row, is_stat)
+        self._set_form_row_visible(appearance_layout, self.row_appearance_stroke_width, self.designer_stat_stroke_width_spin, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_panel_fill, self.panel_fill_row, is_panel)
         self._set_form_row_visible(appearance_layout, self.row_panel_opacity, self.panel_opacity_spin, is_panel)
         self._set_form_row_visible(appearance_layout, self.row_panel_radius, self.panel_radius_spin, is_panel)
@@ -9521,8 +9567,15 @@ class TrofeoGui(QMainWindow):
                 default_source = self.theme_stat_sources[0] if self.theme_stat_sources else ""
                 self._populate_designer_source_combo(default_source)
                 self.designer_format_edit.clear()
+                self.designer_stat_display_combo.setCurrentText("text")
+                self.designer_stat_min_spin.setValue(0.0)
+                self.designer_stat_max_spin.setValue(100.0)
+                self.designer_stat_show_value_chk.setChecked(True)
                 self.designer_label_color_edit.clear()
                 self.designer_value_color_edit.clear()
+                self.designer_track_color_edit.clear()
+                self.designer_fill_color_edit.clear()
+                self.designer_stat_stroke_width_spin.setValue(12)
                 self.designer_path_edit.clear()
                 self.designer_w_spin.setValue(1)
                 self.designer_h_spin.setValue(1)
@@ -9563,8 +9616,15 @@ class TrofeoGui(QMainWindow):
                 if idx >= 0:
                     self.designer_source_combo.setCurrentIndex(idx)
             self.designer_format_edit.setText(str(active_item.get("format", "{value}")))
+            self.designer_stat_display_combo.setCurrentText(str(active_item.get("display", "text")))
+            self.designer_stat_min_spin.setValue(float(active_item.get("min_value", 0.0)))
+            self.designer_stat_max_spin.setValue(float(active_item.get("max_value", 100.0)))
+            self.designer_stat_show_value_chk.setChecked(bool(active_item.get("show_value_text", True)))
             self.designer_label_color_edit.setText(json.dumps(active_item.get("label_color", [220, 220, 220]), ensure_ascii=False))
             self.designer_value_color_edit.setText(json.dumps(active_item.get("value_color", [220, 220, 220]), ensure_ascii=False))
+            self.designer_track_color_edit.setText(json.dumps(active_item.get("track_color", [34, 44, 58, 210]), ensure_ascii=False))
+            self.designer_fill_color_edit.setText(json.dumps(active_item.get("fill_color", active_item.get("value_color", [220, 220, 220])), ensure_ascii=False))
+            self.designer_stat_stroke_width_spin.setValue(int(active_item.get("stroke_width", 12)))
             self.designer_path_edit.setText(str(active_item.get("path", "")))
             rect = active_item.get("rect", [0, 0, 1, 1])
             self.designer_w_spin.setValue(int(rect[2] if len(rect) >= 4 else 1))
@@ -9775,9 +9835,22 @@ class TrofeoGui(QMainWindow):
             item["text"] = self.designer_text_edit.text()
             item["color"] = self._parse_color_line(self.designer_color_edit.text(), item.get("color", [255, 255, 255]))
         elif collection == "stats":
+            min_value = float(self.designer_stat_min_spin.value())
+            max_value = float(self.designer_stat_max_spin.value())
+            if max_value <= min_value:
+                max_value = min_value + 1.0
+                self._designer_updating = True
+                try:
+                    self.designer_stat_max_spin.setValue(max_value)
+                finally:
+                    self._designer_updating = False
             item["label"] = self.designer_label_edit.text()
             item["source"] = str(self.designer_source_combo.currentData() or self.designer_source_combo.currentText()).strip()
             item["format"] = self.designer_format_edit.text().strip() or "{value}"
+            item["display"] = self.designer_stat_display_combo.currentText().strip().lower() or "text"
+            item["min_value"] = min_value
+            item["max_value"] = max_value
+            item["show_value_text"] = bool(self.designer_stat_show_value_chk.isChecked())
             item["label_color"] = self._parse_color_line(
                 self.designer_label_color_edit.text(),
                 item.get("label_color", [220, 220, 220]),
@@ -9786,6 +9859,15 @@ class TrofeoGui(QMainWindow):
                 self.designer_value_color_edit.text(),
                 item.get("value_color", [220, 220, 220]),
             )
+            item["track_color"] = self._parse_color_line(
+                self.designer_track_color_edit.text(),
+                item.get("track_color", [34, 44, 58, 210]),
+            )
+            item["fill_color"] = self._parse_color_line(
+                self.designer_fill_color_edit.text(),
+                item.get("fill_color", item.get("value_color", [220, 220, 220])),
+            )
+            item["stroke_width"] = int(self.designer_stat_stroke_width_spin.value())
         elif collection == "images":
             item["path"] = self.designer_path_edit.text().strip()
             item["rect"] = [
