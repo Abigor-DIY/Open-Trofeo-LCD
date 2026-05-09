@@ -559,6 +559,12 @@ class ReplayController:
                     theme_input = raw_document
             except Exception:
                 theme_input = None
+        # Stop the previous live-refresh worker before switching the base theme.
+        # Otherwise the old worker can still repaint the LCD with the previous
+        # theme while the new TRCC worker is starting, which makes "Apply"
+        # appear to do nothing even though the API reports success.
+        if not keep_live_refresh_running:
+            self._stop_live_theme_refresh()
         if self.cfg.display_backend == "trcc":
             overlay_doc = None
             theme_for_animation = theme_input
