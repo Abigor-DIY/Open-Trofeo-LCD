@@ -1652,6 +1652,8 @@ class TrofeoGui(QMainWindow):
         self._image_thumbnail_cache: dict[tuple[str, int], QPixmap] = {}
         self._preview_request_in_flight = False
         self._preview_request_queued = False
+        self._preview_request_seq = 0
+        self._preview_request_active_seq = 0
         self.preview_debounce = QTimer(self)
         self.preview_debounce.setSingleShot(True)
         self.preview_debounce.timeout.connect(self.preview_theme_doc)
@@ -6074,12 +6076,13 @@ class TrofeoGui(QMainWindow):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_api_result(self, action: str, ok: bool, payload: object) -> None:
+        is_designer_preview = action.startswith("theme-doc-preview")
         if action == "status":
             self._status_in_flight = False
-        if action == "theme-doc-preview":
+        if is_designer_preview:
             self._preview_request_in_flight = False
-        if action in {"theme-doc-load", "studio-theme-save", "theme-doc-preview", "studio-theme-apply"}:
-            self._set_designer_toolbar_busy(action, False)
+        if action in {"theme-doc-load", "studio-theme-save", "studio-theme-apply"} or is_designer_preview:
+            self._set_designer_toolbar_busy("theme-doc-preview" if is_designer_preview else action, False)
         is_template_preview = action.startswith("template-preview::")
         quiet_actions = {
             "theme-schema",
@@ -6090,10 +6093,10 @@ class TrofeoGui(QMainWindow):
 
         if not ok:
             self.append_log(f"[{action}] ERROR: {payload}")
-            if action in {"theme-doc-load", "studio-theme-save", "theme-doc-preview", "studio-theme-apply"}:
+            if action in {"theme-doc-load", "studio-theme-save", "studio-theme-apply"} or is_designer_preview:
                 self._set_designer_toolbar_feedback(f"Błąd: {str(payload)[:120]}")
             self._push_system_event("WARN", action, str(payload)[:120])
-            if action == "theme-doc-preview" and self._preview_request_queued:
+            if is_designer_preview and self._preview_request_queued:
                 self._preview_request_queued = False
                 self.preview_debounce.start(self._designer_preview_delay_ms())
             if action != "status" and not is_template_preview and action not in quiet_actions:
@@ -6134,7 +6137,6 @@ class TrofeoGui(QMainWindow):
             "theme-doc-load",
             "theme-doc-save",
             "theme-doc-apply",
-            "theme-doc-preview",
             "studio-theme-save",
             "studio-theme-apply",
         }:
@@ -6189,6 +6191,7 @@ class TrofeoGui(QMainWindow):
                 self._rebuild_theme_asset_gallery()
                 if action == "theme-doc-load":
                     self._set_designer_toolbar_feedback(f"Wczytano motyw: {Path(str(resolved_path or self.theme_doc_path_edit.text())).name}")
+                    self.preview_theme_doc()
         if action in {"studio-theme-save", "studio-theme-apply"}:
             result = data.get("result", {})
             if isinstance(result, dict):
@@ -6215,7 +6218,15 @@ class TrofeoGui(QMainWindow):
                     if image_path:
                         self.append_log(f"[theme-doc-apply] rendered image: {image_path}")
                 self._rebuild_theme_asset_gallery()
-        if action == "theme-doc-preview":
+        if is_designer_preview:
+            preview_seq = 0
+            if "::" in action:
+                try:
+                    preview_seq = int(action.rsplit("::", 1)[1])
+                except Exception:
+                    preview_seq = 0
+            if preview_seq and preview_seq != self._preview_request_active_seq:
+                return
             result = data.get("result", {})
             if isinstance(result, dict):
                 image_path = str(result.get("image_path", "")).strip()
@@ -7797,8 +7808,10 @@ class TrofeoGui(QMainWindow):
         payload = {"path": self.theme_doc_path_edit.text().strip(), "document": document}
         self._preview_request_in_flight = True
         self._preview_request_queued = False
+        self._preview_request_seq += 1
+        self._preview_request_active_seq = self._preview_request_seq
         self.api_call(
-            "theme-doc-preview",
+            f"theme-doc-preview::{self._preview_request_active_seq}",
             "POST",
             "/v1/theme-doc/preview",
             payload,
