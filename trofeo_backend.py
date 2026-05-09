@@ -1095,6 +1095,8 @@ class ReplayController:
                 self.live_theme_started_at = None
                 return
             self.live_theme_stop.set()
+        if th is threading.current_thread():
+            return
         th.join(timeout=max(0.1, timeout))
         with self.lock:
             if self.live_theme_thread is not None and not self.live_theme_thread.is_alive():
@@ -1486,8 +1488,14 @@ class ReplayController:
 
         return {"running": True, "pid": self.proc.pid, "mode": self.mode}
 
-    def _start_native_static_worker(self, image_path: Path, raw_jpeg_passthrough: bool = False) -> dict[str, Any]:
-        self._stop_live_theme_refresh()
+    def _start_native_static_worker(
+        self,
+        image_path: Path,
+        raw_jpeg_passthrough: bool = False,
+        stop_live_refresh: bool = True,
+    ) -> dict[str, Any]:
+        if stop_live_refresh:
+            self._stop_live_theme_refresh()
         self._stop_display_worker(timeout=2.0)
         killed = self._kill_orphan_display_helpers()
         time.sleep(1.0 if killed else 0.35)
@@ -1780,7 +1788,11 @@ class ReplayController:
             self.stop_loop()
 
         with self.lock:
-            result = self._start_native_static_worker(resolved, raw_jpeg_passthrough=raw_jpeg_passthrough)
+            result = self._start_native_static_worker(
+                resolved,
+                raw_jpeg_passthrough=raw_jpeg_passthrough,
+                stop_live_refresh=stop_live_refresh,
+            )
             result["image_path"] = str(resolved)
             return result
 
