@@ -6492,13 +6492,44 @@ class TrofeoGui(QMainWindow):
         if not name:
             QMessageBox.information(self, "Info", "Brak wybranego theme.")
             return
-        payload = {"name": name, "resume_loop": bool(self.theme_resume_chk.isChecked())}
+        item = self.theme_items.get(name, {})
+        path = str(item.get("path", "")).strip()
+        theme_type = str(item.get("type", "")).strip()
+        stop_first = bool(self.theme_stop_before_apply_chk.isChecked())
+        resume_loop = bool(self.theme_resume_chk.isChecked())
+        if theme_type == "theme-doc" and path:
+            payload = {"path": path, "resume_loop": resume_loop}
+            self.api_call_with_optional_stop(
+                "theme-doc-apply",
+                "POST",
+                "/v1/theme-doc/apply",
+                payload,
+                stop_first=stop_first,
+                timeout=90.0,
+            )
+            return
+        if path:
+            payload = {
+                "path": path,
+                "raw_jpeg_passthrough": bool(item.get("raw_jpeg_passthrough", False)),
+                "resume_loop": resume_loop,
+            }
+            self.api_call_with_optional_stop(
+                "send-image",
+                "POST",
+                "/v1/send-image",
+                payload,
+                stop_first=stop_first,
+                timeout=90.0,
+            )
+            return
+        payload = {"name": name, "resume_loop": resume_loop}
         self.api_call_with_optional_stop(
             "theme-apply",
             "POST",
             "/v1/themes/apply",
             payload,
-            stop_first=bool(self.theme_stop_before_apply_chk.isChecked()),
+            stop_first=stop_first,
             timeout=90.0,
         )
 
