@@ -3720,27 +3720,16 @@ class TrofeoGui(QMainWindow):
         self.designer_component_search.setPlaceholderText("Szukaj warstwy lub tekstu...")
         self.designer_component_search.setClearButtonEnabled(True)
         search_row.addWidget(self.designer_component_search, 1)
+        self.designer_kind_combo.setMaximumWidth(180)
+        search_row.addWidget(self.designer_kind_combo, 0)
         self.designer_quick_add_toggle_btn = QPushButton("+ komponent")
-        self.designer_quick_add_toggle_btn.setCheckable(True)
-        self.designer_quick_add_toggle_btn.setChecked(False)
         self.designer_quick_add_toggle_btn.setMinimumHeight(28)
+        self.designer_quick_add_toggle_btn.setMaximumWidth(120)
         search_row.addWidget(self.designer_quick_add_toggle_btn)
         layout.addLayout(search_row)
-
-        self.designer_collection_hint = QLabel("Wybierz kategorię i dodaj nowy element jednym kliknięciem.")
-        self.designer_collection_hint.setObjectName("selectionSummaryLabel")
-        self.designer_collection_hint.setWordWrap(True)
-        layout.addWidget(self.designer_collection_hint)
-        collection_row = QHBoxLayout()
-        collection_row.setSpacing(6)
-        collection_label = QLabel("Kategoria")
-        collection_label.setObjectName("headerFieldLabel")
-        collection_row.addWidget(collection_label)
-        collection_row.addWidget(self.designer_kind_combo, 1)
-        layout.addLayout(collection_row)
         self.designer_selection_label.setObjectName("selectionSummaryLabel")
         self.designer_selection_label.setWordWrap(True)
-        self.designer_selection_label.setMaximumHeight(34)
+        self.designer_selection_label.setMaximumHeight(28)
         layout.addWidget(self.designer_selection_label)
         self.designer_kind_combo.currentIndexChanged.connect(self.refresh_designer_element_list)
         
@@ -3780,6 +3769,7 @@ class TrofeoGui(QMainWindow):
         for i, btn in enumerate(quick_buttons):
             quick_grid.addWidget(btn, i // 3, i % 3)
         quick_container_layout.addLayout(quick_grid)
+        self.designer_quick_add_container.hide()
         layout.addWidget(self.designer_quick_add_container)
         self.quick_add_text_btn.clicked.connect(lambda: self.quick_add_designer_element("texts"))
         self.quick_add_stat_btn.clicked.connect(lambda: self.quick_add_designer_element("stats"))
@@ -3788,7 +3778,19 @@ class TrofeoGui(QMainWindow):
         self.quick_add_now_playing_btn.clicked.connect(self.add_now_playing_widget)
         self.quick_add_now_playing_hero_btn.clicked.connect(self.add_now_playing_widget_hero)
         self.quick_add_now_playing_mini_btn.clicked.connect(self.add_now_playing_widget_mini)
-        self.designer_quick_add_toggle_btn.toggled.connect(self._apply_designer_aux_visibility)
+        self.designer_quick_add_menu = QMenu(self.designer_quick_add_toggle_btn)
+        for label, handler in (
+            ("Tekst", lambda: self.quick_add_designer_element("texts")),
+            ("Statystyka", lambda: self.quick_add_designer_element("stats")),
+            ("Obraz", lambda: self.quick_add_designer_element("images")),
+            ("Panel", lambda: self.quick_add_designer_element("panels")),
+            ("Now Playing", self.add_now_playing_widget),
+            ("Now Playing Hero", self.add_now_playing_widget_hero),
+            ("Now Playing Mini", self.add_now_playing_widget_mini),
+        ):
+            action = self.designer_quick_add_menu.addAction(label)
+            action.triggered.connect(handler)
+        self.designer_quick_add_toggle_btn.setMenu(self.designer_quick_add_menu)
         
         self.designer_element_list.setMinimumHeight(170)
         self.designer_element_list.setSpacing(3)
@@ -3844,24 +3846,23 @@ class TrofeoGui(QMainWindow):
         self.designer_nudge_left_btn.clicked.connect(lambda: self.nudge_selected_elements(-1, 0, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
         self.designer_nudge_right_btn.clicked.connect(lambda: self.nudge_selected_elements(1, 0, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
         self.designer_nudge_down_btn.clicked.connect(lambda: self.nudge_selected_elements(0, 1, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
-        move_box.setMaximumHeight(180)
-        layout.addWidget(move_box)
-
-        ctrl_row = QHBoxLayout()
-        ctrl_row.setSpacing(6)
-        self.designer_raise_selected_btn = QPushButton("Wyżej")
-        self.designer_lower_selected_btn = QPushButton("Niżej")
-        self.designer_remove_btn = QPushButton("Usuń")
-        for btn in (self.designer_raise_selected_btn, self.designer_lower_selected_btn, self.designer_remove_btn):
-            btn.setMinimumHeight(28)
-        self.designer_raise_selected_btn.clicked.connect(self.raise_designer_layer)
-        self.designer_lower_selected_btn.clicked.connect(self.lower_designer_layer)
+        move_actions_row = QHBoxLayout()
+        move_actions_row.setContentsMargins(0, 0, 0, 0)
+        move_actions_row.setSpacing(6)
+        move_actions_row.addStretch(1)
+        self.designer_remove_btn = QPushButton("🗑 Usuń")
+        self.designer_remove_btn.setMinimumHeight(28)
+        self.designer_remove_btn.setMaximumWidth(112)
+        self.designer_remove_btn.setStyleSheet(
+            "QPushButton { background: #3a1f25; border: 1px solid #a33a48; color: #ffd7dc; }"
+            "QPushButton:hover { background: #512730; border: 1px solid #d05b6b; }"
+            "QPushButton:pressed { background: #2a1418; }"
+        )
         self.designer_remove_btn.clicked.connect(self.remove_designer_element)
-        ctrl_row.addWidget(self.designer_raise_selected_btn)
-        ctrl_row.addWidget(self.designer_lower_selected_btn)
-        ctrl_row.addStretch(1)
-        ctrl_row.addWidget(self.designer_remove_btn)
-        layout.addLayout(ctrl_row)
+        move_actions_row.addWidget(self.designer_remove_btn)
+        move_layout.addLayout(move_actions_row)
+        move_box.setMaximumHeight(168)
+        layout.addWidget(move_box)
         parent_layout.addWidget(box, 2)
 
     def _setup_inspector_tabs(self, container_layout: QVBoxLayout) -> None:
@@ -4780,16 +4781,14 @@ class TrofeoGui(QMainWindow):
                 min_px=int(88 * scale),
                 max_px=int(240 * scale),
             )
-        if hasattr(self, "designer_raise_selected_btn"):
+        if hasattr(self, "designer_remove_btn"):
             self._apply_equal_width_for_group(
                 [
-                    self.designer_raise_selected_btn,
-                    self.designer_lower_selected_btn,
                     self.designer_remove_btn,
                 ],
                 extra_px=int(22 * scale),
-                min_px=int(88 * scale),
-                max_px=int(160 * scale),
+                min_px=int(92 * scale),
+                max_px=int(128 * scale),
             )
 
     def _apply_responsive_layout_metrics(self, scale_percent: int | None = None) -> None:
@@ -4848,24 +4847,20 @@ class TrofeoGui(QMainWindow):
         details_expanded = bool(getattr(self, "designer_details_toggle_btn", None) and self.designer_details_toggle_btn.isChecked())
 
         dock_inspector_bottom = False
-        compact_quick_add = compact_window or short
-        show_quick_add = not compact_quick_add or bool(getattr(self, "designer_quick_add_toggle_btn", None) and self.designer_quick_add_toggle_btn.isChecked())
         self._set_designer_inspector_docked_bottom(dock_inspector_bottom)
         if hasattr(self, "designer_elements_box"):
             self.designer_elements_box.setVisible(True)
         if hasattr(self, "designer_quick_add_container"):
-            self.designer_quick_add_container.setVisible(show_quick_add)
+            self.designer_quick_add_container.setVisible(False)
         if hasattr(self, "designer_quick_add_toggle_btn"):
             self.designer_quick_add_toggle_btn.setVisible(True)
-            self.designer_quick_add_toggle_btn.setText(
-                "Ukryj +" if compact_quick_add and show_quick_add else ("+ komponent" if compact_quick_add else "Komponenty")
-            )
+            self.designer_quick_add_toggle_btn.setText("+ komponent")
         if hasattr(self, "designer_inspector_container"):
             self.designer_inspector_container.setVisible(True)
         if hasattr(self, "designer_collection_hint"):
             self.designer_collection_hint.setVisible(not short)
         if hasattr(self, "designer_selection_label"):
-            self.designer_selection_label.setVisible(not short)
+            self.designer_selection_label.setVisible(True)
         if hasattr(self, "inspector_selection_summary"):
             self.inspector_selection_summary.setVisible(not short)
         if hasattr(self, "inspector_tabs"):
