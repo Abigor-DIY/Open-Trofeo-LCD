@@ -17,6 +17,7 @@ Czyści procesy/uslugi Open-Trofeo-LCD:
   - replay_from_pcap.py
   - trofeo_lcd.py
   - scripts/trcc_static_image.py
+  - scripts/trcc_static_overlay_image.py
   - scripts/trcc_animated_image.py
   - run_backend_service.sh
   - run_replay_service.sh
@@ -113,7 +114,7 @@ wait_gone() {
   local deadline
   deadline=$((SECONDS + GRACE_SECONDS))
   while (( SECONDS < deadline )); do
-    if ! pgrep -f "${WORKDIR}/trofeo_backend.py|${WORKDIR}/replay_from_pcap.py|${WORKDIR}/trofeo_lcd.py|${WORKDIR}/scripts/trcc_static_image.py|${WORKDIR}/scripts/trcc_animated_image.py|${WORKDIR}/scripts/run_backend_service.sh|${WORKDIR}/scripts/run_replay_service.sh" >/dev/null 2>&1; then
+    if ! pgrep -f "${WORKDIR}/trofeo_backend.py|${WORKDIR}/replay_from_pcap.py|${WORKDIR}/trofeo_lcd.py|${WORKDIR}/scripts/trcc_static_image.py|${WORKDIR}/scripts/trcc_static_overlay_image.py|${WORKDIR}/scripts/trcc_animated_image.py|${WORKDIR}/scripts/run_backend_service.sh|${WORKDIR}/scripts/run_replay_service.sh" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.2
@@ -129,6 +130,7 @@ pkill -TERM -f "${WORKDIR}/trofeo_backend.py" >/dev/null 2>&1 || true
 pkill -TERM -f "${WORKDIR}/replay_from_pcap.py" >/dev/null 2>&1 || true
 pkill -TERM -f "${WORKDIR}/trofeo_lcd.py" >/dev/null 2>&1 || true
 pkill -TERM -f "${WORKDIR}/scripts/trcc_static_image.py" >/dev/null 2>&1 || true
+pkill -TERM -f "${WORKDIR}/scripts/trcc_static_overlay_image.py" >/dev/null 2>&1 || true
 pkill -TERM -f "${WORKDIR}/scripts/trcc_animated_image.py" >/dev/null 2>&1 || true
 pkill -TERM -f "${WORKDIR}/scripts/run_backend_service.sh" >/dev/null 2>&1 || true
 pkill -TERM -f "${WORKDIR}/scripts/run_replay_service.sh" >/dev/null 2>&1 || true
@@ -145,6 +147,7 @@ if ! wait_gone; then
   pkill -KILL -f "${WORKDIR}/replay_from_pcap.py" >/dev/null 2>&1 || true
   pkill -KILL -f "${WORKDIR}/trofeo_lcd.py" >/dev/null 2>&1 || true
   pkill -KILL -f "${WORKDIR}/scripts/trcc_static_image.py" >/dev/null 2>&1 || true
+  pkill -KILL -f "${WORKDIR}/scripts/trcc_static_overlay_image.py" >/dev/null 2>&1 || true
   pkill -KILL -f "${WORKDIR}/scripts/trcc_animated_image.py" >/dev/null 2>&1 || true
   pkill -KILL -f "${WORKDIR}/scripts/run_backend_service.sh" >/dev/null 2>&1 || true
   pkill -KILL -f "${WORKDIR}/scripts/run_replay_service.sh" >/dev/null 2>&1 || true

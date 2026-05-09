@@ -146,6 +146,7 @@ class ReplayController:
     def _kill_orphan_display_helpers(self) -> list[int]:
         patterns = [
             str(self.cfg.workdir / "scripts/trcc_static_image.py"),
+            str(self.cfg.workdir / "scripts/trcc_static_overlay_image.py"),
             str(self.cfg.workdir / "scripts/trcc_animated_image.py"),
             str(self.cfg.workdir / "replay_from_pcap.py"),
             str(self.cfg.workdir / "trofeo_lcd.py"),

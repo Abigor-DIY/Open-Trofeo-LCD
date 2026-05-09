@@ -19,6 +19,7 @@ Twardy cleanup Open-Trofeo-LCD:
       trofeo_lcd.py
       replay_from_pcap.py
       scripts/trcc_static_image.py
+      scripts/trcc_static_overlay_image.py
       scripts/trcc_animated_image.py
       .venv-trcc/bin/trcc
       run_backend_service.sh
@@ -106,6 +107,7 @@ kill_pattern_term_then_kill "${WORKDIR}/trofeo_backend.py"
 kill_pattern_term_then_kill "${WORKDIR}/trofeo_lcd.py"
 kill_pattern_term_then_kill "${WORKDIR}/replay_from_pcap.py"
 kill_pattern_term_then_kill "${WORKDIR}/scripts/trcc_static_image.py"
+kill_pattern_term_then_kill "${WORKDIR}/scripts/trcc_static_overlay_image.py"
 kill_pattern_term_then_kill "${WORKDIR}/scripts/trcc_animated_image.py"
 kill_pattern_term_then_kill "${WORKDIR}/scripts/run_backend_service.sh"
 kill_pattern_term_then_kill "${WORKDIR}/scripts/run_replay_service.sh"
