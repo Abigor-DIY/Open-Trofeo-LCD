@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 
 
 def main() -> int:
@@ -18,6 +19,7 @@ def main() -> int:
         from trcc.cli._connect import connect_device
         from trcc.core.app import TrccApp
         from trcc.adapters.infra.diagnostics import StandardLoggingConfigurator
+        from trcc.services import ImageService
     except Exception as exc:
         print(f"Error: failed to import trcc: {exc}", flush=True)
         return 1
@@ -45,22 +47,28 @@ def main() -> int:
         print("Error: image load returned no surface", flush=True)
         return 1
 
+    renderer = ImageService._r()
+    frame = renderer.copy_surface(image)
+    frame = renderer.convert_to_rgb(frame)
+
     lcd.enable_overlay(False)
-    lcd.set_background(image)
-    lcd.send(image)
+    lcd.set_background(frame)
+    lcd.send(frame)
     print(f"Static image loaded: {args.image}", flush=True)
 
+    deadline = time.monotonic() + max(0.0, float(args.duration)) if float(args.duration) > 0 else None
+    sleep_s = max(0.05, float(args.interval))
     try:
-        loop_result = lcd.keep_alive_loop(interval=max(0.05, float(args.interval)), duration=max(0.0, float(args.duration)))
+        while True:
+            lcd.send(frame)
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            time.sleep(sleep_s)
     except KeyboardInterrupt:
         print("Stopped.", flush=True)
         return 0
 
-    if not loop_result or not loop_result.get("success", False):
-        print(f"Error: {loop_result.get('error', 'keep_alive_loop failed') if isinstance(loop_result, dict) else 'keep_alive_loop failed'}", flush=True)
-        return 1
-
-    print(loop_result.get("message", "Done"), flush=True)
+    print("Done", flush=True)
     return 0
 
 
