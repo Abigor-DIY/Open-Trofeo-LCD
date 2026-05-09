@@ -817,6 +817,7 @@ class ReplayController:
         last_probe = 0.0
         probe_interval_s = 0.45 if cheap_overlay_mode else (0.25 if fast_file_refresh_mode else max(0.7, min(2.0, interval_s)))
         min_refresh_gap_s = 0.18 if cheap_overlay_mode else (12.0 if animated_theme else (0.12 if fast_file_refresh_mode else 0.25))
+        last_browser_worker_push = 0.0
 
         media_players: dict[str, dict[str, str]] = {}
 
@@ -1151,6 +1152,27 @@ class ReplayController:
                             keep_live_refresh_running=True,
                         )
                     last_refresh = time.time()
+                    if (
+                        fast_file_refresh_mode
+                        and refresh_target_path
+                        and last_event_at > 0
+                        and self.stats_provider.is_browser_media_player(str(media_cache.get("media_app", "")))
+                        and (last_refresh - last_browser_worker_push) >= 0.35
+                    ):
+                        try:
+                            self._start_native_static_worker(
+                                Path(refresh_target_path),
+                                raw_jpeg_passthrough=False,
+                                stop_live_refresh=False,
+                            )
+                            last_browser_worker_push = time.time()
+                            self._log(
+                                "browser media worker push"
+                                + f" state={media_cache.get('media_state', '')}"
+                                + f" title={media_cache.get('media_title', '')[:64]}"
+                            )
+                        except Exception as exc:
+                            self._log(f"browser media worker push skipped: {exc}")
                     if cheap_overlay_mode or fast_file_refresh_mode:
                         self._log(
                             "media overlay refreshed"

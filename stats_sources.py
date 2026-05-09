@@ -123,6 +123,9 @@ class StatsProvider:
         player = player_name.strip().lower()
         return any(token in player for token in ("chrom", "brave", "edge", "firefox", "opera", "vivaldi"))
 
+    def is_browser_media_player(self, player_name: str) -> bool:
+        return self._is_browser_player(player_name)
+
     @staticmethod
     def _normalize_media_cover_path(raw_path: str) -> str:
         art_url = str(raw_path).strip()
