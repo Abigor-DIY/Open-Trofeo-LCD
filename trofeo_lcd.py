@@ -1829,6 +1829,55 @@ def main():
                     lcd.drain_in()
         return False
 
+    def build_loop_file_sender(filepath):
+        cache = {
+            "sig": None,
+            "jpeg_data": None,
+        }
+        path_lower = filepath.lower()
+
+        def _refresh_cache():
+            stat = os.stat(filepath)
+            sig = (stat.st_mtime_ns, stat.st_size)
+            if cache["sig"] == sig and cache["jpeg_data"] is not None:
+                return
+
+            if args.raw_jpeg_passthrough and (path_lower.endswith(".jpg") or path_lower.endswith(".jpeg")):
+                with open(filepath, "rb") as handle:
+                    jpeg_data = handle.read()
+            else:
+                with Image.open(filepath) as img:
+                    img.load()
+                    _, jpeg_data = lcd.encode_image_to_jpeg(img)
+
+            cache["jpeg_data"] = lcd.pad_jpeg_payload(jpeg_data, args.jpeg_pad_to_size)
+            cache["sig"] = sig
+
+        def _send():
+            _refresh_cache()
+            return lcd.send_jpeg(
+                cache["jpeg_data"],
+                final_packet_mode=args.final_packet_mode,
+                header_size_mode=args.header_size_mode,
+                header_size_override=args.header_size_override,
+                frame_counter_override=args.frame_counter,
+                packet_debug=args.packet_debug,
+                ack_every_packet=args.ack_every_packet,
+                inter_packet_delay=args.inter_packet_delay,
+                seq_step=args.seq_step,
+                constant_seq=args.constant_seq,
+                drain_in_after_packet=args.drain_in_after_packet,
+                send_commit=args.send_commit,
+                commit_mode=args.commit_mode,
+                limit_packets=args.limit_packets,
+                extra_read_after_packet=args.extra_read_after_packet,
+                ack_timeout_ms=args.ack_timeout_ms,
+                ack_on_seq0_only=args.ack_on_seq0_only,
+                packet_templates=image_packet_template if image_packet_template else None,
+            )
+
+        return _send
+
     try:
         if args.test:
             print("Wysyłam wzór testowy...")
@@ -1968,30 +2017,10 @@ def main():
             if args.loop:
                 print(f"Wysyłam {args.image} w pętli co {args.interval}s (Ctrl+C aby zakończyć)...")
                 frames_sent = 0
+                loop_sender = build_loop_file_sender(args.image)
                 while args.max_frames == 0 or frames_sent < args.max_frames:
                     if not send_with_retries(
-                        lambda: lcd.send_file(
-                            args.image,
-                            final_packet_mode=args.final_packet_mode,
-                            header_size_mode=args.header_size_mode,
-                            header_size_override=args.header_size_override,
-                            frame_counter_override=args.frame_counter,
-                            packet_debug=args.packet_debug,
-                            ack_every_packet=args.ack_every_packet,
-                            inter_packet_delay=args.inter_packet_delay,
-                            seq_step=args.seq_step,
-                            constant_seq=args.constant_seq,
-                            drain_in_after_packet=args.drain_in_after_packet,
-                            send_commit=args.send_commit,
-                            commit_mode=args.commit_mode,
-                            limit_packets=args.limit_packets,
-                            extra_read_after_packet=args.extra_read_after_packet,
-                            raw_jpeg_passthrough=args.raw_jpeg_passthrough,
-                            ack_timeout_ms=args.ack_timeout_ms,
-                            ack_on_seq0_only=args.ack_on_seq0_only,
-                            jpeg_pad_to_size=args.jpeg_pad_to_size,
-                            packet_templates=image_packet_template if image_packet_template else None,
-                        ),
+                        loop_sender,
                         label="loop frame",
                     ):
                         print("BŁĄD wysyłania, zatrzymuję pętlę.")
