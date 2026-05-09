@@ -398,6 +398,13 @@ class ReplayController:
             "height": image.height,
         }
 
+    def _merge_live_stats(self, media_override: dict[str, str] | None = None) -> dict[str, str]:
+        values = dict(self.stats_provider.snapshot().values)
+        if isinstance(media_override, dict):
+            for key, value in media_override.items():
+                values[str(key)] = str(value)
+        return values
+
     def render_theme_preview(self, path: str | None = None, document: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._render_theme_doc_to_file(path=path, document=document)
 
@@ -625,7 +632,7 @@ class ReplayController:
                     overlay_render = self._render_theme_overlay_to_file(
                         overlay_doc,
                         path=path,
-                        stats_override=self.stats_provider._read_media_now_playing(),
+                        stats_override=self._merge_live_stats(self.stats_provider._read_media_now_playing()),
                     )
                     animation_spec["overlay_path"] = overlay_render["image_path"]
                     live_refresh_overlay_doc = overlay_doc
@@ -747,6 +754,7 @@ class ReplayController:
         last_event_at = 0.0
         animated_theme = self._theme_has_background_animation(document)
         cheap_overlay_mode = isinstance(overlay_document, dict) and bool(overlay_path)
+        fast_file_refresh_mode = bool(refresh_target_path) and not cheap_overlay_mode
         overlay_sources: set[str] = set()
         if isinstance(overlay_document, dict):
             for item in overlay_document.get("stats", []):
@@ -761,11 +769,11 @@ class ReplayController:
                 source = str(item.get("source", "")).strip()
                 if source:
                     overlay_sources.add(source)
-        fallback_interval_s = 300.0 if cheap_overlay_mode else (3600.0 if animated_theme else max(10.0, interval_s))
+        fallback_interval_s = 300.0 if cheap_overlay_mode else (3600.0 if animated_theme else (5.0 if fast_file_refresh_mode else max(10.0, interval_s)))
         last_media_sig: tuple[str, str, str, str, str] | None = None
         last_probe = 0.0
-        probe_interval_s = 0.45 if cheap_overlay_mode else max(0.7, min(2.0, interval_s))
-        min_refresh_gap_s = 0.18 if cheap_overlay_mode else (12.0 if animated_theme else 0.25)
+        probe_interval_s = 0.45 if cheap_overlay_mode else (0.25 if fast_file_refresh_mode else max(0.7, min(2.0, interval_s)))
+        min_refresh_gap_s = 0.18 if cheap_overlay_mode else (12.0 if animated_theme else (0.12 if fast_file_refresh_mode else 0.25))
 
         media_players: dict[str, dict[str, str]] = {}
 
@@ -952,7 +960,7 @@ class ReplayController:
                 follow_meta, follow_status = _start_followers()
 
             had_follow_data = False
-            deadline = time.time() + (0.10 if cheap_overlay_mode else 0.35)
+            deadline = time.time() + (0.10 if cheap_overlay_mode else (0.12 if fast_file_refresh_mode else 0.35))
             while True:
                 timeout = max(0.0, deadline - time.time())
                 if timeout <= 0:
@@ -996,7 +1004,7 @@ class ReplayController:
                     event = True
                     last_event_at = event_ts
             if not had_follow_data:
-                self.live_theme_stop.wait(0.05 if cheap_overlay_mode else 0.2)
+                self.live_theme_stop.wait(0.05 if cheap_overlay_mode else (0.08 if fast_file_refresh_mode else 0.2))
 
             if now - last_probe >= probe_interval_s:
                 last_probe = now
@@ -1050,19 +1058,20 @@ class ReplayController:
 
             if event and now - last_refresh >= min_refresh_gap_s:
                 try:
+                    merged_stats = self._merge_live_stats(media_cache)
                     if overlay_document is not None and overlay_path:
                         self._render_theme_overlay_to_file(
                             deepcopy(overlay_document),
                             path=path,
                             out_path=overlay_path,
-                            stats_override=dict(media_cache),
+                            stats_override=merged_stats,
                         )
                     elif refresh_target_path:
                         self._render_theme_doc_to_file(
                             path=path,
                             document=deepcopy(document),
                             out_path=refresh_target_path,
-                            stats_override=dict(media_cache),
+                            stats_override=merged_stats,
                         )
                     else:
                         self.send_theme_doc(
@@ -1555,7 +1564,7 @@ class ReplayController:
             "0.01",
             "--loop",
             "--interval",
-            "0.5",
+            "0.12",
         ]
         if raw_jpeg_passthrough:
             cmd.append("--raw-jpeg-passthrough")
