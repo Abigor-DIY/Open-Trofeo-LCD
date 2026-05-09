@@ -104,6 +104,10 @@ def main() -> int:
         while True:
             if _refresh_overlay():
                 lcd.send(_active_image())
+            else:
+                # TRCC LCD needs regular refresh/keepalive even when the overlay
+                # did not change, otherwise firmware falls back to the default logo.
+                lcd.send(_active_image())
             if deadline is not None and time.monotonic() >= deadline:
                 break
             time.sleep(sleep_s)
