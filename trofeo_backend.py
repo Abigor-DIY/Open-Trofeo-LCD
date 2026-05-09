@@ -812,7 +812,7 @@ class ReplayController:
                 source = str(item.get("source", "")).strip()
                 if source:
                     overlay_sources.add(source)
-        fallback_interval_s = 300.0 if cheap_overlay_mode else (3600.0 if animated_theme else (5.0 if fast_file_refresh_mode else max(10.0, interval_s)))
+        fallback_interval_s = 300.0 if cheap_overlay_mode else (3600.0 if animated_theme else (120.0 if fast_file_refresh_mode else max(10.0, interval_s)))
         last_media_sig: tuple[str, str, str, str, str] | None = None
         last_probe = 0.0
         probe_interval_s = 0.45 if cheap_overlay_mode else (0.25 if fast_file_refresh_mode else max(0.7, min(2.0, interval_s)))
@@ -1016,7 +1016,7 @@ class ReplayController:
                 if line is None:
                     continue
                 changed = False
-                if cheap_overlay_mode:
+                if cheap_overlay_mode or fast_file_refresh_mode:
                     previous = dict(media_cache)
                     if kind == "meta":
                         parts = line.rstrip("\n").split("\t")
@@ -1043,7 +1043,9 @@ class ReplayController:
                             media_players[player_name] = current_player
                     media_cache = _select_best_player(media_players) if media_players else media_cache
                     changed = _media_sig(media_cache) != _media_sig(previous)
-                if changed or not cheap_overlay_mode:
+                    if changed:
+                        last_media_sig = _media_sig(media_cache)
+                if changed or (not cheap_overlay_mode and not fast_file_refresh_mode):
                     event = True
                     last_event_at = event_ts
             if not had_follow_data:
