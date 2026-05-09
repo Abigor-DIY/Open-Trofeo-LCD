@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from PIL import Image
 from replay_from_pcap import parse_usbpcap_bulk_payloads, extract_init_and_frames
 from stats_sources import StatsProvider
 from theme_renderer import render_theme_document
@@ -493,6 +494,8 @@ class ReplayController:
             source = str(item.get("source", "")).strip()
             item_copy = deepcopy(item)
             if source.startswith("media_"):
+                if source == "media_title":
+                    item_copy["marquee"] = False
                 media_stats.append(item_copy)
                 item_id = str(item.get("id", "")).strip()
                 if item_id:
@@ -593,6 +596,23 @@ class ReplayController:
             "height": image.height,
         }
 
+    def _compose_overlay_frame(self, base_path: str, overlay_path: str, out_path: str) -> dict[str, Any]:
+        base = Image.open(base_path).convert("RGBA")
+        overlay = Image.open(overlay_path).convert("RGBA")
+        composed = Image.alpha_composite(base, overlay)
+        target = Path(out_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=f"{target.stem}-", suffix=target.suffix or ".png", dir=str(target.parent))
+        os.close(fd)
+        tmp_target = Path(tmp_name)
+        composed.save(tmp_target)
+        os.replace(tmp_target, target)
+        return {
+            "image_path": str(target),
+            "width": composed.width,
+            "height": composed.height,
+        }
+
     def send_theme_doc(
         self,
         path: str | None = None,
@@ -606,6 +626,7 @@ class ReplayController:
         live_refresh_overlay_doc: dict[str, Any] | None = None
         live_refresh_overlay_path: str | None = None
         live_refresh_render_path: str | None = None
+        live_refresh_base_path: str | None = None
         theme_input = document
         if theme_input is None and path:
             try:
@@ -644,9 +665,29 @@ class ReplayController:
             else:
                 render_out_path = None
                 if overlay_doc is not None:
-                    render_out_path = str(self._runtime_temp_dir("trofeo-theme-live-") / "current.png")
+                    runtime_dir = self._runtime_temp_dir("trofeo-theme-live-")
+                    live_refresh_base_path = str(runtime_dir / "base.png")
+                    live_refresh_overlay_path = str(runtime_dir / "overlay.png")
+                    render_out_path = str(runtime_dir / "current.png")
                     live_refresh_render_path = render_out_path
-                rendered = self._render_theme_doc_to_file(path=path, document=document, out_path=render_out_path)
+                    self._render_theme_doc_to_file(
+                        path=path,
+                        document=theme_for_animation,
+                        out_path=live_refresh_base_path,
+                    )
+                    self._render_theme_overlay_to_file(
+                        overlay_doc,
+                        path=path,
+                        out_path=live_refresh_overlay_path,
+                        stats_override=self._merge_live_stats(self.stats_provider._read_media_now_playing()),
+                    )
+                    rendered = self._compose_overlay_frame(
+                        live_refresh_base_path,
+                        live_refresh_overlay_path,
+                        render_out_path,
+                    )
+                else:
+                    rendered = self._render_theme_doc_to_file(path=path, document=document, out_path=render_out_path)
                 send_result = self.send_image(
                     image_path=rendered["image_path"],
                     raw_jpeg_passthrough=False,
@@ -675,6 +716,7 @@ class ReplayController:
                     overlay_document=live_refresh_overlay_doc,
                     overlay_path=live_refresh_overlay_path,
                     refresh_target_path=live_refresh_render_path,
+                    base_render_path=live_refresh_base_path,
                 )
             else:
                 self._stop_live_theme_refresh()
@@ -744,6 +786,7 @@ class ReplayController:
         overlay_document: dict[str, Any] | None = None,
         overlay_path: str | None = None,
         refresh_target_path: str | None = None,
+        base_render_path: str | None = None,
     ) -> None:
         self._log("live theme refresh worker start")
         follow_meta: subprocess.Popen | None = None
@@ -1059,7 +1102,19 @@ class ReplayController:
             if event and now - last_refresh >= min_refresh_gap_s:
                 try:
                     merged_stats = self._merge_live_stats(media_cache)
-                    if overlay_document is not None and overlay_path:
+                    if overlay_document is not None and overlay_path and refresh_target_path and base_render_path:
+                        self._render_theme_overlay_to_file(
+                            deepcopy(overlay_document),
+                            path=path,
+                            out_path=overlay_path,
+                            stats_override=merged_stats,
+                        )
+                        self._compose_overlay_frame(
+                            base_render_path,
+                            overlay_path,
+                            refresh_target_path,
+                        )
+                    elif overlay_document is not None and overlay_path:
                         self._render_theme_overlay_to_file(
                             deepcopy(overlay_document),
                             path=path,
@@ -1083,19 +1138,19 @@ class ReplayController:
                             keep_live_refresh_running=True,
                         )
                     last_refresh = time.time()
-                    if cheap_overlay_mode:
-                            self._log(
-                                "media overlay refreshed"
-                                + (
-                                    f" delay_ms={int(max(0.0, last_refresh - last_event_at) * 1000)}"
-                                    if last_event_at > 0
-                                    else ""
-                                )
-                                + f" state={media_cache.get('media_state', '')}"
-                                + f" title={media_cache.get('media_title', '')[:64]}"
-                                + f" cover={'yes' if media_cache.get('media_cover_path') else 'no'}"
-                                + f" video={'yes' if media_cache.get('media_video_frame_path') else 'no'}"
+                    if cheap_overlay_mode or fast_file_refresh_mode:
+                        self._log(
+                            "media overlay refreshed"
+                            + (
+                                f" delay_ms={int(max(0.0, last_refresh - last_event_at) * 1000)}"
+                                if last_event_at > 0
+                                else ""
                             )
+                            + f" state={media_cache.get('media_state', '')}"
+                            + f" title={media_cache.get('media_title', '')[:64]}"
+                            + f" cover={'yes' if media_cache.get('media_cover_path') else 'no'}"
+                            + f" video={'yes' if media_cache.get('media_video_frame_path') else 'no'}"
+                        )
                 except Exception as exc:
                     with self.lock:
                         self.last_error = f"live-theme refresh failed: {exc}"
@@ -1115,6 +1170,7 @@ class ReplayController:
         overlay_document: dict[str, Any] | None = None,
         overlay_path: str | None = None,
         refresh_target_path: str | None = None,
+        base_render_path: str | None = None,
     ) -> None:
         if not isinstance(document, dict):
             return
@@ -1125,7 +1181,15 @@ class ReplayController:
             frozen_overlay_doc = deepcopy(overlay_document) if isinstance(overlay_document, dict) else None
             self.live_theme_thread = threading.Thread(
                 target=self._live_theme_worker,
-                args=(path, frozen_doc, max(0.3, float(interval_s)), frozen_overlay_doc, overlay_path, refresh_target_path),
+                args=(
+                    path,
+                    frozen_doc,
+                    max(0.3, float(interval_s)),
+                    frozen_overlay_doc,
+                    overlay_path,
+                    refresh_target_path,
+                    base_render_path,
+                ),
                 daemon=True,
             )
             self.live_theme_started_at = time.time()

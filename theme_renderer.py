@@ -187,6 +187,33 @@ def _draw_clipped_text(
     canvas.alpha_composite(clipped, (clip_box[0], clip_box[1]))
 
 
+def _ellipsize_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    max_width: int,
+) -> str:
+    if max_width <= 0:
+        return ""
+    if draw.textbbox((0, 0), text, font=font)[2] <= max_width:
+        return text
+    ellipsis = "..."
+    if draw.textbbox((0, 0), ellipsis, font=font)[2] > max_width:
+        return ""
+    lo = 0
+    hi = len(text)
+    best = ellipsis
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        candidate = text[:mid].rstrip() + ellipsis
+        if draw.textbbox((0, 0), candidate, font=font)[2] <= max_width:
+            best = candidate
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
 def _motion_progress(track: dict[str, Any], frame_index: int) -> float:
     start = int(track.get("frame_start", 0))
     end = int(track.get("frame_end", start))
@@ -459,6 +486,8 @@ def render_texts(canvas: Image.Image, theme: ThemeDocument) -> None:
         box_height = max(1, int(item.get("box_height", 48)))
         text = item["text"]
         marquee = bool(item.get("marquee", False))
+        if not marquee and item["align"] == "left":
+            text = _ellipsize_text(draw, text, font, box_width)
         if item["align"] == "center":
             bbox = draw.textbbox((0, 0), text, font=font)
             width = bbox[2] - bbox[0]
@@ -518,6 +547,8 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
         value = snapshot.get(item["source"], "N/A")
         value_text = item["format"].format(value=value)
         marquee = bool(item.get("marquee", False))
+        if not marquee and not label and item["align"] == "left":
+            value_text = _ellipsize_text(draw, value_text, font, box_width)
 
         if label:
             label_text = f"{label}: "
