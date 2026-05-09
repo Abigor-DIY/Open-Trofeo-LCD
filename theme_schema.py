@@ -24,6 +24,7 @@ KNOWN_STAT_SOURCES = [
     "mem_used_mb", "mem_total_mb", "mem_percent",
     "disk_used_gb", "disk_total_gb", "disk_percent",
     "net_dl_kbps", "net_ul_kbps",
+    "volume_percent", "volume_state",
     "gpu_name", "gpu_temp", "gpu_load", "vram_used_mb", "vram_total_mb", "vram_percent",
     "uptime_human",
     "media_title", "media_artist", "media_app", "media_state",

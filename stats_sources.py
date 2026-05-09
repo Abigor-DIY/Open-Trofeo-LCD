@@ -59,6 +59,8 @@ class StatsProvider:
         self._cpu_snapshot = None
         self._cpu_core_snapshot = None
         self._net_io_snapshot = (time.time(), 0, 0)
+        self._last_volume_snapshot = {"volume_percent": "N/A", "volume_state": "N/A"}
+        self._last_volume_at = 0.0
         self._gpu_type = self._detect_gpu_type()
         self._last_media_snapshot = self._default_media_snapshot()
         self._last_media_at = 0.0
@@ -620,6 +622,69 @@ class StatsProvider:
         except Exception:
             return 0.0, 0.0
 
+    def read_volume_stats(self) -> dict[str, str]:
+        now = time.time()
+        if (now - self._last_volume_at) < 0.4:
+            return dict(self._last_volume_snapshot)
+
+        out = {"volume_percent": "N/A", "volume_state": "N/A"}
+        try:
+            wpctl = shutil.which("wpctl")
+            if wpctl:
+                payload = subprocess.check_output(
+                    [wpctl, "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                    encoding="utf-8",
+                    stderr=subprocess.DEVNULL,
+                    timeout=0.35,
+                ).strip()
+                match = re.search(r"Volume:\s*([0-9]*\.?[0-9]+)", payload)
+                if match:
+                    out["volume_percent"] = f"{int(round(float(match.group(1)) * 100.0))}%"
+                out["volume_state"] = "muted" if "MUTED" in payload.upper() else "active"
+            else:
+                pactl = shutil.which("pactl")
+                if pactl:
+                    vol_payload = subprocess.check_output(
+                        [pactl, "get-sink-volume", "@DEFAULT_SINK@"],
+                        encoding="utf-8",
+                        stderr=subprocess.DEVNULL,
+                        timeout=0.45,
+                    ).strip()
+                    vol_match = re.search(r"(\d+)%", vol_payload)
+                    if vol_match:
+                        out["volume_percent"] = f"{int(vol_match.group(1))}%"
+                    mute_payload = subprocess.check_output(
+                        [pactl, "get-sink-mute", "@DEFAULT_SINK@"],
+                        encoding="utf-8",
+                        stderr=subprocess.DEVNULL,
+                        timeout=0.35,
+                    ).strip()
+                    out["volume_state"] = "muted" if "yes" in mute_payload.lower() else "active"
+                else:
+                    pamixer = shutil.which("pamixer")
+                    if pamixer:
+                        volume_value = subprocess.check_output(
+                            [pamixer, "--get-volume"],
+                            encoding="utf-8",
+                            stderr=subprocess.DEVNULL,
+                            timeout=0.35,
+                        ).strip()
+                        if volume_value.isdigit():
+                            out["volume_percent"] = f"{int(volume_value)}%"
+                        mute_value = subprocess.check_output(
+                            [pamixer, "--get-mute"],
+                            encoding="utf-8",
+                            stderr=subprocess.DEVNULL,
+                            timeout=0.35,
+                        ).strip()
+                        out["volume_state"] = "muted" if mute_value.lower() == "true" else "active"
+        except Exception:
+            pass
+
+        self._last_volume_snapshot = dict(out)
+        self._last_volume_at = now
+        return out
+
     def read_gpu_stats(self) -> dict[str, str]:
         stats = {
             "gpu_name": "N/A", "gpu_temp": "N/A", "gpu_load": "N/A",
@@ -901,6 +966,7 @@ class StatsProvider:
         uptime = self._read_uptime()
         disk = self.read_disk_usage()
         dl_speed, ul_speed = self.read_net_speeds()
+        volume = self.read_volume_stats()
         gpu = self.read_gpu_stats()
         media = self._read_media_now_playing()
 
@@ -924,6 +990,7 @@ class StatsProvider:
             "disk_percent": "N/A" if disk is None else f"{disk[2]}%",
             "net_dl_kbps": f"{dl_speed:.1f} KB/s",
             "net_ul_kbps": f"{ul_speed:.1f} KB/s",
+            **volume,
             "uptime_human": "N/A" if uptime is None else f"{uptime[0]}h {uptime[1]}m",
             **gpu,
             **media,

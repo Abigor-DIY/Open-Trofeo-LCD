@@ -1717,6 +1717,7 @@ class TrofeoGui(QMainWindow):
             "🌐 Sieć": ["net_dl_kbps", "net_ul_kbps"],
             "💽 Dysk": ["disk_percent", "disk_used_gb", "disk_total_gb"],
             "🧠 RAM": ["mem_percent", "mem_used_mb", "mem_total_mb"],
+            "🔊 Audio": ["volume_percent", "volume_state"],
             "🎵 Media": ["media_title", "media_artist", "media_app", "media_state"],
         }
         
@@ -1757,6 +1758,8 @@ class TrofeoGui(QMainWindow):
             "disk_total_gb": "Disk Total (GB)",
             "net_dl_kbps": "Network Download (kbps)",
             "net_ul_kbps": "Network Upload (kbps)",
+            "volume_percent": "Audio Volume (%)",
+            "volume_state": "Audio Volume State",
             "media_title": "Now Playing: Title",
             "media_artist": "Now Playing: Artist",
             "media_app": "Now Playing: App",
@@ -3757,6 +3760,9 @@ class TrofeoGui(QMainWindow):
         self.quick_add_now_playing_mini_btn = QPushButton("Now Playing Mini")
         self.quick_add_now_playing_mini_btn.setObjectName("quickAddButton")
         self.quick_add_now_playing_mini_btn.setMinimumHeight(30)
+        self.quick_add_volume_btn = QPushButton("Volume")
+        self.quick_add_volume_btn.setObjectName("quickAddButton")
+        self.quick_add_volume_btn.setMinimumHeight(30)
         quick_buttons = [
             self.quick_add_text_btn,
             self.quick_add_stat_btn,
@@ -3765,6 +3771,7 @@ class TrofeoGui(QMainWindow):
             self.quick_add_now_playing_btn,
             self.quick_add_now_playing_hero_btn,
             self.quick_add_now_playing_mini_btn,
+            self.quick_add_volume_btn,
         ]
         for i, btn in enumerate(quick_buttons):
             quick_grid.addWidget(btn, i // 3, i % 3)
@@ -3778,6 +3785,7 @@ class TrofeoGui(QMainWindow):
         self.quick_add_now_playing_btn.clicked.connect(self.add_now_playing_widget)
         self.quick_add_now_playing_hero_btn.clicked.connect(self.add_now_playing_widget_hero)
         self.quick_add_now_playing_mini_btn.clicked.connect(self.add_now_playing_widget_mini)
+        self.quick_add_volume_btn.clicked.connect(self.add_volume_widget)
         self.designer_quick_add_menu = QMenu(self.designer_quick_add_toggle_btn)
         for label, handler in (
             ("Tekst", lambda: self.quick_add_designer_element("texts")),
@@ -3787,6 +3795,7 @@ class TrofeoGui(QMainWindow):
             ("Now Playing", self.add_now_playing_widget),
             ("Now Playing Hero", self.add_now_playing_widget_hero),
             ("Now Playing Mini", self.add_now_playing_widget_mini),
+            ("Volume", self.add_volume_widget),
         ):
             action = self.designer_quick_add_menu.addAction(label)
             action.triggered.connect(handler)
@@ -4753,6 +4762,7 @@ class TrofeoGui(QMainWindow):
                     self.quick_add_now_playing_btn,
                     self.quick_add_now_playing_hero_btn,
                     self.quick_add_now_playing_mini_btn,
+                    self.quick_add_volume_btn,
                 ],
                 extra_px=int(24 * scale),
                 min_px=int(92 * scale),
@@ -8269,6 +8279,82 @@ class TrofeoGui(QMainWindow):
         self.write_designer_to_json()
         self.refresh_designer_element_list()
         self.preview_info_label.setText("Dodano widget Now Playing Mini.")
+        self.schedule_preview_theme_doc()
+
+    def add_volume_widget(self) -> None:
+        if self.theme_doc_model is None:
+            self.reload_designer_from_json()
+        if self.theme_doc_model is None:
+            return
+        self.push_designer_history()
+        background = self.theme_doc_model.setdefault("background", {})
+        panels = background.setdefault("panels", [])
+        panels.append(
+            {
+                "id": self._next_item_id("panels", "panel_volume"),
+                "rect": [1492, 132, 300, 82],
+                "radius": 16,
+                "fill": [8, 14, 24, 200],
+                "opacity": 1.0,
+                "z_index": 96,
+                "visible": True,
+                "locked": False,
+            }
+        )
+        stats = self.theme_doc_model.setdefault("stats", [])
+        stats.append(
+            {
+                "id": self._next_item_id("stats", "stat_volume_percent"),
+                "label": "VOL",
+                "source": "volume_percent",
+                "format": "{value}",
+                "x": 1516,
+                "y": 150,
+                "box_width": 160,
+                "box_height": 28,
+                "font_family": "DejaVu Sans",
+                "font_size": 24,
+                "font_bold": True,
+                "font_italic": False,
+                "font_underline": False,
+                "marquee": False,
+                "marquee_speed": 55.0,
+                "label_color": [160, 196, 232],
+                "value_color": [235, 246, 255],
+                "align": "left",
+                "z_index": 211,
+                "visible": True,
+                "locked": False,
+            }
+        )
+        stats.append(
+            {
+                "id": self._next_item_id("stats", "stat_volume_state"),
+                "label": "",
+                "source": "volume_state",
+                "format": "{value}",
+                "x": 1516,
+                "y": 181,
+                "box_width": 220,
+                "box_height": 22,
+                "font_family": "DejaVu Sans",
+                "font_size": 16,
+                "font_bold": False,
+                "font_italic": False,
+                "font_underline": False,
+                "marquee": False,
+                "marquee_speed": 55.0,
+                "label_color": [160, 196, 232],
+                "value_color": [210, 224, 240],
+                "align": "left",
+                "z_index": 210,
+                "visible": True,
+                "locked": False,
+            }
+        )
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        self.preview_info_label.setText("Dodano widget Volume: poziom głośności i stan wyciszenia.")
         self.schedule_preview_theme_doc()
 
     def quick_add_designer_element(self, collection: str) -> None:
