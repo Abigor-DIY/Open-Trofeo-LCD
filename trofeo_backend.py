@@ -352,7 +352,13 @@ class ReplayController:
             "bytes": saved.stat().st_size,
         }
 
-    def _render_theme_doc_to_file(self, path: str | None = None, document: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _render_theme_doc_to_file(
+        self,
+        path: str | None = None,
+        document: dict[str, Any] | None = None,
+        out_path: str | None = None,
+        stats_override: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         if document is not None:
             theme = ThemeDocument(normalize_theme_document(document))
             base_dir = self.cfg.workdir if path is None else to_abs(self.cfg.workdir, path).parent
@@ -365,13 +371,28 @@ class ReplayController:
             theme = load_theme_document(source)
             base_dir = source.parent
 
-        image = render_theme_document(theme, base_dir=base_dir, stats_provider=self.stats_provider)
-        fd, tmp_name = tempfile.mkstemp(prefix="trofeo-theme-", suffix=".png")
-        os.close(fd)
-        out_path = Path(tmp_name)
-        image.save(out_path)
+        image = render_theme_document(
+            theme,
+            base_dir=base_dir,
+            stats_provider=self.stats_provider,
+            stats_override=stats_override,
+        )
+        if out_path:
+            target = Path(out_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = tempfile.mkstemp(prefix=f"{target.stem}-", suffix=target.suffix or ".png", dir=str(target.parent))
+            os.close(fd)
+            tmp_target = Path(tmp_name)
+            image.save(tmp_target)
+            os.replace(tmp_target, target)
+            out_file = target
+        else:
+            fd, tmp_name = tempfile.mkstemp(prefix="trofeo-theme-", suffix=".png")
+            os.close(fd)
+            out_file = Path(tmp_name)
+            image.save(out_file)
         return {
-            "image_path": str(out_path),
+            "image_path": str(out_file),
             "theme_name": theme.name,
             "width": image.width,
             "height": image.height,
@@ -577,6 +598,7 @@ class ReplayController:
         send_result: dict[str, Any]
         live_refresh_overlay_doc: dict[str, Any] | None = None
         live_refresh_overlay_path: str | None = None
+        live_refresh_render_path: str | None = None
         theme_input = document
         if theme_input is None and path:
             try:
@@ -613,7 +635,11 @@ class ReplayController:
                 if overlay_doc is not None:
                     send_result["overlay_render"] = overlay_render
             else:
-                rendered = self._render_theme_doc_to_file(path=path, document=document)
+                render_out_path = None
+                if overlay_doc is not None:
+                    render_out_path = str(self._runtime_temp_dir("trofeo-theme-live-") / "current.png")
+                    live_refresh_render_path = render_out_path
+                rendered = self._render_theme_doc_to_file(path=path, document=document, out_path=render_out_path)
                 send_result = self.send_image(
                     image_path=rendered["image_path"],
                     raw_jpeg_passthrough=False,
@@ -641,6 +667,7 @@ class ReplayController:
                     interval_s=1.0,
                     overlay_document=live_refresh_overlay_doc,
                     overlay_path=live_refresh_overlay_path,
+                    refresh_target_path=live_refresh_render_path,
                 )
             else:
                 self._stop_live_theme_refresh()
@@ -709,6 +736,7 @@ class ReplayController:
         interval_s: float,
         overlay_document: dict[str, Any] | None = None,
         overlay_path: str | None = None,
+        refresh_target_path: str | None = None,
     ) -> None:
         self._log("live theme refresh worker start")
         follow_meta: subprocess.Popen | None = None
@@ -1029,6 +1057,13 @@ class ReplayController:
                             out_path=overlay_path,
                             stats_override=dict(media_cache),
                         )
+                    elif refresh_target_path:
+                        self._render_theme_doc_to_file(
+                            path=path,
+                            document=deepcopy(document),
+                            out_path=refresh_target_path,
+                            stats_override=dict(media_cache),
+                        )
                     else:
                         self.send_theme_doc(
                             path=path,
@@ -1070,6 +1105,7 @@ class ReplayController:
         interval_s: float = 1.0,
         overlay_document: dict[str, Any] | None = None,
         overlay_path: str | None = None,
+        refresh_target_path: str | None = None,
     ) -> None:
         if not isinstance(document, dict):
             return
@@ -1080,7 +1116,7 @@ class ReplayController:
             frozen_overlay_doc = deepcopy(overlay_document) if isinstance(overlay_document, dict) else None
             self.live_theme_thread = threading.Thread(
                 target=self._live_theme_worker,
-                args=(path, frozen_doc, max(0.3, float(interval_s)), frozen_overlay_doc, overlay_path),
+                args=(path, frozen_doc, max(0.3, float(interval_s)), frozen_overlay_doc, overlay_path, refresh_target_path),
                 daemon=True,
             )
             self.live_theme_started_at = time.time()
