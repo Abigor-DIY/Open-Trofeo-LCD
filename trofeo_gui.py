@@ -78,6 +78,7 @@ except ImportError:
     print("albo: ~/trofeo-venv/bin/pip install PySide6")
     raise SystemExit(1)
 
+from gauge_presets import GAUGE_PRESETS, GAUGE_PRESET_LABELS, GAUGE_PRESET_ORDER, THEME_STYLE_PRESET
 from theme_schema import KNOWN_STAT_DISPLAY, KNOWN_STAT_SOURCES, ThemeDocument, normalize_theme_document, save_theme_document
 from stats_sources import StatsProvider
 
@@ -3142,7 +3143,43 @@ class TrofeoGui(QMainWindow):
         self.designer_align_combo = QComboBox(); self.designer_align_combo.addItems(["left", "center", "right"])
         self.designer_font_family_combo = QComboBox(); self.designer_font_family_combo.addItems(available_font_families())
         self.designer_font_size_spin = QSpinBox(); self.designer_font_size_spin.setRange(6, 200)
-        self.designer_stat_stroke_width_spin = QSpinBox(); self.designer_stat_stroke_width_spin.setRange(1, 64); self.designer_stat_stroke_width_spin.setValue(12)
+        self.designer_stat_stroke_width_spin = QSpinBox()
+        self.designer_stat_stroke_width_spin.setRange(0, 64)
+        self.designer_stat_stroke_width_spin.setSpecialValueText("auto")
+        self.designer_stat_stroke_width_spin.setValue(12)
+        self.designer_stat_gauge_preset_combo = QComboBox()
+        self._populate_designer_stat_gauge_preset_combo()
+        self.designer_gauge_low_edit = QLineEdit()
+        self.designer_gauge_mid_edit = QLineEdit()
+        self.designer_gauge_high_edit = QLineEdit()
+        self.designer_gauge_smooth_spin = QDoubleSpinBox()
+        self.designer_gauge_smooth_spin.setRange(0.05, 1.0)
+        self.designer_gauge_smooth_spin.setSingleStep(0.05)
+        self.designer_gauge_smooth_spin.setDecimals(2)
+        self.designer_gauge_smooth_spin.setValue(0.32)
+        self.designer_gauge_match_value_chk = QCheckBox("Kolor wartości jak łuk")
+        self.designer_gauge_match_value_chk.setChecked(True)
+        self.designer_gauge_inner_alpha_spin = QDoubleSpinBox()
+        self.designer_gauge_inner_alpha_spin.setRange(0.0, 1.0)
+        self.designer_gauge_inner_alpha_spin.setSingleStep(0.05)
+        self.designer_gauge_inner_alpha_spin.setDecimals(2)
+        self.designer_gauge_inner_alpha_spin.setValue(1.0)
+        self.designer_gauge_inner_alpha_spin.setToolTip(
+            "Przezroczystość wypełnienia środka gauge (nie wpływa na łuk ani tekst)."
+        )
+        self.designer_gauge_ring_spin = QSpinBox()
+        self.designer_gauge_ring_spin.setRange(40, 900)
+        self.designer_gauge_ring_spin.setSuffix(" px")
+        self.designer_gauge_ring_spin.setToolTip(
+            "Średnica pierścienia (okręgu) gauge. Pole ramki (Szer./Wys. w Pozycja) powinno być większe "
+            "— przy układzie „Pod gauge” lub „Z boku” zwiększ wysokość lub szerokość."
+        )
+        self.designer_gauge_value_layout_combo = QComboBox()
+        self.designer_gauge_value_layout_combo.addItem("W środku pierścienia", "center")
+        self.designer_gauge_value_layout_combo.addItem("Pod spodem (wartość pod łukiem)", "below")
+        self.designer_gauge_value_layout_combo.addItem("Z boku (wartość po prawej)", "beside")
+        self.designer_theme_gauge_style_combo = QComboBox()
+        self._populate_designer_theme_gauge_style_combo()
         self.designer_font_bold_chk = QCheckBox("B")
         self.designer_font_italic_chk = QCheckBox("I")
         self.designer_font_underline_chk = QCheckBox("U")
@@ -3291,6 +3328,14 @@ class TrofeoGui(QMainWindow):
         toolbar_layout.addWidget(self.designer_apply_btn)
         studio_layout.addWidget(toolbar_frame)
 
+        theme_gauge_bar = QWidget()
+        theme_gauge_layout = QHBoxLayout(theme_gauge_bar)
+        theme_gauge_layout.setContentsMargins(0, 2, 0, 4)
+        theme_gauge_layout.setSpacing(8)
+        theme_gauge_layout.addWidget(QLabel("Domyślny preset gauge (meta.gauge_style):"))
+        theme_gauge_layout.addWidget(self.designer_theme_gauge_style_combo, 1)
+        studio_layout.addWidget(theme_gauge_bar)
+
         # PIONOWY SPLITTER DLA LCD I INSPECTORA
         self.designer_top_splitter = QSplitter(Qt.Vertical)
         self.designer_top_splitter.setChildrenCollapsible(False)
@@ -3331,8 +3376,12 @@ class TrofeoGui(QMainWindow):
         # INSPECTOR (Właściwości - Powiększony do góry)
         self.designer_inspector_container = QWidget()
         self._setup_inspector_tabs(QVBoxLayout(self.designer_inspector_container))
+        self.designer_stat_display_combo.currentTextChanged.connect(
+            lambda _t: self._update_gauge_stat_inspector_visibility()
+        )
+        self.designer_theme_gauge_style_combo.currentIndexChanged.connect(self._on_designer_theme_gauge_style_changed)
         self.designer_top_splitter.addWidget(self.designer_inspector_container)
-        
+
         # Ograniczamy wysokość Inspectora, dajemy więcej miejsca dla LCD
         self.designer_top_splitter.setStretchFactor(0, 5) # Canvas
         self.designer_top_splitter.setStretchFactor(1, 1) # Inspector
@@ -3414,6 +3463,15 @@ class TrofeoGui(QMainWindow):
             (self.designer_color_edit, "textChanged"), (self.designer_label_color_edit, "textChanged"),
             (self.designer_value_color_edit, "textChanged"), (self.designer_track_color_edit, "textChanged"),
             (self.designer_fill_color_edit, "textChanged"), (self.designer_stat_stroke_width_spin, "valueChanged"),
+            (self.designer_stat_gauge_preset_combo, "currentIndexChanged"),
+            (self.designer_gauge_low_edit, "textChanged"),
+            (self.designer_gauge_mid_edit, "textChanged"),
+            (self.designer_gauge_high_edit, "textChanged"),
+            (self.designer_gauge_smooth_spin, "valueChanged"),
+            (self.designer_gauge_match_value_chk, "toggled"),
+            (self.designer_gauge_ring_spin, "valueChanged"),
+            (self.designer_gauge_value_layout_combo, "currentIndexChanged"),
+            (self.designer_gauge_inner_alpha_spin, "valueChanged"),
             (self.bg_kind_combo, "currentTextChanged"), (self.bg_path_edit, "textChanged")
         ]:
             try: getattr(widget, signal).connect(self.on_designer_field_changed)
@@ -3723,27 +3781,36 @@ class TrofeoGui(QMainWindow):
     def _setup_designer_layers_panel(self, parent_layout: QVBoxLayout) -> None:
         """Konfiguruje lewy panel z listą warstw."""
         box = QGroupBox("Warstwy i komponenty")
+        box.setFlat(True)
+        box.setStyleSheet(
+            "QGroupBox { margin-top: 6px; padding-top: 2px; padding-bottom: 2px; font-size: 11px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 6px; padding: 0 3px; }"
+        )
         self.designer_elements_box = box
         layout = QVBoxLayout(box)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(4)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
 
         search_row = QHBoxLayout()
-        search_row.setSpacing(6)
+        search_row.setSpacing(4)
         self.designer_component_search = QLineEdit()
         self.designer_component_search.setPlaceholderText("Szukaj warstwy lub tekstu...")
         self.designer_component_search.setClearButtonEnabled(True)
+        self.designer_component_search.setMaximumHeight(26)
         search_row.addWidget(self.designer_component_search, 1)
-        self.designer_kind_combo.setMaximumWidth(180)
+        self.designer_kind_combo.setMaximumWidth(158)
+        self.designer_kind_combo.setMaximumHeight(26)
         search_row.addWidget(self.designer_kind_combo, 0)
         self.designer_quick_add_toggle_btn = QPushButton("+ komponent")
-        self.designer_quick_add_toggle_btn.setMinimumHeight(28)
-        self.designer_quick_add_toggle_btn.setMaximumWidth(120)
+        self.designer_quick_add_toggle_btn.setMinimumHeight(24)
+        self.designer_quick_add_toggle_btn.setMaximumHeight(26)
+        self.designer_quick_add_toggle_btn.setMaximumWidth(108)
         search_row.addWidget(self.designer_quick_add_toggle_btn)
         layout.addLayout(search_row)
         self.designer_selection_label.setObjectName("selectionSummaryLabel")
         self.designer_selection_label.setWordWrap(True)
-        self.designer_selection_label.setMaximumHeight(28)
+        self.designer_selection_label.setMaximumHeight(22)
+        self.designer_selection_label.setStyleSheet("font-size: 11px; margin: 0; padding: 0;")
         layout.addWidget(self.designer_selection_label)
         self.designer_kind_combo.currentIndexChanged.connect(self.refresh_designer_element_list)
         
@@ -3751,32 +3818,32 @@ class TrofeoGui(QMainWindow):
         self.designer_quick_add_container = QWidget()
         quick_container_layout = QVBoxLayout(self.designer_quick_add_container)
         quick_container_layout.setContentsMargins(0, 0, 0, 0)
-        quick_container_layout.setSpacing(4)
+        quick_container_layout.setSpacing(2)
         quick_grid = QGridLayout()
         self.quick_add_text_btn = QPushButton("Tekst")
         self.quick_add_stat_btn = QPushButton("Statystyka")
         self.quick_add_image_btn = QPushButton("Obraz")
         self.quick_add_panel_btn = QPushButton("Panel")
-        quick_grid.setHorizontalSpacing(4)
-        quick_grid.setVerticalSpacing(4)
+        quick_grid.setHorizontalSpacing(3)
+        quick_grid.setVerticalSpacing(3)
         for btn in (self.quick_add_text_btn, self.quick_add_stat_btn, self.quick_add_image_btn, self.quick_add_panel_btn):
             btn.setObjectName("quickAddButton")
-            btn.setMinimumHeight(30)
+            btn.setMinimumHeight(24)
         self.quick_add_now_playing_btn = QPushButton("Now Playing")
         self.quick_add_now_playing_btn.setObjectName("quickAddButton")
-        self.quick_add_now_playing_btn.setMinimumHeight(30)
+        self.quick_add_now_playing_btn.setMinimumHeight(24)
         self.quick_add_now_playing_hero_btn = QPushButton("Now Playing Hero")
         self.quick_add_now_playing_hero_btn.setObjectName("quickAddButton")
-        self.quick_add_now_playing_hero_btn.setMinimumHeight(30)
+        self.quick_add_now_playing_hero_btn.setMinimumHeight(24)
         self.quick_add_now_playing_mini_btn = QPushButton("Now Playing Mini")
         self.quick_add_now_playing_mini_btn.setObjectName("quickAddButton")
-        self.quick_add_now_playing_mini_btn.setMinimumHeight(30)
+        self.quick_add_now_playing_mini_btn.setMinimumHeight(24)
         self.quick_add_analog_clock_btn = QPushButton("Analog Clock")
         self.quick_add_analog_clock_btn.setObjectName("quickAddButton")
-        self.quick_add_analog_clock_btn.setMinimumHeight(30)
+        self.quick_add_analog_clock_btn.setMinimumHeight(24)
         self.quick_add_volume_btn = QPushButton("Volume")
         self.quick_add_volume_btn.setObjectName("quickAddButton")
-        self.quick_add_volume_btn.setMinimumHeight(30)
+        self.quick_add_volume_btn.setMinimumHeight(24)
         quick_buttons = [
             self.quick_add_text_btn,
             self.quick_add_stat_btn,
@@ -3820,7 +3887,7 @@ class TrofeoGui(QMainWindow):
             action.triggered.connect(handler)
         self.designer_quick_add_toggle_btn.setMenu(self.designer_quick_add_menu)
         
-        self.designer_element_list.setMinimumHeight(170)
+        self.designer_element_list.setMinimumHeight(140)
         self.designer_element_list.setSpacing(3)
         self.designer_element_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.designer_element_list.setDragDropMode(QAbstractItemView.InternalMove)
@@ -3836,7 +3903,7 @@ class TrofeoGui(QMainWindow):
         move_box = QGroupBox("Przesuwanie zaznaczenia")
         move_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         move_layout = QVBoxLayout(move_box)
-        move_layout.setContentsMargins(6, 6, 6, 6)
+        move_layout.setContentsMargins(4, 4, 4, 4)
         move_layout.setSpacing(2)
         move_step_row = QHBoxLayout()
         move_step_row.setSpacing(5)
@@ -3851,20 +3918,34 @@ class TrofeoGui(QMainWindow):
         dpad = QGridLayout()
         dpad.setHorizontalSpacing(5)
         dpad.setVerticalSpacing(4)
-        self.designer_nudge_up_btn = QPushButton("↑")
-        self.designer_nudge_left_btn = QPushButton("←")
-        self.designer_nudge_right_btn = QPushButton("→")
-        self.designer_nudge_down_btn = QPushButton("↓")
+        _nudge_icon_sz = QSize(22, 22)
+        _sty = self.style()
+        self.designer_nudge_up_btn = QPushButton()
+        self.designer_nudge_up_btn.setIcon(_sty.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.designer_nudge_up_btn.setIconSize(_nudge_icon_sz)
+        self.designer_nudge_up_btn.setToolTip("Przesuń w górę")
+        self.designer_nudge_left_btn = QPushButton()
+        self.designer_nudge_left_btn.setIcon(_sty.standardIcon(QStyle.StandardPixmap.SP_ArrowLeft))
+        self.designer_nudge_left_btn.setIconSize(_nudge_icon_sz)
+        self.designer_nudge_left_btn.setToolTip("Przesuń w lewo")
+        self.designer_nudge_right_btn = QPushButton()
+        self.designer_nudge_right_btn.setIcon(_sty.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
+        self.designer_nudge_right_btn.setIconSize(_nudge_icon_sz)
+        self.designer_nudge_right_btn.setToolTip("Przesuń w prawo")
+        self.designer_nudge_down_btn = QPushButton()
+        self.designer_nudge_down_btn.setIcon(_sty.standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
+        self.designer_nudge_down_btn.setIconSize(_nudge_icon_sz)
+        self.designer_nudge_down_btn.setToolTip("Przesuń w dół")
         for btn in (
             self.designer_nudge_up_btn,
             self.designer_nudge_left_btn,
             self.designer_nudge_right_btn,
             self.designer_nudge_down_btn,
         ):
-            btn.setMinimumHeight(18)
-            btn.setMaximumHeight(30)
-            btn.setMinimumWidth(28)
-            btn.setMaximumWidth(88)
+            btn.setMinimumHeight(32)
+            btn.setMaximumHeight(36)
+            btn.setMinimumWidth(36)
+            btn.setMaximumWidth(44)
         dpad.addWidget(self.designer_nudge_up_btn, 0, 1)
         dpad.addWidget(self.designer_nudge_left_btn, 1, 0)
         dpad.addWidget(self.designer_nudge_right_btn, 1, 2)
@@ -3889,7 +3970,7 @@ class TrofeoGui(QMainWindow):
         self.designer_remove_btn.clicked.connect(self.remove_designer_element)
         move_actions_row.addWidget(self.designer_remove_btn)
         move_layout.addLayout(move_actions_row)
-        move_box.setMaximumHeight(168)
+        move_box.setMaximumHeight(178)
         layout.addWidget(move_box)
         parent_layout.addWidget(box, 2)
 
@@ -3947,6 +4028,7 @@ class TrofeoGui(QMainWindow):
         self.inspector_general, self.inspector_general_layout = make_tab()
         self.inspector_content, self.inspector_content_layout = make_tab()
         self.inspector_appearance, self.inspector_appearance_layout = make_tab()
+        self.inspector_gauge, self.inspector_gauge_layout = make_tab()
         self.inspector_geometry, self.inspector_geometry_layout = make_tab()
         self.inspector_image, self.inspector_image_layout = make_tab()
         self.inspector_media, self.inspector_media_layout = make_tab()
@@ -3956,6 +4038,7 @@ class TrofeoGui(QMainWindow):
             self.inspector_general_layout,
             self.inspector_content_layout,
             self.inspector_appearance_layout,
+            self.inspector_gauge_layout,
             self.inspector_geometry_layout,
             self.inspector_image_layout,
             self.inspector_media_layout,
@@ -4030,13 +4113,39 @@ class TrofeoGui(QMainWindow):
         self.row_appearance_value_color = make_label("Kolor wartości")
         self.inspector_appearance_layout.addRow(self.row_appearance_value_color, self.designer_value_color_row)
         self.designer_track_color_row, self.designer_track_color_btn = add_color_row(self.designer_track_color_edit)
-        self.row_appearance_track_color = make_label("Kolor tła gauge")
+        self.row_appearance_track_color = make_label("Kolor tła gauge / paska")
         self.inspector_appearance_layout.addRow(self.row_appearance_track_color, self.designer_track_color_row)
         self.designer_fill_color_row, self.designer_fill_color_btn = add_color_row(self.designer_fill_color_edit)
-        self.row_appearance_fill_color = make_label("Kolor wypełnienia")
+        self.row_appearance_fill_color = make_label("Kolor wypełnienia / wartości")
         self.inspector_appearance_layout.addRow(self.row_appearance_fill_color, self.designer_fill_color_row)
-        self.row_appearance_stroke_width = make_label("Grubość gauge")
-        self.inspector_appearance_layout.addRow(self.row_appearance_stroke_width, self.designer_stat_stroke_width_spin)
+
+        self.row_appearance_stroke_width = make_label("Grubość gauge (0 = auto)")
+        self.row_gauge_ring = make_label("Średnica pierścienia")
+        self.row_gauge_value_layout = make_label("Układ wartości")
+        self.designer_gauge_low_row, self.designer_gauge_low_btn = add_color_row(self.designer_gauge_low_edit)
+        self.designer_gauge_mid_row, self.designer_gauge_mid_btn = add_color_row(self.designer_gauge_mid_edit)
+        self.designer_gauge_high_row, self.designer_gauge_high_btn = add_color_row(self.designer_gauge_high_edit)
+        self.designer_gauge_low_edit.setPlaceholderText("[R,G,B,A] — opcjonalnie, puste = z presetu")
+        self.designer_gauge_mid_edit.setPlaceholderText("[R,G,B,A] — opcjonalnie")
+        self.designer_gauge_high_edit.setPlaceholderText("[R,G,B,A] — opcjonalnie")
+        self.row_gauge_preset = make_label("Preset kolorów")
+        self.row_gauge_grad_low = make_label("Łuk: kolor niski")
+        self.row_gauge_grad_mid = make_label("Łuk: środek")
+        self.row_gauge_grad_high = make_label("Łuk: wysoki")
+        self.row_gauge_smooth = make_label("Wygładzanie igły")
+        self.row_gauge_match_value = make_label("Kolor wartości jak łuk")
+        self.row_gauge_inner_alpha = make_label("Przezrocz. środka")
+
+        self.inspector_gauge_layout.addRow(self.row_appearance_stroke_width, self.designer_stat_stroke_width_spin)
+        self.inspector_gauge_layout.addRow(self.row_gauge_ring, self.designer_gauge_ring_spin)
+        self.inspector_gauge_layout.addRow(self.row_gauge_value_layout, self.designer_gauge_value_layout_combo)
+        self.inspector_gauge_layout.addRow(self.row_gauge_inner_alpha, self.designer_gauge_inner_alpha_spin)
+        self.inspector_gauge_layout.addRow(self.row_gauge_preset, self.designer_stat_gauge_preset_combo)
+        self.inspector_gauge_layout.addRow(self.row_gauge_grad_low, self.designer_gauge_low_row)
+        self.inspector_gauge_layout.addRow(self.row_gauge_grad_mid, self.designer_gauge_mid_row)
+        self.inspector_gauge_layout.addRow(self.row_gauge_grad_high, self.designer_gauge_high_row)
+        self.inspector_gauge_layout.addRow(self.row_gauge_smooth, self.designer_gauge_smooth_spin)
+        self.inspector_gauge_layout.addRow(self.row_gauge_match_value, self.designer_gauge_match_value_chk)
 
         self.row_panel_fill = make_label("Wypełnienie panelu")
         self.panel_fill_row = wrap_row(self.panel_fill_edit, self.panel_fill_btn, stretch_first=True)
@@ -4180,6 +4289,7 @@ class TrofeoGui(QMainWindow):
         self.inspector_tabs.addTab(self.inspector_general, "Ogólne")
         self.inspector_tabs.addTab(self.inspector_content, "Treść")
         self.inspector_tabs.addTab(self.inspector_appearance, "Styl")
+        self.inspector_tabs.addTab(self.inspector_gauge, "Gauge")
         self.inspector_tabs.addTab(self.inspector_geometry, "Pozycja")
         self.inspector_tabs.addTab(self.inspector_image, "Obraz")
         self.inspector_tabs.addTab(self.inspector_media, "Multimedia")
@@ -4215,6 +4325,9 @@ class TrofeoGui(QMainWindow):
             self.panel_opacity_spin,
             self.panel_radius_spin,
             self.designer_stat_stroke_width_spin,
+            self.designer_gauge_ring_spin,
+            self.designer_gauge_value_layout_combo,
+            self.designer_gauge_inner_alpha_spin,
             self.motion_start_spin,
             self.motion_end_spin,
             self.motion_target_x_spin,
@@ -5490,6 +5603,9 @@ class TrofeoGui(QMainWindow):
             (getattr(self, "bg_base_color_btn", None), getattr(self, "bg_base_color_edit", None)),
             (getattr(self, "bg_accent_color_btn", None), getattr(self, "bg_accent_color_edit", None)),
             (getattr(self, "panel_fill_btn", None), getattr(self, "panel_fill_edit", None)),
+            (getattr(self, "designer_gauge_low_btn", None), getattr(self, "designer_gauge_low_edit", None)),
+            (getattr(self, "designer_gauge_mid_btn", None), getattr(self, "designer_gauge_mid_edit", None)),
+            (getattr(self, "designer_gauge_high_btn", None), getattr(self, "designer_gauge_high_edit", None)),
         ]
         for button, edit in mapping:
             if button is not None and edit is not None:
@@ -8814,6 +8930,7 @@ class TrofeoGui(QMainWindow):
             return
         self._sync_designer_preview_policy()
         self._load_background_fields()
+        self._sync_designer_theme_gauge_from_model()
         self.refresh_designer_element_list()
         self._update_preview_canvas_overlay()
         self.preview_theme_doc()
@@ -9226,6 +9343,7 @@ class TrofeoGui(QMainWindow):
             general_idx = self.inspector_tabs.indexOf(self.inspector_general)
             content_idx = self.inspector_tabs.indexOf(self.inspector_content)
             appearance_idx = self.inspector_tabs.indexOf(self.inspector_appearance)
+            gauge_idx = self.inspector_tabs.indexOf(getattr(self, "inspector_gauge", None))
             geometry_idx = self.inspector_tabs.indexOf(self.inspector_geometry)
             image_idx = self.inspector_tabs.indexOf(self.inspector_image)
             if general_idx >= 0:
@@ -9234,6 +9352,8 @@ class TrofeoGui(QMainWindow):
                 self.inspector_tabs.setTabVisible(content_idx, True)
             if appearance_idx >= 0:
                 self.inspector_tabs.setTabVisible(appearance_idx, True)
+            if gauge_idx >= 0:
+                self.inspector_tabs.setTabVisible(gauge_idx, not simple)
             if geometry_idx >= 0:
                 self.inspector_tabs.setTabVisible(geometry_idx, not simple)
             if image_idx >= 0:
@@ -9528,6 +9648,7 @@ class TrofeoGui(QMainWindow):
         self._set_tab_enabled_if_present(self.inspector_general, True)
         self._set_tab_enabled_if_present(self.inspector_content, is_text or is_stat)
         self._set_tab_enabled_if_present(self.inspector_appearance, is_text or is_stat or is_image or is_panel)
+        self._set_tab_enabled_if_present(self.inspector_gauge, is_stat)
         self._set_tab_enabled_if_present(self.inspector_geometry, True)
         self._set_tab_enabled_if_present(self.inspector_image, is_image)
 
@@ -9551,7 +9672,6 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(appearance_layout, self.row_appearance_value_color, self.designer_value_color_row, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_appearance_track_color, self.designer_track_color_row, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_appearance_fill_color, self.designer_fill_color_row, is_stat)
-        self._set_form_row_visible(appearance_layout, self.row_appearance_stroke_width, self.designer_stat_stroke_width_spin, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_panel_fill, self.panel_fill_row, is_panel)
         self._set_form_row_visible(appearance_layout, self.row_panel_opacity, self.panel_opacity_spin, is_panel)
         self._set_form_row_visible(appearance_layout, self.row_panel_radius, self.panel_radius_spin, is_panel)
@@ -9593,6 +9713,9 @@ class TrofeoGui(QMainWindow):
             self.preview_info_label.setText("Obraz: kliknij na podglądzie, aby ustawić pozycję albo zmień parametry w zakładce Obraz.")
             self.inspector_tabs.setCurrentWidget(self.inspector_image)
 
+        if collection == "stats":
+            self._update_gauge_stat_inspector_visibility()
+
     def load_selected_designer_item(self) -> None:
         collection = self._selected_collection()
         self._apply_visibility_for_collection(collection)
@@ -9629,6 +9752,7 @@ class TrofeoGui(QMainWindow):
                 self.designer_z_spin.setValue(next(iter(common_z)) if len(common_z) == 1 else 0)
                 self.panel_fill_edit.clear()
                 self.panel_radius_spin.setValue(0)
+                self._clear_stat_gauge_fields()
                 self._load_motion_track_fields(None, collection)
                 self.inspector_tabs.setCurrentWidget(self.inspector_general)
                 return
@@ -9662,6 +9786,7 @@ class TrofeoGui(QMainWindow):
                 self.designer_value_color_edit.clear()
                 self.designer_track_color_edit.clear()
                 self.designer_fill_color_edit.clear()
+                self._clear_stat_gauge_fields()
                 self.designer_stat_stroke_width_spin.setValue(12)
                 self.designer_path_edit.clear()
                 self.designer_w_spin.setValue(1)
@@ -9704,6 +9829,9 @@ class TrofeoGui(QMainWindow):
                     self.designer_source_combo.setCurrentIndex(idx)
             self.designer_format_edit.setText(str(active_item.get("format", "{value}")))
             self.designer_stat_display_combo.setCurrentText(str(active_item.get("display", "text")))
+            if active_collection == "stats" and str(active_item.get("display", "")).strip().lower() == "gauge":
+                if self._repair_gauge_stat_dimensions(active_item):
+                    self.write_designer_to_json()
             self.designer_stat_min_spin.setValue(float(active_item.get("min_value", 0.0)))
             self.designer_stat_max_spin.setValue(float(active_item.get("max_value", 100.0)))
             self.designer_stat_show_value_chk.setChecked(bool(active_item.get("show_value_text", True)))
@@ -9711,11 +9839,49 @@ class TrofeoGui(QMainWindow):
             self.designer_value_color_edit.setText(json.dumps(active_item.get("value_color", [220, 220, 220]), ensure_ascii=False))
             self.designer_track_color_edit.setText(json.dumps(active_item.get("track_color", [34, 44, 58, 210]), ensure_ascii=False))
             self.designer_fill_color_edit.setText(json.dumps(active_item.get("fill_color", active_item.get("value_color", [220, 220, 220])), ensure_ascii=False))
-            self.designer_stat_stroke_width_spin.setValue(int(active_item.get("stroke_width", 12)))
+            if active_collection == "stats":
+                sw = int(active_item.get("stroke_width", 12))
+                self.designer_stat_stroke_width_spin.setValue(0 if sw <= 0 else sw)
+                preset = str(active_item.get("gauge_preset", "")).strip().lower()
+                pr_idx = self.designer_stat_gauge_preset_combo.findData(preset)
+                self.designer_stat_gauge_preset_combo.setCurrentIndex(pr_idx if pr_idx >= 0 else 0)
+                for gkey, gedit in (
+                    ("gauge_color_low", self.designer_gauge_low_edit),
+                    ("gauge_color_mid", self.designer_gauge_mid_edit),
+                    ("gauge_color_high", self.designer_gauge_high_edit),
+                ):
+                    gval = active_item.get(gkey)
+                    if gval is not None:
+                        gedit.setText(json.dumps(gval, ensure_ascii=False))
+                    else:
+                        gedit.clear()
+                self.designer_gauge_smooth_spin.setValue(float(active_item.get("gauge_smooth", 0.32)))
+                self.designer_gauge_match_value_chk.setChecked(bool(active_item.get("gauge_match_value_color", True)))
+                grs = active_item.get("gauge_ring_size")
+                if grs is not None:
+                    self.designer_gauge_ring_spin.setValue(max(40, min(900, int(grs))))
+                else:
+                    bw0 = int(active_item.get("box_width", 160))
+                    bh0 = int(active_item.get("box_height", 160))
+                    self.designer_gauge_ring_spin.setValue(max(40, min(bw0, bh0)))
+                gvl = str(active_item.get("gauge_value_layout", "center")).strip().lower()
+                gvl_idx = self.designer_gauge_value_layout_combo.findData(gvl)
+                if gvl_idx < 0:
+                    _map = {"inside": "center", "middle": "center", "bottom": "below", "dol": "below", "pod": "below", "side": "beside", "bok": "beside"}
+                    gvl_idx = self.designer_gauge_value_layout_combo.findData(_map.get(gvl, "center"))
+                self.designer_gauge_value_layout_combo.setCurrentIndex(gvl_idx if gvl_idx >= 0 else 0)
+                self.designer_gauge_inner_alpha_spin.setValue(float(active_item.get("gauge_inner_alpha", 1.0)))
+            else:
+                self.designer_stat_stroke_width_spin.setValue(12)
+                self._clear_stat_gauge_fields()
             self.designer_path_edit.setText(str(active_item.get("path", "")))
-            rect = active_item.get("rect", [0, 0, 1, 1])
-            self.designer_w_spin.setValue(int(rect[2] if len(rect) >= 4 else 1))
-            self.designer_h_spin.setValue(int(rect[3] if len(rect) >= 4 else 1))
+            if active_collection in {"texts", "stats"}:
+                self.designer_w_spin.setValue(int(active_item.get("box_width", 320 if active_collection == "texts" else 160)))
+                self.designer_h_spin.setValue(int(active_item.get("box_height", 48 if active_collection == "texts" else 160)))
+            else:
+                rect = active_item.get("rect", [0, 0, 1, 1])
+                self.designer_w_spin.setValue(int(rect[2] if len(rect) >= 4 else 1))
+                self.designer_h_spin.setValue(int(rect[3] if len(rect) >= 4 else 1))
             self.designer_fit_combo.setCurrentText(str(active_item.get("fit", "contain")))
             self.designer_opacity_spin.setValue(float(active_item.get("opacity", 1.0)))
             self.designer_rotation_spin.setValue(int(active_item.get("rotation", 0)))
@@ -9745,6 +9911,116 @@ class TrofeoGui(QMainWindow):
             empty_text="Podgląd obrazu",
         )
         self._update_preview_canvas_overlay()
+        self._update_gauge_stat_inspector_visibility()
+
+    def _populate_designer_stat_gauge_preset_combo(self) -> None:
+        self.designer_stat_gauge_preset_combo.clear()
+        self.designer_stat_gauge_preset_combo.addItem("(z motywu / auto)", "")
+        ordered = [pid for pid in GAUGE_PRESET_ORDER if pid in GAUGE_PRESETS]
+        ordered.extend(pid for pid in sorted(GAUGE_PRESETS.keys()) if pid not in ordered)
+        for pid in ordered:
+            label = GAUGE_PRESET_LABELS.get(pid, pid)
+            self.designer_stat_gauge_preset_combo.addItem(f"{label} ({pid})", pid)
+
+    def _populate_designer_theme_gauge_style_combo(self) -> None:
+        self.designer_theme_gauge_style_combo.clear()
+        self.designer_theme_gauge_style_combo.addItem("(domyślny z nazwy motywu)", "")
+        style_keys = sorted(set(GAUGE_PRESETS.keys()) | set(THEME_STYLE_PRESET.keys()))
+        for sk in style_keys:
+            if sk in GAUGE_PRESETS:
+                label = GAUGE_PRESET_LABELS.get(sk, sk)
+                text = f"{label} ({sk})"
+            else:
+                preset_id = THEME_STYLE_PRESET.get(sk, "")
+                preset_label = GAUGE_PRESET_LABELS.get(preset_id, preset_id) if preset_id else ""
+                text = f"{sk} -> {preset_label}" if preset_label else sk
+            self.designer_theme_gauge_style_combo.addItem(text, sk)
+
+    def _sync_designer_theme_gauge_from_model(self) -> None:
+        if self.theme_doc_model is None:
+            return
+        meta = self.theme_doc_model.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        style = str(meta.get("gauge_style", "")).strip().lower()
+        self._designer_updating = True
+        try:
+            idx = self.designer_theme_gauge_style_combo.findData(style)
+            self.designer_theme_gauge_style_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        finally:
+            self._designer_updating = False
+
+    def _on_designer_theme_gauge_style_changed(self, _idx: int) -> None:
+        if self._designer_updating or self.theme_doc_model is None:
+            return
+        data = self.designer_theme_gauge_style_combo.currentData()
+        style = str(data).strip() if data is not None else ""
+        meta = self.theme_doc_model.setdefault("meta", {})
+        if not isinstance(meta, dict):
+            meta = {}
+            self.theme_doc_model["meta"] = meta
+        if style:
+            meta["gauge_style"] = style
+        else:
+            meta.pop("gauge_style", None)
+        self.write_designer_to_json()
+        self.schedule_preview_theme_doc()
+
+    def _repair_gauge_stat_dimensions(self, item: dict[str, Any]) -> bool:
+        bw = int(item.get("box_width", 1))
+        bh = int(item.get("box_height", 1))
+        changed = False
+        if min(bw, bh) < 48:
+            item["box_width"] = max(160, bw)
+            item["box_height"] = max(160, bh)
+            changed = True
+        cap = min(int(item.get("box_width", 160)), int(item.get("box_height", 160)))
+        if item.get("gauge_ring_size") is None:
+            item["gauge_ring_size"] = max(48, cap - 12)
+            changed = True
+        else:
+            grs = int(item["gauge_ring_size"])
+            if grs > cap:
+                item["gauge_ring_size"] = max(40, cap)
+                changed = True
+        return changed
+
+    def _clear_stat_gauge_fields(self) -> None:
+        self.designer_stat_gauge_preset_combo.setCurrentIndex(0)
+        self.designer_gauge_low_edit.clear()
+        self.designer_gauge_mid_edit.clear()
+        self.designer_gauge_high_edit.clear()
+        self.designer_gauge_smooth_spin.setValue(0.32)
+        self.designer_gauge_match_value_chk.setChecked(True)
+        self.designer_gauge_ring_spin.setValue(160)
+        self.designer_gauge_value_layout_combo.setCurrentIndex(0)
+        self.designer_gauge_inner_alpha_spin.setValue(1.0)
+
+    def _update_gauge_stat_inspector_visibility(self) -> None:
+        gauge_layout = self.inspector_gauge.layout()
+        gauge_tab_idx = self.inspector_tabs.indexOf(getattr(self, "inspector_gauge", None))
+        selected_multi = self._selected_items_multi_any()
+        show_gauge = False
+        if len(selected_multi) == 1:
+            coll, _row, sel_item = selected_multi[0]
+            if coll == "stats" and sel_item is not None:
+                show_gauge = str(sel_item.get("display", "text")).strip().lower() == "gauge"
+        if gauge_tab_idx >= 0:
+            self.inspector_tabs.setTabVisible(gauge_tab_idx, show_gauge)
+        gauge_rows = (
+            (self.row_appearance_stroke_width, self.designer_stat_stroke_width_spin),
+            (self.row_gauge_ring, self.designer_gauge_ring_spin),
+            (self.row_gauge_value_layout, self.designer_gauge_value_layout_combo),
+            (self.row_gauge_inner_alpha, self.designer_gauge_inner_alpha_spin),
+            (self.row_gauge_preset, self.designer_stat_gauge_preset_combo),
+            (self.row_gauge_grad_low, self.designer_gauge_low_row),
+            (self.row_gauge_grad_mid, self.designer_gauge_mid_row),
+            (self.row_gauge_grad_high, self.designer_gauge_high_row),
+            (self.row_gauge_smooth, self.designer_gauge_smooth_spin),
+            (self.row_gauge_match_value, self.designer_gauge_match_value_chk),
+        )
+        for row_label, widget in gauge_rows:
+            self._set_form_row_visible(gauge_layout, row_label, widget, show_gauge)
 
     def _parse_color_line(self, value: str, fallback: list[int]) -> list[int]:
         raw = value.strip()
@@ -9935,6 +10211,28 @@ class TrofeoGui(QMainWindow):
             item["source"] = str(self.designer_source_combo.currentData() or self.designer_source_combo.currentText()).strip()
             item["format"] = self.designer_format_edit.text().strip() or "{value}"
             item["display"] = self.designer_stat_display_combo.currentText().strip().lower() or "text"
+            if item["display"] == "gauge":
+                desired_ring = int(self.designer_gauge_ring_spin.value())
+                gw = max(120, self._snap_value(int(self.designer_w_spin.value())))
+                gh = max(120, self._snap_value(int(self.designer_h_spin.value())))
+                margin = max(12, int(round(min(gw, gh) * 0.06)))
+                max_fit = max(40, min(gw, gh) - margin)
+                if desired_ring > max_fit:
+                    side = desired_ring + margin
+                    gw = max(gw, side)
+                    gh = max(gh, side)
+                item["box_width"] = gw
+                item["box_height"] = gh
+                item["gauge_ring_size"] = max(40, min(desired_ring, min(gw, gh) - margin))
+                item["gauge_value_layout"] = str(self.designer_gauge_value_layout_combo.currentData() or "center")
+                item["gauge_inner_alpha"] = float(self.designer_gauge_inner_alpha_spin.value())
+                self._designer_updating = True
+                try:
+                    self.designer_w_spin.setValue(gw)
+                    self.designer_h_spin.setValue(gh)
+                    self.designer_gauge_ring_spin.setValue(int(item["gauge_ring_size"]))
+                finally:
+                    self._designer_updating = False
             item["min_value"] = min_value
             item["max_value"] = max_value
             item["show_value_text"] = bool(self.designer_stat_show_value_chk.isChecked())
@@ -9955,6 +10253,23 @@ class TrofeoGui(QMainWindow):
                 item.get("fill_color", item.get("value_color", [220, 220, 220])),
             )
             item["stroke_width"] = int(self.designer_stat_stroke_width_spin.value())
+            pid = str(self.designer_stat_gauge_preset_combo.currentData() or "").strip()
+            if pid:
+                item["gauge_preset"] = pid
+            else:
+                item.pop("gauge_preset", None)
+            for gkey, gedit in (
+                ("gauge_color_low", self.designer_gauge_low_edit),
+                ("gauge_color_mid", self.designer_gauge_mid_edit),
+                ("gauge_color_high", self.designer_gauge_high_edit),
+            ):
+                graw = gedit.text().strip()
+                if not graw:
+                    item.pop(gkey, None)
+                else:
+                    item[gkey] = self._parse_color_line(graw, item.get(gkey) or [128, 128, 128])
+            item["gauge_smooth"] = float(self.designer_gauge_smooth_spin.value())
+            item["gauge_match_value_color"] = bool(self.designer_gauge_match_value_chk.isChecked())
         elif collection == "images":
             item["path"] = self.designer_path_edit.text().strip()
             item["rect"] = [

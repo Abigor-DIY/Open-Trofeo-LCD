@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gauge_presets import merge_gauge_preset
+
 
 THEME_SCHEMA_VERSION = 1
 DEFAULT_CANVAS = {"width": 1920, "height": 462, "rotation": 180}
@@ -36,6 +38,7 @@ KNOWN_BACKGROUND_KIND = {"generated", "image", "color"}
 KNOWN_IMAGE_SOURCES = {"media_cover", "media_video_frame", "analog_clock"}
 KNOWN_CLOCK_STYLE = {"classic", "modern", "nordic"}
 KNOWN_STAT_DISPLAY = {"text", "progress", "gauge"}
+KNOWN_GAUGE_VALUE_LAYOUT = frozenset({"center", "below", "beside"})
 
 
 class ThemeValidationError(RuntimeError):
@@ -123,6 +126,7 @@ def _normalize_meta(raw: Any) -> dict[str, Any]:
         "description": str(data.get("description", "")).strip(),
         "author": str(data.get("author", "")).strip(),
         "tags": out_tags,
+        "gauge_style": str(data.get("gauge_style", "")).strip(),
     }
 
 
@@ -236,6 +240,44 @@ def _normalize_stat_item(raw: Any, idx: int) -> dict[str, Any]:
     max_value = float(_expect_number(data.get("max_value", 100.0), f"{path}.max_value"))
     if max_value <= min_value:
         raise _fail(f"{path}.max_value", "must be greater than min_value")
+
+    gauge_color_low = None
+    if data.get("gauge_color_low") is not None:
+        gauge_color_low = _normalize_color(data["gauge_color_low"], f"{path}.gauge_color_low")
+    gauge_color_mid = None
+    if data.get("gauge_color_mid") is not None:
+        gauge_color_mid = _normalize_color(data["gauge_color_mid"], f"{path}.gauge_color_mid")
+    gauge_color_high = None
+    if data.get("gauge_color_high") is not None:
+        gauge_color_high = _normalize_color(data["gauge_color_high"], f"{path}.gauge_color_high")
+
+    gauge_ring_size: int | None = None
+    if data.get("gauge_ring_size") is not None:
+        gauge_ring_size = int(_expect_number(data["gauge_ring_size"], f"{path}.gauge_ring_size"))
+        gauge_ring_size = max(40, min(900, gauge_ring_size))
+
+    gvl_raw = str(data.get("gauge_value_layout", "center")).strip().lower()
+    _gvl_aliases = {
+        "inside": "center",
+        "middle": "center",
+        "srodek": "center",
+        "below": "below",
+        "bottom": "below",
+        "dol": "below",
+        "pod": "below",
+        "spod": "below",
+        "beside": "beside",
+        "side": "beside",
+        "right": "beside",
+        "bok": "beside",
+    }
+    gauge_value_layout = _gvl_aliases.get(gvl_raw, gvl_raw)
+    if gauge_value_layout not in KNOWN_GAUGE_VALUE_LAYOUT:
+        gauge_value_layout = "center"
+
+    gauge_inner_alpha = float(_expect_number(data.get("gauge_inner_alpha", 1.0), f"{path}.gauge_inner_alpha"))
+    gauge_inner_alpha = max(0.0, min(1.0, gauge_inner_alpha))
+
     return {
         "id": str(data.get("id", f"stat_{idx}")).strip() or f"stat_{idx}",
         "label": str(data.get("label", "")).strip(),
@@ -261,6 +303,18 @@ def _normalize_stat_item(raw: Any, idx: int) -> dict[str, Any]:
         "fill_color": _normalize_color(data.get("fill_color", data.get("value_color", [220, 220, 220])), f"{path}.fill_color"),
         "stroke_width": int(_expect_number(data.get("stroke_width", 12), f"{path}.stroke_width")),
         "show_value_text": bool(data.get("show_value_text", True)),
+        "gauge_preset": str(data.get("gauge_preset", "")).strip(),
+        "gauge_smooth": max(
+            0.05,
+            min(1.0, float(_expect_number(data.get("gauge_smooth", 0.32), f"{path}.gauge_smooth"))),
+        ),
+        "gauge_match_value_color": bool(data.get("gauge_match_value_color", True)),
+        "gauge_color_low": gauge_color_low,
+        "gauge_color_mid": gauge_color_mid,
+        "gauge_color_high": gauge_color_high,
+        "gauge_ring_size": gauge_ring_size,
+        "gauge_value_layout": gauge_value_layout,
+        "gauge_inner_alpha": gauge_inner_alpha,
         "align": align,
         "z_index": int(_expect_number(data.get("z_index", 220), f"{path}.z_index")),
         "visible": bool(data.get("visible", True)),
@@ -419,7 +473,11 @@ def normalize_theme_document(raw: dict[str, Any]) -> dict[str, Any]:
     canvas = _normalize_canvas(data.get("canvas", DEFAULT_CANVAS))
     background = _normalize_background(data.get("background", {}))
     texts = [_normalize_text_item(item, idx) for idx, item in enumerate(_expect_list(data.get("texts", []), "texts"))]
-    stats = [_normalize_stat_item(item, idx) for idx, item in enumerate(_expect_list(data.get("stats", []), "stats"))]
+    stats_raw = _expect_list(data.get("stats", []), "stats")
+    stats = []
+    for idx, item in enumerate(stats_raw):
+        merged = merge_gauge_preset(_expect_dict(item, f"stats[{idx}]"), meta)
+        stats.append(_normalize_stat_item(merged, idx))
     images = [_normalize_image_item(item, idx) for idx, item in enumerate(_expect_list(data.get("images", []), "images"))]
     effects = _normalize_effects(data.get("effects", {}))
 

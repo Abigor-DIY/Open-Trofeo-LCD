@@ -230,6 +230,54 @@ def _parse_numeric_stat_value(value: str) -> float | None:
         return None
 
 
+_GAUGE_ANGLE_SMOOTH: dict[str, float] = {}
+
+
+def _lerp_channel(a: int, b: int, t: float) -> int:
+    return int(round(a + (b - a) * t))
+
+
+def _lerp_rgba(
+    ca: tuple[int, int, int, int],
+    cb: tuple[int, int, int, int],
+    t: float,
+) -> tuple[int, int, int, int]:
+    t = max(0.0, min(1.0, t))
+    return (
+        _lerp_channel(ca[0], cb[0], t),
+        _lerp_channel(ca[1], cb[1], t),
+        _lerp_channel(ca[2], cb[2], t),
+        _lerp_channel(ca[3], cb[3], t),
+    )
+
+
+def _gauge_arc_fill(item: dict[str, Any], ratio: float) -> tuple[int, int, int, int]:
+    low = item.get("gauge_color_low")
+    mid = item.get("gauge_color_mid")
+    high = item.get("gauge_color_high")
+    if not low or not high:
+        return _rgba(item.get("fill_color", item["value_color"]))
+    lo = _rgba(low)
+    hi = _rgba(high)
+    r = max(0.0, min(1.0, ratio))
+    if mid:
+        md = _rgba(mid)
+        if r <= 0.5:
+            return _lerp_rgba(lo, md, r * 2.0)
+        return _lerp_rgba(md, hi, (r - 0.5) * 2.0)
+    return _lerp_rgba(lo, hi, r)
+
+
+def _smooth_gauge_ratio(cache_key: str, target_ratio: float, factor: float) -> float:
+    t = max(0.0, min(1.0, target_ratio))
+    prev = _GAUGE_ANGLE_SMOOTH.get(cache_key, t)
+    delta = abs(t - prev)
+    adapt = min(1.0, max(factor, factor + delta * 0.9))
+    blended = prev + (t - prev) * adapt
+    _GAUGE_ANGLE_SMOOTH[cache_key] = blended
+    return max(0.0, min(1.0, blended))
+
+
 def _draw_stat_progress(
     canvas: Image.Image,
     item: dict[str, Any],
@@ -298,55 +346,52 @@ def _draw_stat_progress(
         )
 
 
-def _draw_stat_gauge(
-    canvas: Image.Image,
+def _normalize_gauge_value_layout(item: dict[str, Any]) -> str:
+    raw = str(item.get("gauge_value_layout", "center")).strip().lower()
+    aliases = {
+        "inside": "center",
+        "middle": "center",
+        "srodek": "center",
+        "below": "below",
+        "bottom": "below",
+        "dol": "below",
+        "pod": "below",
+        "spod": "below",
+        "beside": "beside",
+        "side": "beside",
+        "right": "beside",
+        "bok": "beside",
+    }
+    v = aliases.get(raw, raw)
+    return v if v in {"center", "below", "beside"} else "center"
+
+
+def _paint_gauge_disk(
+    draw: ImageDraw.ImageDraw,
     item: dict[str, Any],
+    gauge_left: int,
+    gauge_top: int,
+    gauge_size: int,
     *,
-    label: str,
-    value_text: str,
-    numeric_value: float,
-    min_value: float,
-    max_value: float,
-    label_fill: tuple[int, int, int, int],
-    value_fill: tuple[int, int, int, int],
     track_fill: tuple[int, int, int, int],
-    fill_color: tuple[int, int, int, int],
+    arc_fill: tuple[int, int, int, int],
+    display_ratio: float,
 ) -> None:
-    draw = ImageDraw.Draw(canvas)
-    base_font_size = int(item["font_size"])
-    font = _load_font(
-        base_font_size,
-        bold=bool(item.get("font_bold", False)),
-        italic=bool(item.get("font_italic", False)),
-        font_family=str(item.get("font_family", "DejaVu Sans")),
-    )
-    value_font = _load_font(
-        max(16, int(round(base_font_size * 1.45))),
-        bold=True,
-        italic=False,
-        font_family=str(item.get("font_family", "DejaVu Sans")),
-    )
-    label_font = _load_font(
-        max(10, int(round(base_font_size * 0.72))),
-        bold=False,
-        italic=False,
-        font_family=str(item.get("font_family", "DejaVu Sans")),
-    )
-    x = int(item["x"])
-    y = int(item["y"])
-    box_width = max(1, int(item.get("box_width", 320)))
-    box_height = max(1, int(item.get("box_height", 40)))
-    gauge_size = max(40, min(box_width, box_height))
-    gauge_left = x + max(0, (box_width - gauge_size) // 2)
-    gauge_top = y + max(0, (box_height - gauge_size) // 2)
-    outer_pad = max(4, int(round(gauge_size * 0.035)))
+    outer_pad = max(3, int(round(gauge_size * 0.028)))
+    _max_pad = max(1, gauge_size // 2 - 2)
+    outer_pad = min(outer_pad, _max_pad)
     ring_box = (
         gauge_left + outer_pad,
         gauge_top + outer_pad,
         gauge_left + gauge_size - outer_pad,
         gauge_top + gauge_size - outer_pad,
     )
-    stroke_width = max(6, int(item.get("stroke_width", 12)))
+    sw_cfg = int(item.get("stroke_width", 12))
+    if sw_cfg <= 0:
+        stroke_width = max(10, min(42, int(round(gauge_size * 0.145))))
+    else:
+        stroke_width = max(4, min(48, sw_cfg))
+
     start_angle = 132
     sweep = 276
     outer_ring_color = (
@@ -361,6 +406,14 @@ def _draw_stat_gauge(
         max(0, track_fill[2] - 18),
         max(0, min(255, int(track_fill[3] * 0.52))),
     )
+    ia = float(item.get("gauge_inner_alpha", 1.0))
+    ia = max(0.0, min(1.0, ia))
+    inner_face_color = (
+        inner_face_color[0],
+        inner_face_color[1],
+        inner_face_color[2],
+        max(0, min(255, int(round(inner_face_color[3] * ia)))),
+    )
     draw.ellipse(
         (
             gauge_left + 1,
@@ -372,15 +425,14 @@ def _draw_stat_gauge(
         width=max(1, int(round(stroke_width * 0.35))),
     )
     draw.arc(ring_box, start=start_angle, end=start_angle + sweep, fill=track_fill, width=stroke_width)
-    span = max_value - min_value
-    ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
-    if ratio > 0.0:
-        end_angle = start_angle + int(round(sweep * ratio))
+    span_check = max(0.0, min(1.0, display_ratio))
+    if span_check > 0.0:
+        end_angle = start_angle + int(round(sweep * span_check))
         draw.arc(
             ring_box,
             start=start_angle,
             end=end_angle,
-            fill=fill_color,
+            fill=arc_fill,
             width=stroke_width,
         )
         end_radians = math.radians(end_angle - 90)
@@ -389,42 +441,155 @@ def _draw_stat_gauge(
         cy = (ring_box[1] + ring_box[3]) / 2.0
         end_x = cx + ring_radius * math.cos(end_radians)
         end_y = cy + ring_radius * math.sin(end_radians)
-        cap_r = max(3, stroke_width // 2)
-        draw.ellipse((end_x - cap_r, end_y - cap_r, end_x + cap_r, end_y + cap_r), fill=fill_color)
-    inner_margin = stroke_width + max(5, int(round(gauge_size * 0.05)))
+        cap_r = max(4, int(round(stroke_width * 0.42)))
+        draw.ellipse((end_x - cap_r, end_y - cap_r, end_x + cap_r, end_y + cap_r), fill=arc_fill)
+    inner_margin = int(stroke_width * 1.05) + max(4, int(round(gauge_size * 0.04)))
+    _half_cap = max(0, gauge_size // 2 - 3)
+    inner_margin = max(0, min(inner_margin, _half_cap))
     inner_box = (
         gauge_left + inner_margin,
         gauge_top + inner_margin,
         gauge_left + gauge_size - inner_margin,
         gauge_top + gauge_size - inner_margin,
     )
-    draw.ellipse(inner_box, fill=inner_face_color)
-    if bool(item.get("show_value_text", True)):
-        value_bbox = draw.textbbox((0, 0), value_text, font=value_font)
-        value_x = gauge_left + max(0, (gauge_size - (value_bbox[2] - value_bbox[0])) // 2)
-        value_y = gauge_top + max(0, int(gauge_size * 0.35) - (value_bbox[3] - value_bbox[1]) // 2)
-        _draw_styled_text(
-            draw,
-            (value_x, value_y),
-            value_text,
-            font=value_font,
-            fill=value_fill,
-            bold=True,
-            underline=False,
-        )
+    if inner_box[2] > inner_box[0] and inner_box[3] > inner_box[1]:
+        draw.ellipse(inner_box, fill=inner_face_color)
+
+
+def _draw_stat_gauge(
+    canvas: Image.Image,
+    item: dict[str, Any],
+    *,
+    label: str,
+    value_text: str,
+    min_value: float,
+    max_value: float,
+    label_fill: tuple[int, int, int, int],
+    value_fill: tuple[int, int, int, int],
+    track_fill: tuple[int, int, int, int],
+    display_ratio: float,
+    arc_fill: tuple[int, int, int, int],
+) -> None:
+    draw = ImageDraw.Draw(canvas)
+    layout = _normalize_gauge_value_layout(item)
+    base_font_size = int(item["font_size"])
+    x = int(item["x"])
+    y = int(item["y"])
+    box_width = max(1, int(item.get("box_width", 320)))
+    box_height = max(1, int(item.get("box_height", 40)))
+    pad = max(2, int(round(min(box_width, box_height) * 0.025)))
+    inner_w = max(1, box_width - 2 * pad)
+    inner_h = max(1, box_height - 2 * pad)
+    avail = min(inner_w, inner_h)
+
+    ring_opt = item.get("gauge_ring_size")
+    if ring_opt is not None:
+        gauge_size = max(40, min(int(ring_opt), avail))
+    else:
+        gauge_size = max(40, avail)
+
+    scale_ref = max(gauge_size, 72) / 120.0
+    value_font = _load_font(
+        max(15, int(round(base_font_size * (1.38 + 0.12 * min(scale_ref, 1.4))))),
+        bold=True,
+        italic=False,
+        font_family=str(item.get("font_family", "DejaVu Sans")),
+    )
+    label_font = _load_font(
+        max(10, int(round(base_font_size * (0.74 * min(1.1, scale_ref))))),
+        bold=False,
+        italic=False,
+        font_family=str(item.get("font_family", "DejaVu Sans")),
+    )
+
+    span = max_value - min_value
+    ratio = 0.0 if span <= 0 else max(0.0, min(1.0, display_ratio))
+
+    if layout == "center":
+        gauge_left = x + pad + max(0, (inner_w - gauge_size) // 2)
+        gauge_top = y + pad + max(0, (inner_h - gauge_size) // 2)
+        _paint_gauge_disk(draw, item, gauge_left, gauge_top, gauge_size, track_fill=track_fill, arc_fill=arc_fill, display_ratio=ratio)
+        if bool(item.get("show_value_text", True)):
+            value_bbox = draw.textbbox((0, 0), value_text, font=value_font)
+            value_x = gauge_left + max(0, (gauge_size - (value_bbox[2] - value_bbox[0])) // 2)
+            value_y = gauge_top + max(0, int(gauge_size * 0.34) - (value_bbox[3] - value_bbox[1]) // 2)
+            _draw_styled_text(
+                draw,
+                (value_x, value_y),
+                value_text,
+                font=value_font,
+                fill=value_fill,
+                bold=True,
+                underline=False,
+            )
+        if label:
+            label_bbox = draw.textbbox((0, 0), label, font=label_font)
+            label_x = gauge_left + max(0, (gauge_size - (label_bbox[2] - label_bbox[0])) // 2)
+            label_y = gauge_top + int(gauge_size * 0.675)
+            _draw_styled_text(
+                draw,
+                (label_x, label_y),
+                label,
+                font=label_font,
+                fill=label_fill,
+                bold=False,
+                underline=False,
+            )
+        return
+
+    if layout == "below":
+        gap = max(4, int(round(gauge_size * 0.04)))
+        label_h = 0
+        if label:
+            lb = draw.textbbox((0, 0), label, font=label_font)
+            label_h = (lb[3] - lb[1]) + gap
+        vb = draw.textbbox((0, 0), value_text, font=value_font)
+        value_h = (vb[3] - vb[1]) + gap if bool(item.get("show_value_text", True)) else 0
+        reserve_bottom = label_h + value_h + gap
+        max_ring = inner_h - reserve_bottom
+        gauge_size = min(gauge_size, max_ring, inner_w)
+        gauge_size = max(40, gauge_size)
+        gauge_left = x + pad + max(0, (inner_w - gauge_size) // 2)
+        cursor_y = y + pad
+        if label:
+            lb = draw.textbbox((0, 0), label, font=label_font)
+            lx = x + pad + max(0, (inner_w - (lb[2] - lb[0])) // 2)
+            _draw_styled_text(draw, (lx, cursor_y), label, font=label_font, fill=label_fill, bold=False, underline=False)
+            cursor_y += (lb[3] - lb[1]) + gap
+        gauge_top = cursor_y
+        _paint_gauge_disk(draw, item, gauge_left, gauge_top, gauge_size, track_fill=track_fill, arc_fill=arc_fill, display_ratio=ratio)
+        cursor_y = gauge_top + gauge_size + gap
+        if bool(item.get("show_value_text", True)):
+            vb = draw.textbbox((0, 0), value_text, font=value_font)
+            vx = x + pad + max(0, (inner_w - (vb[2] - vb[0])) // 2)
+            _draw_styled_text(draw, (vx, cursor_y), value_text, font=value_font, fill=value_fill, bold=True, underline=False)
+        return
+
+    # beside — pierścień po lewej, wartość i ewentualna etykieta w kolumnie po prawej
+    gap = max(6, int(round(gauge_size * 0.05)))
+    text_col_w = inner_w - gauge_size - gap
+    if text_col_w < 72:
+        gauge_size = max(40, inner_w - gap - 72)
+        text_col_w = inner_w - gauge_size - gap
+    gauge_left = x + pad
+    gauge_top = y + pad + max(0, (inner_h - gauge_size) // 2)
+    _paint_gauge_disk(draw, item, gauge_left, gauge_top, gauge_size, track_fill=track_fill, arc_fill=arc_fill, display_ratio=ratio)
+    tx = gauge_left + gauge_size + gap
+    ty = y + pad
+    stack_h = 0
     if label:
-        label_bbox = draw.textbbox((0, 0), label, font=label_font)
-        label_x = gauge_left + max(0, (gauge_size - (label_bbox[2] - label_bbox[0])) // 2)
-        label_y = gauge_top + int(gauge_size * 0.68)
-        _draw_styled_text(
-            draw,
-            (label_x, label_y),
-            label,
-            font=label_font,
-            fill=label_fill,
-            bold=False,
-            underline=False,
-        )
+        lb = draw.textbbox((0, 0), label, font=label_font)
+        stack_h += lb[3] - lb[1]
+    if bool(item.get("show_value_text", True)):
+        vb = draw.textbbox((0, 0), value_text, font=value_font)
+        stack_h += (vb[3] - vb[1]) + (gap // 2 if label else 0)
+    ty = y + pad + max(0, (inner_h - stack_h) // 2)
+    if label:
+        lb = draw.textbbox((0, 0), label, font=label_font)
+        _draw_styled_text(draw, (tx, ty), label, font=label_font, fill=label_fill, bold=False, underline=False)
+        ty += (lb[3] - lb[1]) + gap // 2
+    if bool(item.get("show_value_text", True)):
+        _draw_styled_text(draw, (tx, ty), value_text, font=value_font, fill=value_fill, bold=True, underline=False)
 
 
 def _motion_progress(track: dict[str, Any], frame_index: int) -> float:
@@ -897,18 +1062,36 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
                     fill_color=fill_color,
                 )
             else:
+                span = max_value - min_value
+                target_ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
+                cache_key = f"{item.get('id', 'stat')}::{item.get('source', '')}"
+                smooth_f = float(item.get("gauge_smooth", 0.32))
+                display_ratio = _smooth_gauge_ratio(cache_key, target_ratio, smooth_f)
+                arc_fill_rgba = _gauge_arc_fill(item, display_ratio)
+                arc_fill = (
+                    arc_fill_rgba[0],
+                    arc_fill_rgba[1],
+                    arc_fill_rgba[2],
+                    int(arc_fill_rgba[3] * render_opacity),
+                )
+                value_fill_gauge = (
+                    arc_fill[0],
+                    arc_fill[1],
+                    arc_fill[2],
+                    arc_fill[3],
+                ) if bool(item.get("gauge_match_value_color", True)) else value_fill
                 _draw_stat_gauge(
                     canvas,
                     item,
                     label=label,
                     value_text=value_text,
-                    numeric_value=numeric_value,
                     min_value=min_value,
                     max_value=max_value,
                     label_fill=label_fill,
-                    value_fill=value_fill,
+                    value_fill=value_fill_gauge,
                     track_fill=track_fill,
-                    fill_color=fill_color,
+                    display_ratio=display_ratio,
+                    arc_fill=arc_fill,
                 )
             continue
         if not marquee and not label and item["align"] == "left":
