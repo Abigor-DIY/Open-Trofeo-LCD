@@ -35,6 +35,7 @@
   - progress bar
   - mini wykres liniowy
   - mini wykres slupkowy
+- Dodac wskaznik glosnosci jako gotowy komponent / widget motywu.
 
 ## Etap 4 - Przygotowanie publikacji Linux
 
