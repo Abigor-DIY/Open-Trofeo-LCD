@@ -2,7 +2,7 @@
   "schema_version": 1,
   "meta": {
     "name": "Heritage Duality",
-    "description": "Stabilizowany motyw dualistyczny z wyrazistymi statami i bezpieczniejszym układem media.",
+    "description": "Wersja publikacyjna z mocnym bursztynowo-turkusowym kontrastem i bez nakładek imitujacych przezroczystosc.",
     "author": "Open-Trofeo-LCD",
     "tags": ["monitor", "media", "heritage", "nordic", "custom"]
   },
@@ -20,25 +20,27 @@
     "fit": "cover",
     "opacity": 1.0,
     "panels": [
-      {"id": "head_bar", "rect": [104, 18, 1712, 58], "radius": 22, "fill": [0, 0, 0, 122], "z_index": 80, "visible": true, "locked": false},
-      {"id": "stats_panel", "rect": [108, 320, 592, 94], "radius": 20, "fill": [0, 0, 0, 120], "z_index": 80, "visible": true, "locked": false},
-      {"id": "media_panel", "rect": [744, 286, 1088, 132], "radius": 24, "fill": [0, 0, 0, 138], "z_index": 80, "visible": true, "locked": false}
+      {"id": "head_bar", "rect": [96, 16, 1728, 64], "radius": 22, "fill": [6, 14, 18, 214], "z_index": 80, "visible": true, "locked": false},
+      {"id": "stats_panel", "rect": [98, 300, 612, 122], "radius": 22, "fill": [10, 26, 34, 224], "z_index": 80, "visible": true, "locked": false},
+      {"id": "media_panel", "rect": [726, 270, 1110, 146], "radius": 24, "fill": [48, 20, 6, 214], "z_index": 80, "visible": true, "locked": false},
+      {"id": "accent_left", "rect": [86, 88, 324, 174], "radius": 26, "fill": [0, 170, 214, 226], "z_index": 78, "visible": true, "locked": false},
+      {"id": "accent_right", "rect": [1514, 90, 248, 150], "radius": 24, "fill": [232, 156, 40, 230], "z_index": 78, "visible": true, "locked": false}
     ]
   },
   "texts": [
     {
       "id": "title",
-      "text": "HERITAGE DUALITY",
-      "x": 744,
-      "y": 28,
-      "box_width": 440,
-      "box_height": 36,
+      "text": "HERITAGE",
+      "x": 758,
+      "y": 24,
+      "box_width": 404,
+      "box_height": 40,
       "font_family": "DejaVu Serif",
-      "font_size": 24,
+      "font_size": 28,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
-      "color": [232, 226, 184],
+      "color": [248, 238, 208],
       "align": "center",
       "z_index": 200,
       "visible": true,
@@ -46,15 +48,15 @@
     }
   ],
   "stats": [
-    {"id": "host", "label": "", "source": "hostname", "format": "{value}", "x": 116, "y": 30, "box_width": 300, "box_height": 28, "font_family": "Ubuntu", "font_size": 24, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [224, 230, 232], "value_color": [224, 230, 232], "align": "left", "z_index": 210, "visible": true, "locked": false},
-    {"id": "clock", "label": "", "source": "time_hms", "format": "{value}", "x": 1438, "y": 30, "box_width": 308, "box_height": 42, "font_family": "Ubuntu", "font_size": 48, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [228, 214, 164], "value_color": [228, 214, 164], "align": "center", "z_index": 210, "visible": true, "locked": false},
-    {"id": "cpu_usage", "label": "CPU", "source": "cpu_usage_percent", "format": "{value}", "x": 128, "y": 342, "box_width": 170, "box_height": 32, "font_family": "Ubuntu", "font_size": 32, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [214, 220, 220], "value_color": [126, 216, 255], "align": "left", "z_index": 210, "visible": true, "locked": false},
-    {"id": "gpu_usage", "label": "GPU", "source": "gpu_load", "format": "{value}", "x": 324, "y": 342, "box_width": 170, "box_height": 32, "font_family": "Ubuntu", "font_size": 32, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [214, 220, 220], "value_color": [126, 216, 255], "align": "left", "z_index": 210, "visible": true, "locked": false},
-    {"id": "ram_usage", "label": "RAM", "source": "mem_percent", "format": "{value}", "x": 520, "y": 342, "box_width": 150, "box_height": 32, "font_family": "Ubuntu", "font_size": 32, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [214, 220, 220], "value_color": [228, 214, 164], "align": "left", "z_index": 210, "visible": true, "locked": false},
-    {"id": "media_title", "label": "", "source": "media_title", "format": "{value}", "x": 924, "y": 308, "box_width": 786, "box_height": 40, "font_family": "Ubuntu", "font_size": 36, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": true, "marquee_speed": 62.0, "label_color": [242, 244, 246], "value_color": [242, 244, 246], "align": "left", "z_index": 210, "visible": true, "locked": false},
-    {"id": "media_artist", "label": "", "source": "media_artist", "format": "{value}", "x": 924, "y": 350, "box_width": 786, "box_height": 28, "font_family": "Ubuntu", "font_size": 24, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [188, 196, 200], "value_color": [188, 196, 200], "align": "left", "z_index": 210, "visible": true, "locked": false},
-    {"id": "media_app", "label": "Player", "source": "media_app", "format": "{value}", "x": 924, "y": 386, "box_width": 246, "box_height": 22, "font_family": "Ubuntu", "font_size": 18, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [152, 168, 176], "value_color": [152, 168, 176], "align": "left", "z_index": 210, "visible": true, "locked": false},
-    {"id": "media_state", "label": "State", "source": "media_state", "format": "{value}", "x": 1190, "y": 386, "box_width": 220, "box_height": 22, "font_family": "Ubuntu", "font_size": 18, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [152, 168, 176], "value_color": [152, 168, 176], "align": "left", "z_index": 210, "visible": true, "locked": false}
+    {"id": "host", "label": "", "source": "hostname", "format": "{value}", "x": 118, "y": 30, "box_width": 300, "box_height": 28, "font_family": "Ubuntu", "font_size": 24, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [240, 246, 248], "value_color": [240, 246, 248], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "clock", "label": "", "source": "time_hms", "format": "{value}", "x": 1418, "y": 24, "box_width": 340, "box_height": 48, "font_family": "Ubuntu", "font_size": 54, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [255, 230, 168], "value_color": [255, 230, 168], "align": "center", "z_index": 210, "visible": true, "locked": false},
+    {"id": "cpu_usage", "label": "CPU", "source": "cpu_usage_percent", "format": "{value}", "x": 126, "y": 332, "box_width": 180, "box_height": 40, "font_family": "Ubuntu", "font_size": 38, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [236, 242, 246], "value_color": [122, 236, 255], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "gpu_usage", "label": "GPU", "source": "gpu_load", "format": "{value}", "x": 322, "y": 332, "box_width": 180, "box_height": 40, "font_family": "Ubuntu", "font_size": 38, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [236, 242, 246], "value_color": [122, 236, 255], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "ram_usage", "label": "RAM", "source": "mem_percent", "format": "{value}", "x": 520, "y": 332, "box_width": 166, "box_height": 40, "font_family": "Ubuntu", "font_size": 38, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [236, 242, 246], "value_color": [255, 220, 144], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "media_title", "label": "", "source": "media_title", "format": "{value}", "x": 770, "y": 294, "box_width": 980, "box_height": 48, "font_family": "Ubuntu", "font_size": 42, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": true, "marquee_speed": 62.0, "label_color": [255, 246, 236], "value_color": [255, 246, 236], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "media_artist", "label": "", "source": "media_artist", "format": "{value}", "x": 770, "y": 344, "box_width": 980, "box_height": 30, "font_family": "Ubuntu", "font_size": 28, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [232, 218, 198], "value_color": [232, 218, 198], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "media_app", "label": "PLAYER", "source": "media_app", "format": "{value}", "x": 772, "y": 384, "box_width": 286, "box_height": 24, "font_family": "Ubuntu", "font_size": 20, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [182, 206, 214], "value_color": [182, 206, 214], "align": "left", "z_index": 210, "visible": true, "locked": false},
+    {"id": "media_state", "label": "STATE", "source": "media_state", "format": "{value}", "x": 1092, "y": 384, "box_width": 286, "box_height": 24, "font_family": "Ubuntu", "font_size": 20, "font_bold": true, "font_italic": false, "font_underline": false, "marquee": false, "marquee_speed": 62.0, "label_color": [182, 206, 214], "value_color": [182, 206, 214], "align": "left", "z_index": 210, "visible": true, "locked": false}
   ],
   "images": [],
   "effects": {
