@@ -107,6 +107,7 @@ class ReplayController:
         self.frame_count = 0
         self.last_capture_scan_at: str | None = None
         self.themes: dict[str, dict[str, Any]] = {}
+        self.themes_file_mtime_ns: int | None = None
         self.playlist: list[dict[str, Any]] = []
         self.playlist_thread: threading.Thread | None = None
         self.playlist_stop = threading.Event()
@@ -210,6 +211,7 @@ class ReplayController:
             self.themes = {}
             try:
                 if not self.cfg.themes_file.exists():
+                    self.themes_file_mtime_ns = None
                     return
                 raw = json.loads(self.cfg.themes_file.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
@@ -223,6 +225,10 @@ class ReplayController:
                             "path": path,
                             "raw_jpeg_passthrough": bool(item.get("raw_jpeg_passthrough", False)),
                         }
+                try:
+                    self.themes_file_mtime_ns = self.cfg.themes_file.stat().st_mtime_ns
+                except Exception:
+                    self.themes_file_mtime_ns = None
             except Exception as exc:
                 self.last_error = f"themes load failed: {exc}"
 
@@ -231,8 +237,24 @@ class ReplayController:
             ensure_parent(self.cfg.themes_file)
             payload = json.dumps(self.themes, ensure_ascii=False, indent=2)
             self.cfg.themes_file.write_text(payload + "\n", encoding="utf-8")
+            try:
+                self.themes_file_mtime_ns = self.cfg.themes_file.stat().st_mtime_ns
+            except Exception:
+                self.themes_file_mtime_ns = None
+
+    def _reload_themes_if_changed(self) -> None:
+        with self.lock:
+            current_mtime_ns: int | None = None
+            try:
+                if self.cfg.themes_file.exists():
+                    current_mtime_ns = self.cfg.themes_file.stat().st_mtime_ns
+            except Exception:
+                current_mtime_ns = None
+            if current_mtime_ns != self.themes_file_mtime_ns:
+                self._load_themes()
 
     def list_themes(self) -> dict[str, Any]:
+        self._reload_themes_if_changed()
         with self.lock:
             items = []
             for name in sorted(self.themes.keys()):
@@ -254,6 +276,7 @@ class ReplayController:
             return {"count": len(items), "items": items}
 
     def add_theme(self, name: str, path: str, raw_jpeg_passthrough: bool = False) -> dict[str, Any]:
+        self._reload_themes_if_changed()
         with self.lock:
             name = str(name).strip()
             path = str(path).strip()
@@ -269,6 +292,7 @@ class ReplayController:
             return {"name": name, "theme": self.themes[name]}
 
     def remove_theme(self, name: str) -> dict[str, Any]:
+        self._reload_themes_if_changed()
         with self.lock:
             name = str(name).strip()
             if name not in self.themes:
@@ -278,6 +302,7 @@ class ReplayController:
             return {"name": name, "removed": removed}
 
     def apply_theme(self, name: str, resume_loop: bool = False, timeout_s: float = 30.0) -> dict[str, Any]:
+        self._reload_themes_if_changed()
         with self.lock:
             name = str(name).strip()
             theme = self.themes.get(name)
