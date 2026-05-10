@@ -246,9 +246,10 @@ class PreviewLabel(QLabel):
         self._selection_current_widget: QPoint | None = None
         self._zoom_mode = "fit"
         self._zoom_percent = 100
-        self._guide_lines: list[tuple[str, int]] = []
+        self._guide_lines: list[dict[str, Any]] = []
         self._movement_badge: str = ""
         self._tool_mode = "auto"
+        self._snap_threshold = 8
 
     def set_preview_pixmap(self, pixmap: QPixmap | None, *, display_rotation: int = 0) -> None:
         self._display_rotation = int(display_rotation) % 360
@@ -285,9 +286,14 @@ class PreviewLabel(QLabel):
         self._guide_lines = []
         self.update()
 
-    def set_temporary_guides(self, guides: list[tuple[str, int]], badge: str = "") -> None:
-        self._guide_lines = list(guides)
-        self._movement_badge = badge
+    def set_temporary_guides(self, guides: list[object], badge: str = "") -> None:
+        normalized_guides: list[dict[str, Any]] = []
+        for guide in guides:
+            entry = self._normalize_guide_entry(guide)
+            if entry is not None:
+                normalized_guides.append(entry)
+        self._guide_lines = normalized_guides
+        self._movement_badge = self._compose_guide_badge(badge, self._guide_lines)
         self.update()
 
     def clear_temporary_guides(self) -> None:
@@ -303,6 +309,9 @@ class PreviewLabel(QLabel):
         self._zoom_mode = "manual"
         self._zoom_percent = max(25, min(300, int(percent)))
         self._refresh_scaled_pixmap()
+
+    def set_snap_threshold(self, value: int) -> None:
+        self._snap_threshold = max(4, min(32, int(value)))
 
     def set_tool_mode(self, mode: str) -> None:
         normalized = str(mode).strip().lower() or "auto"
@@ -497,13 +506,17 @@ class PreviewLabel(QLabel):
             if self._guide_lines:
                 guide_pen = QPen(QColor("#45d0ff"), 1, Qt.DashLine)
                 painter.setPen(guide_pen)
-                for axis, value in self._guide_lines:
+                for guide in self._guide_lines:
+                    axis = str(guide.get("axis", ""))
+                    value = int(guide.get("value", 0))
                     if axis == "x":
                         x = self._draw_offset_x + int(round(value * self._draw_width / max(1, self._canvas_size.width())))
                         painter.drawLine(x, self._draw_offset_y, x, self._draw_offset_y + self._draw_height)
+                        self._paint_guide_label(painter, QPoint(x + 6, self._draw_offset_y + 24), str(guide.get("label", value)))
                     else:
                         y = self._draw_offset_y + int(round(value * self._draw_height / max(1, self._canvas_size.height())))
                         painter.drawLine(self._draw_offset_x, y, self._draw_offset_x + self._draw_width, y)
+                        self._paint_guide_label(painter, QPoint(self._draw_offset_x + 30, y - 6), str(guide.get("label", value)))
             if self._movement_badge:
                 badge_rect = QRect(self._draw_offset_x + 18, self._draw_offset_y + 22, 180, 34)
                 painter.setPen(Qt.NoPen)
@@ -613,6 +626,58 @@ class PreviewLabel(QLabel):
             group_rect = group_rect.united(rect)
         return group_rect
 
+    def _normalize_guide_entry(self, guide: object) -> dict[str, Any] | None:
+        if isinstance(guide, dict):
+            axis = str(guide.get("axis", "")).strip().lower()
+            if axis not in {"x", "y"}:
+                return None
+            try:
+                value = int(guide.get("value", 0))
+            except Exception:
+                return None
+            label = str(guide.get("label", value)).strip() or str(value)
+            return {"axis": axis, "value": value, "label": label}
+        if isinstance(guide, tuple) and len(guide) >= 2:
+            axis = str(guide[0]).strip().lower()
+            if axis not in {"x", "y"}:
+                return None
+            try:
+                value = int(guide[1])
+            except Exception:
+                return None
+            label = str(guide[2]).strip() if len(guide) >= 3 else str(value)
+            return {"axis": axis, "value": value, "label": label or str(value)}
+        return None
+
+    def _compose_guide_badge(self, badge: str, guides: list[dict[str, Any]]) -> str:
+        labels: list[str] = []
+        seen: set[str] = set()
+        for guide in guides:
+            label = str(guide.get("label", "")).strip()
+            if not label or label in seen:
+                continue
+            labels.append(label)
+            seen.add(label)
+            if len(labels) >= 2:
+                break
+        if not labels:
+            return badge
+        suffix = " • ".join(labels)
+        return f"{badge} • {suffix}" if badge else suffix
+
+    def _paint_guide_label(self, painter: QPainter, anchor: QPoint, text: str) -> None:
+        if not text:
+            return
+        metrics = painter.fontMetrics()
+        text_width = metrics.horizontalAdvance(text) + 12
+        text_height = metrics.height() + 4
+        rect = QRect(anchor.x(), anchor.y(), text_width, text_height)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(12, 18, 28, 220))
+        painter.drawRoundedRect(rect, 6, 6)
+        painter.setPen(QColor("#7dd3fc"))
+        painter.drawText(rect, Qt.AlignCenter, text)
+
     def _hit_test(self, pos: QPoint) -> tuple[str, int, str] | None:
         for item in reversed(self._elements):
             if not bool(item.get("visible", True)):
@@ -650,48 +715,67 @@ class PreviewLabel(QLabel):
         h: int,
         collection: str,
         index: int,
-    ) -> list[tuple[str, int]]:
-        guides: list[tuple[str, int]] = []
-        current_x = {x, x + w // 2, x + w}
-        current_y = {y, y + h // 2, y + h}
+    ) -> list[dict[str, Any]]:
+        guides: list[dict[str, Any]] = []
+        current_x = [("left", x), ("center", x + w // 2), ("right", x + w)]
+        current_y = [("top", y), ("center", y + h // 2), ("bottom", y + h)]
         safe_left = 24
         safe_right = max(0, self._canvas_size.width() - 24)
         safe_top = 18
         safe_bottom = max(0, self._canvas_size.height() - 18)
-        canvas_guides_x = {self._canvas_size.width() // 2, safe_left, safe_right}
-        canvas_guides_y = {self._canvas_size.height() // 2, safe_top, safe_bottom}
-        for cx in current_x:
-            for ox in canvas_guides_x:
-                if abs(cx - ox) <= 6:
-                    guides.append(("x", ox))
-        for cy in current_y:
-            for oy in canvas_guides_y:
-                if abs(cy - oy) <= 6:
-                    guides.append(("y", oy))
+        canvas_guides_x = [
+            (self._canvas_size.width() // 2, "canvas center"),
+            (safe_left, "safe left"),
+            (safe_right, "safe right"),
+        ]
+        canvas_guides_y = [
+            (self._canvas_size.height() // 2, "canvas middle"),
+            (safe_top, "safe top"),
+            (safe_bottom, "safe bottom"),
+        ]
+        threshold = max(4, int(getattr(self, "_snap_threshold", 8)))
+        for _edge, cx in current_x:
+            for ox, label in canvas_guides_x:
+                if abs(cx - ox) <= threshold:
+                    guides.append({"axis": "x", "value": ox, "label": label})
+        for _edge, cy in current_y:
+            for oy, label in canvas_guides_y:
+                if abs(cy - oy) <= threshold:
+                    guides.append({"axis": "y", "value": oy, "label": label})
         for item in self._elements:
             if item["collection"] == collection and int(item["index"]) == index:
                 continue
             if not bool(item.get("visible", True)):
                 continue
             rx, ry, rw, rh = item["rect"]
-            other_x = {rx, rx + rw // 2, rx + rw}
-            other_y = {ry, ry + rh // 2, ry + rh}
-            for cx in current_x:
-                for ox in other_x:
-                    if abs(cx - ox) <= 6:
-                        guides.append(("x", ox))
+            other_label = str(item.get("label", item.get("collection", "element"))).strip()[:18]
+            other_x = [
+                (rx, f"{other_label} left"),
+                (rx + rw // 2, f"{other_label} center"),
+                (rx + rw, f"{other_label} right"),
+            ]
+            other_y = [
+                (ry, f"{other_label} top"),
+                (ry + rh // 2, f"{other_label} middle"),
+                (ry + rh, f"{other_label} bottom"),
+            ]
+            for _edge, cx in current_x:
+                for ox, label in other_x:
+                    if abs(cx - ox) <= threshold:
+                        guides.append({"axis": "x", "value": ox, "label": label})
                         break
-            for cy in current_y:
-                for oy in other_y:
-                    if abs(cy - oy) <= 6:
-                        guides.append(("y", oy))
+            for _edge, cy in current_y:
+                for oy, label in other_y:
+                    if abs(cy - oy) <= threshold:
+                        guides.append({"axis": "y", "value": oy, "label": label})
                         break
-        unique: list[tuple[str, int]] = []
+        unique: list[dict[str, Any]] = []
         seen: set[tuple[str, int]] = set()
         for item in guides:
-            if item not in seen:
+            key = (str(item.get("axis", "")), int(item.get("value", 0)))
+            if key not in seen:
                 unique.append(item)
-                seen.add(item)
+                seen.add(key)
         return unique
 
     def _paint_rulers(self, painter: QPainter) -> None:
@@ -3822,6 +3906,8 @@ class TrofeoGui(QMainWindow):
         self.designer_align_center_h_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("center-h"))
         self.designer_align_center_v_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("center-v"))
         self.designer_align_right_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("right"))
+        self.designer_snap_spin.valueChanged.connect(lambda value: self.preview_label.set_snap_threshold(int(value)))
+        self.designer_snap_chk.toggled.connect(lambda _checked: self._update_preview_canvas_overlay())
 
         
         self.bg_path_browse_btn.clicked.connect(self.browse_background_path)
@@ -3907,6 +3993,7 @@ class TrofeoGui(QMainWindow):
 
         logs_layout.addWidget(log_box, 1)
         self._update_image_tools_availability()
+        self.preview_label.set_snap_threshold(int(self.designer_snap_spin.value()))
         self._set_designer_mouse_tool("auto")
         self.apply_designer_mode(self.designer_mode_combo.currentText())
         self._sync_shell_navigation()
