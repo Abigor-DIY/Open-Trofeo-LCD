@@ -106,6 +106,27 @@ IMAGE_PRESETS_PATH = Path(".trofeo-image-presets.json")
 THEME_AUTOSAVE_PATH = Path(".trofeo-theme-autosave.json")
 UI_STATE_PATH = Path(".trofeo-ui-state.json")
 TTCR_STAT_RULES_PATH = Path(".trofeo-ttcr-stat-rules.json")
+
+# Stats whose data-source fields are shown on the inspector "Music" tab (audio / MPRIS / volume).
+MUSIC_AUDIO_STAT_SOURCES: frozenset[str] = frozenset(
+    {
+        "volume_percent",
+        "volume_state",
+        "media_title",
+        "media_artist",
+        "media_app",
+        "media_state",
+    }
+)
+MUSIC_RELATED_IMAGE_SOURCES: frozenset[str] = frozenset({"media_cover", "media_video_frame"})
+MUSIC_RELATED_PANEL_ID_PREFIXES: tuple[str, ...] = ("panel_media", "panel_volume", "panel_music_eq")
+MUSIC_VISUAL_STAT_DISPLAYS: frozenset[str] = frozenset({"equalizer"})
+DESIGNER_DOMAIN_MODES: tuple[tuple[str, str], ...] = (
+    ("all", "All"),
+    ("system", "System"),
+    ("music", "Music"),
+)
+
 THEME_COLOR_PRESETS = {
     "Ocean": {
         "base": [8, 18, 30],
@@ -657,17 +678,19 @@ class LayerRowWidget(QWidget):
     ) -> None:
         super().__init__()
         self._selected = False
+        self._raw_title = title
+        self._raw_subtitle = subtitle
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(8)
+        layout.setContentsMargins(6, 5, 6, 5)
+        layout.setSpacing(6)
         icon_label = QLabel()
-        icon_label.setPixmap(icon.pixmap(18, 18))
+        icon_label.setPixmap(icon.pixmap(16, 16))
         layout.addWidget(icon_label)
         self.thumb_label = QLabel()
-        self.thumb_label.setFixedSize(58, 36)
+        self.thumb_label.setFixedSize(42, 28)
         self.thumb_label.setStyleSheet("background: #0f1319; border: 1px solid #314055; border-radius: 8px;")
         if thumbnail is not None and not thumbnail.isNull():
-            self.thumb_label.setPixmap(thumbnail.scaled(58, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.thumb_label.setPixmap(thumbnail.scaled(42, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         layout.addWidget(self.thumb_label)
         self.badge_label = QLabel()
         self.badge_label.setObjectName("layerBadgeLabel")
@@ -696,16 +719,18 @@ class LayerRowWidget(QWidget):
         self.eye_btn.setIcon(self._visible_icon if visible else self._hidden_icon)
         self.eye_btn.setText("")
         self.eye_btn.setToolTip("Pokaż / Ukryj")
+        self.eye_btn.setFixedWidth(22)
         self.lock_btn = QToolButton()
         self.lock_btn.setCheckable(True)
         self.lock_btn.setChecked(bool(locked))
         self.lock_btn.setText("L" if locked else "E")
         self.lock_btn.setToolTip("Blokuj / Odblokuj")
+        self.lock_btn.setFixedWidth(22)
         layout.addWidget(self.eye_btn)
         layout.addWidget(self.lock_btn)
         self.eye_btn.clicked.connect(self._emit_visibility)
         self.lock_btn.clicked.connect(self._emit_lock)
-        self.setMinimumHeight(58)
+        self.setMinimumHeight(50)
         self.set_title(title)
         self.set_subtitle(subtitle)
         self.set_thumbnail(thumbnail)
@@ -713,6 +738,7 @@ class LayerRowWidget(QWidget):
         self.set_selected(False)
 
     def set_title(self, title: str) -> None:
+        self._raw_title = title
         badge = ""
         rest = title
         if title.startswith("[") and "]" in title:
@@ -720,9 +746,9 @@ class LayerRowWidget(QWidget):
             badge = badge.lstrip("[")
             rest = rest.strip()
         self.badge_label.setText(badge)
+        self.badge_label.setVisible(bool(badge))
         self._collection = badge
-        title_text = rest or title
-        self.title_label.setText(self.title_label.fontMetrics().elidedText(title_text, Qt.ElideRight, 220))
+        self._update_elided_labels()
 
     def set_visible_state(self, visible: bool) -> None:
         self.eye_btn.setChecked(bool(visible))
@@ -730,9 +756,24 @@ class LayerRowWidget(QWidget):
         self.eye_btn.setText("")
 
     def set_subtitle(self, subtitle: str) -> None:
-        text = subtitle.strip()
+        self._raw_subtitle = subtitle
+        self._update_elided_labels()
+
+    def _update_elided_labels(self) -> None:
+        title_text = ""
+        if self._raw_title.startswith("[") and "]" in self._raw_title:
+            _badge, title_text = self._raw_title.split("]", 1)
+            title_text = title_text.strip()
+        else:
+            title_text = self._raw_title
+        chrome = 112 if self.thumb_label.isVisible() else 74
+        if self.badge_label.isVisible():
+            chrome += max(26, self.badge_label.sizeHint().width())
+        available = max(110, self.width() - chrome)
+        self.title_label.setText(self.title_label.fontMetrics().elidedText(title_text or self._raw_title, Qt.ElideRight, available))
+        text = self._raw_subtitle.strip()
         self.subtitle_label.setVisible(bool(text))
-        self.subtitle_label.setText(self.subtitle_label.fontMetrics().elidedText(text, Qt.ElideRight, 220))
+        self.subtitle_label.setText(self.subtitle_label.fontMetrics().elidedText(text, Qt.ElideRight, available))
 
     def set_locked(self, locked: bool) -> None:
         self.lock_btn.setChecked(bool(locked))
@@ -750,7 +791,7 @@ class LayerRowWidget(QWidget):
 
     def set_thumbnail(self, thumbnail: QPixmap | None) -> None:
         if thumbnail is not None and not thumbnail.isNull():
-            self.thumb_label.setPixmap(thumbnail.scaled(58, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.thumb_label.setPixmap(thumbnail.scaled(42, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             self.thumb_label.setStyleSheet("background: #0f1319; border: 1px solid #314055; border-radius: 6px;")
             self.thumb_label.setAlignment(Qt.AlignCenter)
             self.thumb_label.setText("")
@@ -767,6 +808,7 @@ class LayerRowWidget(QWidget):
             self.thumb_label.setPixmap(QPixmap())
             self.thumb_label.setText("")
             self.thumb_label.hide()
+        self._update_elided_labels()
 
     def _emit_visibility(self) -> None:
         self.set_visible_state(self.eye_btn.isChecked())
@@ -779,6 +821,10 @@ class LayerRowWidget(QWidget):
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
         self.activated.emit(event.modifiers())
         super().mousePressEvent(event)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._update_elided_labels()
 
 
 class AnimatedCardFrame(QFrame):
@@ -1712,18 +1758,7 @@ class TrofeoGui(QMainWindow):
 
     def _show_stat_picker_menu(self, target_edit: QLineEdit) -> None:
         menu = QMenu(self)
-        groups = {
-            "🖥️ System": ["hostname", "ip_local", "time_hms", "date_ymd", "uptime_human"],
-            "⚙️ CPU": ["cpu_usage_percent", "cpu_core_avg_percent", "cpu_core_max_percent", "cpu_freq_ghz", "cpu_temp_c", "load_average"],
-            "🎮 GPU": ["gpu_name", "gpu_temp", "gpu_load", "vram_percent", "vram_used_mb", "vram_total_mb"],
-            "🌐 Sieć": ["net_dl_kbps", "net_ul_kbps"],
-            "💽 Dysk": ["disk_percent", "disk_used_gb", "disk_total_gb"],
-            "🧠 RAM": ["mem_percent", "mem_used_mb", "mem_total_mb"],
-            "🔊 Audio": ["volume_percent", "volume_state"],
-            "🎵 Media": ["media_title", "media_artist", "media_app", "media_state"],
-        }
-        
-        for group_name, stats in groups.items():
+        for group_name, stats in self._designer_source_groups(self._designer_domain_mode()):
             submenu = menu.addMenu(group_name)
             for s in stats:
                 if s in self.theme_stat_sources:
@@ -1771,17 +1806,70 @@ class TrofeoGui(QMainWindow):
             return custom[source]
         return source.replace("_", " ").title()
 
+    def _is_music_stat_source(self, source: str) -> bool:
+        return str(source).strip().lower() in MUSIC_AUDIO_STAT_SOURCES
+
+    def _designer_domain_mode(self) -> str:
+        combo = getattr(self, "designer_domain_combo", None)
+        if combo is None:
+            return "all"
+        return str(combo.currentData() or "all").strip().lower() or "all"
+
+    def _designer_source_groups(self, domain: str = "all") -> list[tuple[str, list[str]]]:
+        domain_key = str(domain).strip().lower() or "all"
+        music_groups = [
+            ("Music / Now Playing", ["media_title", "media_artist", "media_app", "media_state"]),
+            ("Audio / Volume", ["volume_percent", "volume_state"]),
+        ]
+        system_groups = [
+            ("System", ["hostname", "ip_local", "time_hms", "date_ymd", "uptime_human"]),
+            ("CPU", ["cpu_usage_percent", "cpu_core_avg_percent", "cpu_core_max_percent", "cpu_freq_ghz", "cpu_temp_c", "load_average"]),
+            ("GPU", ["gpu_name", "gpu_temp", "gpu_load", "vram_percent", "vram_used_mb", "vram_total_mb"]),
+            ("Memory", ["mem_percent", "mem_used_mb", "mem_total_mb"]),
+            ("Disk", ["disk_percent", "disk_used_gb", "disk_total_gb"]),
+            ("Network", ["net_dl_kbps", "net_ul_kbps"]),
+        ]
+        if domain_key == "music":
+            return music_groups
+        if domain_key == "system":
+            return system_groups
+        return music_groups + system_groups
+
     def _populate_designer_source_combo(self, selected_source: str = "") -> None:
         if not hasattr(self, "designer_source_combo"):
             return
         self.designer_source_combo.blockSignals(True)
         self.designer_source_combo.clear()
-        for source in self.theme_stat_sources:
-            self.designer_source_combo.addItem(self._humanize_stat_source(source), source)
+        model = self.designer_source_combo.model()
+        groups = self._designer_source_groups(self._designer_domain_mode())
+        first_group = True
+        for group_name, stats in groups:
+            available = [source for source in stats if source in self.theme_stat_sources]
+            if not available:
+                continue
+            if not first_group:
+                self.designer_source_combo.insertSeparator(self.designer_source_combo.count())
+            first_group = False
+            header_index = self.designer_source_combo.count()
+            self.designer_source_combo.addItem(f"── {group_name} ──", f"__header__:{group_name}")
+            try:
+                header_item = model.item(header_index)
+                if header_item is not None:
+                    header_item.setEnabled(False)
+            except Exception:
+                pass
+            for source in available:
+                self.designer_source_combo.addItem(self._humanize_stat_source(source), source)
         if selected_source:
             idx = self.designer_source_combo.findData(selected_source)
             if idx >= 0:
                 self.designer_source_combo.setCurrentIndex(idx)
+        elif self.designer_source_combo.count() > 0:
+            for idx in range(self.designer_source_combo.count()):
+                data = str(self.designer_source_combo.itemData(idx) or "")
+                if not data.startswith("__header__:"):
+                    self.designer_source_combo.setCurrentIndex(idx)
+                    break
         self.designer_source_combo.blockSignals(False)
 
     def _build_designer_content_row(self, label: str, edit: QLineEdit, has_picker: bool = True) -> QWidget:
@@ -1798,7 +1886,7 @@ class TrofeoGui(QMainWindow):
             layout.addWidget(btn)
         return row
 
-    def _create_dashboard_status_row(self, label: str, value: str = "-") -> tuple[QWidget, QLabel]:
+    def _create_dashboard_status_row(self, label: str, value: str = "-") -> tuple[QWidget, QLabel, QLabel]:
         frame = QFrame()
         frame.setObjectName("statPillFrame")
         layout = QHBoxLayout(frame)
@@ -1811,7 +1899,7 @@ class TrofeoGui(QMainWindow):
         current.setAlignment(Qt.AlignCenter)
         layout.addWidget(title, 1)
         layout.addWidget(current)
-        return frame, current
+        return frame, title, current
 
     def _set_dashboard_badge(self, label: QLabel, text: str, tone: str = "neutral") -> None:
         palette = {
@@ -1828,7 +1916,7 @@ class TrofeoGui(QMainWindow):
             "border-radius: 10px; padding: 6px 12px; font-weight: 800;"
         )
 
-    def _create_system_metric_card(self, title: str, value: str = "-", detail: str = "-") -> tuple[QFrame, QLabel, QLabel]:
+    def _create_system_metric_card(self, title: str, value: str = "-", detail: str = "-") -> tuple[QFrame, QLabel, QLabel, QLabel]:
         card = AnimatedCardFrame("assetCard")
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 14, 16, 14)
@@ -1847,7 +1935,7 @@ class TrofeoGui(QMainWindow):
         layout.addWidget(value_lbl)
         layout.addWidget(detail_lbl)
         layout.addStretch(1)
-        return card, value_lbl, detail_lbl
+        return card, title_lbl, value_lbl, detail_lbl
 
     def _format_duration_human(self, seconds: float | int | None) -> str:
         if seconds is None:
@@ -2288,26 +2376,27 @@ class TrofeoGui(QMainWindow):
         runtime_device_layout = QVBoxLayout(runtime_device_tab)
         runtime_device_layout.setContentsMargins(0, 0, 0, 0)
         runtime_device_layout.setSpacing(10)
-        runtime_sections_tabs.addTab(runtime_device_tab, "Urządzenie")
+        runtime_sections_tabs.addTab(runtime_device_tab, "Device")
 
         runtime_image_tab = QWidget()
         runtime_image_layout = QVBoxLayout(runtime_image_tab)
         runtime_image_layout.setContentsMargins(0, 0, 0, 0)
         runtime_image_layout.setSpacing(10)
-        runtime_sections_tabs.addTab(runtime_image_tab, "Obraz")
+        runtime_sections_tabs.addTab(runtime_image_tab, "Image")
 
         runtime_theme_tab = QWidget()
         runtime_theme_layout = QVBoxLayout(runtime_theme_tab)
         runtime_theme_layout.setContentsMargins(0, 0, 0, 0)
         runtime_theme_layout.setSpacing(10)
-        runtime_sections_tabs.addTab(runtime_theme_tab, "Motywy")
+        runtime_sections_tabs.addTab(runtime_theme_tab, "Themes")
 
-        work_box = QGroupBox("Obraz Jednorazowy")
+        work_box = QGroupBox("Single image")
+        self.work_box = work_box
         work_layout = QVBoxLayout(work_box)
         work_layout.setSpacing(8)
         self.frame_spin = QSpinBox()
         self.frame_spin.setRange(0, 1_000_000)
-        self.set_frame_btn = QPushButton("Ustaw klatkę")
+        self.set_frame_btn = QPushButton("Set frame")
         self.set_frame_btn.clicked.connect(self.set_frame)
         frame_row = QHBoxLayout()
         frame_row.addWidget(QLabel("Frame index:"))
@@ -2317,20 +2406,20 @@ class TrofeoGui(QMainWindow):
         work_layout.addLayout(frame_row)
 
         self.image_edit = QLineEdit(str(Path("reference_frame_trcc.jpg")))
-        self.browse_btn = QPushButton("Wybierz obraz")
-        self.prepare_image_btn = QPushButton("Przygotuj obraz")
-        self.send_image_btn = QPushButton("Wyślij obraz")
+        self.browse_btn = QPushButton("Browse image")
+        self.prepare_image_btn = QPushButton("Prepare image")
+        self.send_image_btn = QPushButton("Send image")
         self.raw_passthrough_chk = QCheckBox("Raw JPEG passthrough")
         self.raw_passthrough_chk.setChecked(False)
-        self.stop_before_send_chk = QCheckBox("Zatrzymaj runtime przed wysyłką")
+        self.stop_before_send_chk = QCheckBox("Stop runtime before sending")
         self.stop_before_send_chk.setChecked(True)
-        self.resume_loop_chk = QCheckBox("Wznów loop po wysyłce")
+        self.resume_loop_chk = QCheckBox("Resume loop after send")
         self.resume_loop_chk.setChecked(False)
         self.browse_btn.clicked.connect(self.browse_image)
         self.prepare_image_btn.clicked.connect(lambda: self.prepare_image_asset(self.image_edit))
         self.send_image_btn.clicked.connect(self.send_image)
         file_row = QHBoxLayout()
-        file_row.addWidget(QLabel("Plik obrazu:"))
+        file_row.addWidget(QLabel("Image file:"))
         file_row.addWidget(self.image_edit, 1)
         file_row.addWidget(self.browse_btn)
         file_row.addWidget(self.prepare_image_btn)
@@ -2346,7 +2435,8 @@ class TrofeoGui(QMainWindow):
 
         cfg_status_row = QHBoxLayout()
 
-        cfg_box = QGroupBox("Ustawienia Odtwarzania")
+        cfg_box = QGroupBox("Playback settings")
+        self.cfg_box = cfg_box
         cfg_form = QFormLayout(cfg_box)
         self.pcap_edit = QLineEdit("dzis.pcapng")
         self.ack_timeout_spin = QSpinBox()
@@ -2360,7 +2450,7 @@ class TrofeoGui(QMainWindow):
         self.frame_delay_spin.setRange(0.0, 5.0)
         self.frame_delay_spin.setSingleStep(0.005)
         self.frame_delay_spin.setValue(0.02)
-        self.apply_cfg_btn = QPushButton("Zastosuj Config")
+        self.apply_cfg_btn = QPushButton("Apply config")
         self.apply_cfg_btn.clicked.connect(self.apply_config)
         cfg_form.addRow("PCAP file:", self.pcap_edit)
         cfg_form.addRow("ACK timeout (ms):", self.ack_timeout_spin)
@@ -2369,7 +2459,8 @@ class TrofeoGui(QMainWindow):
         cfg_form.addRow("", self.apply_cfg_btn)
         cfg_status_row.addWidget(cfg_box, 1)
 
-        status_box = QGroupBox("Monitor Systemowy")
+        status_box = QGroupBox("System monitor")
+        self.status_box = status_box
         status_grid = QGridLayout(status_box)
         status_grid.setContentsMargins(16, 24, 16, 16)
         status_grid.setSpacing(12)
@@ -2398,7 +2489,7 @@ class TrofeoGui(QMainWindow):
             
         self.lbl_last_error.setStyleSheet("color: #f87171; font-family: monospace; font-size: 11px;")
 
-        status_grid.addWidget(make_status_label("📟 Tryb:"), 0, 0)
+        status_grid.addWidget(make_status_label("📟 Mode:"), 0, 0)
         status_grid.addWidget(self.lbl_mode, 0, 1)
         status_grid.addWidget(make_status_label("🚦 Status:"), 0, 2)
         status_grid.addWidget(self.lbl_running, 0, 3)
@@ -2406,27 +2497,28 @@ class TrofeoGui(QMainWindow):
         status_grid.addWidget(self.lbl_pid, 1, 1)
         status_grid.addWidget(make_status_label("⏱ Uptime:"), 1, 2)
         status_grid.addWidget(self.lbl_uptime, 1, 3)
-        status_grid.addWidget(make_status_label("🖼 Ramki:"), 2, 0)
+        status_grid.addWidget(make_status_label("🖼 Frames:"), 2, 0)
         status_grid.addWidget(self.lbl_frame_count, 2, 1)
         status_grid.addWidget(make_status_label("📂 PCAP:"), 2, 2)
         status_grid.addWidget(self.lbl_pcap, 2, 3)
-        status_grid.addWidget(make_status_label("🎵 Playlista:"), 3, 0)
+        status_grid.addWidget(make_status_label("🎵 Playlist:"), 3, 0)
         status_grid.addWidget(self.lbl_playlist, 3, 1)
-        status_grid.addWidget(make_status_label("⏳ Czas PL:"), 3, 2)
+        status_grid.addWidget(make_status_label("⏳ PL time:"), 3, 2)
         status_grid.addWidget(self.lbl_playlist_uptime, 3, 3)
-        status_grid.addWidget(make_status_label("⚠️ Błąd:"), 4, 0)
+        status_grid.addWidget(make_status_label("⚠️ Error:"), 4, 0)
         status_grid.addWidget(self.lbl_last_error, 4, 1, 1, 3)
         cfg_status_row.addWidget(status_box, 1)
         runtime_device_layout.addLayout(cfg_status_row)
         runtime_device_layout.addStretch(1)
 
-        theme_box = QGroupBox("Biblioteka motywów")
+        theme_box = QGroupBox("Theme library")
+        self.runtime_legacy_theme_box = theme_box
         theme_layout = QVBoxLayout(theme_box)
         theme_layout.setSpacing(8)
         self.theme_combo = QComboBox()
-        self.theme_refresh_btn = QPushButton("Odśwież listę")
-        self.theme_apply_btn = QPushButton("Zastosuj motyw")
-        self.theme_remove_btn = QPushButton("Usuń Theme")
+        self.theme_refresh_btn = QPushButton("Refresh list")
+        self.theme_apply_btn = QPushButton("Apply theme")
+        self.theme_remove_btn = QPushButton("Remove theme")
         self.theme_refresh_btn.clicked.connect(self.refresh_themes)
         self.theme_apply_btn.clicked.connect(self.apply_theme)
         self.theme_remove_btn.clicked.connect(self.remove_theme)
@@ -2439,24 +2531,24 @@ class TrofeoGui(QMainWindow):
         theme_layout.addLayout(theme_row_1)
         self.theme_name_edit = QLineEdit()
         self.theme_path_edit = QLineEdit(str(Path("reference_frame_trcc.jpg")))
-        self.theme_browse_btn = QPushButton("Wybierz plik")
-        self.theme_prepare_btn = QPushButton("Przygotuj obraz")
-        self.theme_add_btn = QPushButton("Dodaj / Aktualizuj Theme")
+        self.theme_browse_btn = QPushButton("Browse file")
+        self.theme_prepare_btn = QPushButton("Prepare image")
+        self.theme_add_btn = QPushButton("Add / update theme")
         self.theme_raw_chk = QCheckBox("Raw JPEG passthrough (theme)")
-        self.theme_stop_before_apply_chk = QCheckBox("Zatrzymaj runtime przed apply")
+        self.theme_stop_before_apply_chk = QCheckBox("Stop runtime before apply")
         self.theme_stop_before_apply_chk.setChecked(True)
-        self.theme_resume_chk = QCheckBox("Wznów loop po apply")
+        self.theme_resume_chk = QCheckBox("Resume loop after apply")
         self.theme_raw_chk.setChecked(False)
         self.theme_resume_chk.setChecked(False)
         self.theme_browse_btn.clicked.connect(self.browse_theme_path)
         self.theme_prepare_btn.clicked.connect(lambda: self.prepare_image_asset(self.theme_path_edit))
         self.theme_add_btn.clicked.connect(self.add_or_update_theme)
         theme_row_2 = QHBoxLayout()
-        theme_row_2.addWidget(QLabel("Nazwa:"))
+        theme_row_2.addWidget(QLabel("Name:"))
         theme_row_2.addWidget(self.theme_name_edit, 1)
         theme_layout.addLayout(theme_row_2)
         theme_row_3 = QHBoxLayout()
-        theme_row_3.addWidget(QLabel("Plik:"))
+        theme_row_3.addWidget(QLabel("File:"))
         theme_row_3.addWidget(self.theme_path_edit, 1)
         theme_row_3.addWidget(self.theme_browse_btn)
         theme_row_3.addWidget(self.theme_prepare_btn)
@@ -2469,7 +2561,8 @@ class TrofeoGui(QMainWindow):
         theme_row_4.addStretch(1)
         theme_layout.addLayout(theme_row_4)
         runtime_theme_layout.addWidget(theme_box)
-        runtime_theme_cards_box = QGroupBox("Karty Motywów")
+        runtime_theme_cards_box = QGroupBox("Theme cards")
+        self.runtime_theme_cards_box = runtime_theme_cards_box
         runtime_theme_cards_layout = QVBoxLayout(runtime_theme_cards_box)
         runtime_theme_cards_scroll = QScrollArea()
         runtime_theme_cards_scroll.setWidgetResizable(True)
@@ -2490,9 +2583,10 @@ class TrofeoGui(QMainWindow):
         system_intro_layout = QHBoxLayout(system_intro)
         system_intro_layout.setContentsMargins(18, 16, 18, 16)
         system_intro_text = QLabel(
-            "System pokazuje stan backendu, urządzenia i podstawowe metryki hosta. "
-            "Szybkie akcje po prawej używają tych samych, działających endpointów co dotychczas."
+            "This tab shows backend status, device state and basic host metrics. "
+            "Quick actions use the same live API endpoints as before."
         )
+        self.system_intro_text_label = system_intro_text
         system_intro_text.setObjectName("studioHeroText")
         system_intro_text.setWordWrap(True)
         system_intro_layout.addWidget(system_intro_text)
@@ -2501,16 +2595,27 @@ class TrofeoGui(QMainWindow):
         system_top_row = QHBoxLayout()
         system_top_row.setSpacing(14)
 
-        backend_status_box = QGroupBox("Status Backendu")
+        backend_status_box = QGroupBox("Backend status")
+        self.backend_status_box = backend_status_box
         backend_status_box.setObjectName("dashboardCardBox")
         backend_status_layout = QVBoxLayout(backend_status_box)
         backend_status_layout.setSpacing(10)
-        self.system_api_status_row, self.system_api_status_value = self._create_dashboard_status_row("API Server", "Offline")
-        self.system_ws_status_row, self.system_ws_status_value = self._create_dashboard_status_row("WebSocket", "Offline")
-        self.system_lcd_status_row, self.system_lcd_status_value = self._create_dashboard_status_row("LCD Daemon", "Idle")
-        self.system_queue_status_row, self.system_queue_status_value = self._create_dashboard_status_row("Queue Worker", "Idle")
-        self.system_theme_engine_row, self.system_theme_engine_value = self._create_dashboard_status_row("Theme Engine", "Ready")
-        self.system_backup_row, self.system_backup_value = self._create_dashboard_status_row("Auto Backup", "Idle")
+        self.system_api_status_row, self.system_api_status_title, self.system_api_status_value = self._create_dashboard_status_row(
+            "API Server", "Offline"
+        )
+        self.system_ws_status_row, self.system_ws_status_title, self.system_ws_status_value = self._create_dashboard_status_row(
+            "WebSocket", "Offline"
+        )
+        self.system_lcd_status_row, self.system_lcd_status_title, self.system_lcd_status_value = self._create_dashboard_status_row(
+            "LCD Daemon", "Idle"
+        )
+        self.system_queue_status_row, self.system_queue_status_title, self.system_queue_status_value = self._create_dashboard_status_row(
+            "Queue Worker", "Idle"
+        )
+        self.system_theme_engine_row, self.system_theme_engine_title, self.system_theme_engine_value = self._create_dashboard_status_row(
+            "Theme Engine", "Ready"
+        )
+        self.system_backup_row, self.system_backup_title, self.system_backup_value = self._create_dashboard_status_row("Auto Backup", "Idle")
         for row in (
             self.system_api_status_row,
             self.system_ws_status_row,
@@ -2523,7 +2628,8 @@ class TrofeoGui(QMainWindow):
         backend_status_layout.addStretch(1)
         system_top_row.addWidget(backend_status_box, 1)
 
-        system_info_box = QGroupBox("Informacje o Systemie")
+        system_info_box = QGroupBox("System information")
+        self.system_info_box = system_info_box
         system_info_box.setObjectName("dashboardCardBox")
         system_info_grid = QGridLayout(system_info_box)
         system_info_grid.setColumnStretch(1, 1)
@@ -2534,26 +2640,27 @@ class TrofeoGui(QMainWindow):
         self.system_hostname_value = QLabel(socket.gethostname())
         self.system_restart_value = QLabel("-")
         info_rows = [
-            ("System operacyjny:", self.system_os_value),
+            ("Operating system:", self.system_os_value),
             ("Framework:", self.system_framework_value),
-            ("Wersja aplikacji:", self.system_app_version_value),
+            ("App version:", self.system_app_version_value),
             ("Uptime:", self.system_uptime_value),
             ("Hostname:", self.system_hostname_value),
-            ("Ostatni restart:", self.system_restart_value),
+            ("Last restart:", self.system_restart_value),
         ]
         for idx, (label_text, value_lbl) in enumerate(info_rows):
             system_info_grid.addWidget(QLabel(label_text), idx, 0)
             system_info_grid.addWidget(value_lbl, idx, 1)
         system_top_row.addWidget(system_info_box, 1)
 
-        resources_box = QGroupBox("Zasoby Systemowe")
+        resources_box = QGroupBox("System resources")
+        self.resources_box = resources_box
         resources_box.setObjectName("dashboardCardBox")
         resources_layout = QHBoxLayout(resources_box)
         resources_layout.setSpacing(10)
-        cpu_card, self.system_cpu_value, self.system_cpu_detail = self._create_system_metric_card("CPU")
-        mem_card, self.system_mem_value, self.system_mem_detail = self._create_system_metric_card("RAM")
-        disk_card, self.system_disk_value, self.system_disk_detail = self._create_system_metric_card("DYSK")
-        temp_card, self.system_temp_value, self.system_temp_detail = self._create_system_metric_card("TEMPERATURA")
+        cpu_card, self.system_cpu_title, self.system_cpu_value, self.system_cpu_detail = self._create_system_metric_card("CPU")
+        mem_card, self.system_mem_title, self.system_mem_value, self.system_mem_detail = self._create_system_metric_card("RAM")
+        disk_card, self.system_disk_title, self.system_disk_value, self.system_disk_detail = self._create_system_metric_card("DISK")
+        temp_card, self.system_temp_title, self.system_temp_value, self.system_temp_detail = self._create_system_metric_card("TEMP")
         for card in (cpu_card, mem_card, disk_card, temp_card):
             resources_layout.addWidget(card, 1)
         system_top_row.addWidget(resources_box, 1)
@@ -2562,7 +2669,8 @@ class TrofeoGui(QMainWindow):
         system_bottom_row = QHBoxLayout()
         system_bottom_row.setSpacing(14)
 
-        device_box = QGroupBox("Sieć i Urządzenie")
+        device_box = QGroupBox("Network & device")
+        self.runtime_dashboard_device_box = device_box
         device_box.setObjectName("dashboardCardBox")
         device_grid = QGridLayout(device_box)
         device_grid.setColumnStretch(1, 1)
@@ -2574,12 +2682,12 @@ class TrofeoGui(QMainWindow):
         self.system_port_value = QLabel("18777")
         self.system_serial_value = QLabel("-")
         device_rows = [
-            ("Połączenie:", self.system_connection_value),
-            ("Urządzenie:", self.system_device_value),
+            ("Connection:", self.system_connection_value),
+            ("Device:", self.system_device_value),
             ("Firmware:", self.system_firmware_value),
-            ("Rozdzielczość:", self.system_resolution_value),
-            ("Adres IP:", self.system_ip_value),
-            ("Port API:", self.system_port_value),
+            ("Resolution:", self.system_resolution_value),
+            ("IP address:", self.system_ip_value),
+            ("API port:", self.system_port_value),
             ("USB/Serial:", self.system_serial_value),
         ]
         for idx, (label_text, value_lbl) in enumerate(device_rows):
@@ -2587,13 +2695,16 @@ class TrofeoGui(QMainWindow):
             device_grid.addWidget(value_lbl, idx, 1)
         system_bottom_row.addWidget(device_box, 1)
 
-        events_box = QGroupBox("Zdarzenia Systemowe")
+        events_box = QGroupBox("System events")
+        self.system_events_box = events_box
         events_box.setObjectName("dashboardCardBox")
         events_layout = QVBoxLayout(events_box)
         events_header = QHBoxLayout()
-        for title, stretch in (("Czas", 1), ("Poziom", 1), ("Źródło", 2), ("Wiadomość", 4)):
+        self.system_events_header_labels = []
+        for title, stretch in (("Time", 1), ("Level", 1), ("Source", 2), ("Message", 4)):
             lbl = QLabel(title)
             lbl.setObjectName("eventHeaderLabel")
+            self.system_events_header_labels.append(lbl)
             events_header.addWidget(lbl, stretch)
         events_layout.addLayout(events_header)
         self.system_events_list = QListWidget()
@@ -2602,14 +2713,15 @@ class TrofeoGui(QMainWindow):
         events_layout.addWidget(self.system_events_list)
         system_bottom_row.addWidget(events_box, 2)
 
-        quick_actions_box = QGroupBox("Szybkie Akcje")
+        quick_actions_box = QGroupBox("Quick actions")
+        self.system_quick_actions_box = quick_actions_box
         quick_actions_box.setObjectName("dashboardCardBox")
         quick_actions_layout = QVBoxLayout(quick_actions_box)
         self.system_restart_backend_btn = QPushButton("Restart backend")
-        self.system_restart_service_btn = QPushButton("Restart usługi")
-        self.system_refresh_status_btn = QPushButton("Odśwież status")
-        self.system_export_logs_btn = QPushButton("Eksportuj logi")
-        self.system_diagnostic_btn = QPushButton("Diagnostyka")
+        self.system_restart_service_btn = QPushButton("Restart service")
+        self.system_refresh_status_btn = QPushButton("Refresh status")
+        self.system_export_logs_btn = QPushButton("Export logs")
+        self.system_diagnostic_btn = QPushButton("Diagnostics")
         self.system_restart_backend_btn.clicked.connect(lambda: self.api_call("restart", "POST", "/v1/restart", {}))
         self.system_restart_service_btn.clicked.connect(lambda: self.api_call("stop", "POST", "/v1/stop", {}))
         self.system_refresh_status_btn.clicked.connect(self.refresh_status)
@@ -2637,6 +2749,7 @@ class TrofeoGui(QMainWindow):
             "Configuration centralizes interface settings, LCD preferences and integrations in one place. "
             "App theme management now lives here instead of the top control bar."
         )
+        self.config_intro_text_label = config_intro_text
         config_intro_text.setObjectName("studioHeroText")
         config_intro_text.setWordWrap(True)
         config_intro_layout.addWidget(config_intro_text)
@@ -3138,7 +3251,7 @@ class TrofeoGui(QMainWindow):
         self.designer_text_edit = QLineEdit(); self.designer_label_edit = QLineEdit(); self.designer_format_edit = QLineEdit()
         self.designer_source_combo = QComboBox(); self._populate_designer_source_combo()
         self.designer_stat_display_combo = QComboBox(); self.designer_stat_display_combo.addItems(
-            [mode for mode in ("text", "progress", "gauge", "sparkline") if mode in KNOWN_STAT_DISPLAY]
+            [mode for mode in ("text", "progress", "gauge", "sparkline", "equalizer") if mode in KNOWN_STAT_DISPLAY]
         )
         self.designer_stat_min_spin = QDoubleSpinBox(); self.designer_stat_min_spin.setRange(-999999.0, 999999.0); self.designer_stat_min_spin.setDecimals(2)
         self.designer_stat_max_spin = QDoubleSpinBox(); self.designer_stat_max_spin.setRange(-999999.0, 999999.0); self.designer_stat_max_spin.setDecimals(2); self.designer_stat_max_spin.setValue(100.0)
@@ -3193,6 +3306,14 @@ class TrofeoGui(QMainWindow):
         self.designer_sparkline_fill_opacity_spin.setValue(0.18)
         self.designer_sparkline_show_points_chk = QCheckBox("Pokaż punkt końcowy")
         self.designer_sparkline_show_points_chk.setChecked(True)
+        self.designer_equalizer_bars_spin = QSpinBox()
+        self.designer_equalizer_bars_spin.setRange(6, 64)
+        self.designer_equalizer_bars_spin.setValue(18)
+        self.designer_equalizer_gap_spin = QSpinBox()
+        self.designer_equalizer_gap_spin.setRange(0, 16)
+        self.designer_equalizer_gap_spin.setValue(4)
+        self.designer_equalizer_mirror_chk = QCheckBox("Mirror from center")
+        self.designer_equalizer_mirror_chk.setChecked(False)
         self.designer_theme_gauge_style_combo = QComboBox()
         self._populate_designer_theme_gauge_style_combo()
         self.designer_font_bold_chk = QCheckBox("B")
@@ -3376,7 +3497,7 @@ class TrofeoGui(QMainWindow):
         self.preview_coords_label.setObjectName("previewHintLabel")
         self.preview_delta_label = QLabel("Δx: 0, Δy: 0")
         self.preview_delta_label.setObjectName("previewHintLabel")
-        self.preview_guides_chk = QCheckBox("Pokaż ramki")
+        self.preview_guides_chk = QCheckBox("Show layer bounds")
         self.preview_guides_chk.setChecked(True)
         self.preview_guides_chk.toggled.connect(self._update_preview_canvas_overlay)
         
@@ -3405,24 +3526,32 @@ class TrofeoGui(QMainWindow):
         designer_tab_layout.addWidget(designer_box, 1)
 
         # LOGI API (Przeniesione na osobny layout, by nie przeszkadzały w Designerze)
-        log_box = QGroupBox("Logi API i aplikacji")
+        log_box = QGroupBox("API & application logs")
+        self.log_panel_box = log_box
         log_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         log_layout = QVBoxLayout(log_box)
         log_layout.setContentsMargins(14, 14, 14, 14)
         log_layout.setSpacing(10)
         
         log_toolbar = QHBoxLayout()
-        self.log_filter_edit = QLineEdit(); self.log_filter_edit.setPlaceholderText("Filtr logów...")
+        self.log_filter_edit = QLineEdit()
+        self.log_filter_edit.setPlaceholderText("Filter logs…")
         self.log_filter_edit.textChanged.connect(lambda: self._refresh_log_view(force=True))
-        self.log_only_errors_chk = QCheckBox("Tylko błędy")
+        self.log_only_errors_chk = QCheckBox("Errors only")
         self.log_only_errors_chk.toggled.connect(lambda: self._refresh_log_view(force=True))
-        self.log_hide_status_chk = QCheckBox("Ukryj status"); self.log_hide_status_chk.setChecked(True)
+        self.log_hide_status_chk = QCheckBox("Hide status lines")
+        self.log_hide_status_chk.setChecked(True)
         self.log_hide_status_chk.toggled.connect(lambda: self._refresh_log_view(force=True))
-        self.log_copy_btn = QPushButton("Kopiuj widok"); self.log_copy_btn.clicked.connect(self.copy_filtered_logs)
-        self.log_copy_selection_btn = QPushButton("Kopiuj zaznaczenie"); self.log_copy_selection_btn.clicked.connect(self.copy_selected_logs)
-        self.log_clear_btn = QPushButton("Wyczyść"); self.log_clear_btn.clicked.connect(self.clear_logs)
-        
-        log_toolbar.addWidget(QLabel("Szukaj:")); log_toolbar.addWidget(self.log_filter_edit, 1)
+        self.log_copy_btn = QPushButton("Copy view")
+        self.log_copy_btn.clicked.connect(self.copy_filtered_logs)
+        self.log_copy_selection_btn = QPushButton("Copy selection")
+        self.log_copy_selection_btn.clicked.connect(self.copy_selected_logs)
+        self.log_clear_btn = QPushButton("Clear")
+        self.log_clear_btn.clicked.connect(self.clear_logs)
+
+        self.log_search_label = QLabel("Search:")
+        log_toolbar.addWidget(self.log_search_label)
+        log_toolbar.addWidget(self.log_filter_edit, 1)
         log_toolbar.addWidget(self.log_only_errors_chk); log_toolbar.addWidget(self.log_hide_status_chk)
         log_toolbar.addWidget(self.log_copy_btn); log_toolbar.addWidget(self.log_copy_selection_btn)
         log_toolbar.addWidget(self.log_clear_btn)
@@ -3490,6 +3619,9 @@ class TrofeoGui(QMainWindow):
             (self.designer_sparkline_points_spin, "valueChanged"),
             (self.designer_sparkline_fill_opacity_spin, "valueChanged"),
             (self.designer_sparkline_show_points_chk, "toggled"),
+            (self.designer_equalizer_bars_spin, "valueChanged"),
+            (self.designer_equalizer_gap_spin, "valueChanged"),
+            (self.designer_equalizer_mirror_chk, "toggled"),
             (self.bg_kind_combo, "currentTextChanged"), (self.bg_path_edit, "textChanged")
         ]:
             try: getattr(widget, signal).connect(self.on_designer_field_changed)
@@ -3785,7 +3917,11 @@ class TrofeoGui(QMainWindow):
 
     def _update_image_tools_availability(self) -> None:
         available = self._image_tools_available()
-        message = "" if available else "Funkcja niedostępna: brak Pillow w środowisku GUI."
+        message = (
+            ""
+            if available
+            else self._tr("Unavailable: Pillow is not installed in the GUI environment.", "Funkcja niedostępna: brak Pillow w środowisku GUI.")
+        )
         for button in (
             getattr(self, "designer_import_image_btn", None),
             getattr(self, "designer_path_prepare_btn", None),
@@ -3798,7 +3934,7 @@ class TrofeoGui(QMainWindow):
 
     def _setup_designer_layers_panel(self, parent_layout: QVBoxLayout) -> None:
         """Konfiguruje lewy panel z listą warstw."""
-        box = QGroupBox("Warstwy i komponenty")
+        box = QGroupBox("Layers & components")
         box.setFlat(True)
         box.setStyleSheet(
             "QGroupBox { margin-top: 6px; padding-top: 2px; padding-bottom: 2px; font-size: 11px; }"
@@ -3810,43 +3946,63 @@ class TrofeoGui(QMainWindow):
         layout.setSpacing(2)
 
         search_row = QHBoxLayout()
-        search_row.setSpacing(4)
+        search_row.setSpacing(3)
         self.designer_component_search = QLineEdit()
-        self.designer_component_search.setPlaceholderText("Szukaj warstwy lub tekstu...")
+        self.designer_component_search.setPlaceholderText("Search layers or text…")
         self.designer_component_search.setClearButtonEnabled(True)
         self.designer_component_search.setMaximumHeight(26)
         search_row.addWidget(self.designer_component_search, 1)
-        self.designer_kind_combo.setMaximumWidth(158)
+        self.designer_domain_combo = QComboBox()
+        self.designer_domain_combo.setMaximumWidth(76)
+        self.designer_domain_combo.setMaximumHeight(26)
+        for key, label in DESIGNER_DOMAIN_MODES:
+            self.designer_domain_combo.addItem(label, key)
+        search_row.addWidget(self.designer_domain_combo, 0)
+        self.designer_kind_combo.setMaximumWidth(92)
         self.designer_kind_combo.setMaximumHeight(26)
         search_row.addWidget(self.designer_kind_combo, 0)
-        self.designer_quick_add_toggle_btn = QPushButton("+ komponent")
+        self.designer_quick_add_toggle_btn = QPushButton("+")
         self.designer_quick_add_toggle_btn.setMinimumHeight(24)
         self.designer_quick_add_toggle_btn.setMaximumHeight(26)
-        self.designer_quick_add_toggle_btn.setMaximumWidth(108)
+        self.designer_quick_add_toggle_btn.setMaximumWidth(34)
         search_row.addWidget(self.designer_quick_add_toggle_btn)
         layout.addLayout(search_row)
         self.designer_selection_label.setObjectName("selectionSummaryLabel")
-        self.designer_selection_label.setWordWrap(True)
-        self.designer_selection_label.setMaximumHeight(22)
-        self.designer_selection_label.setStyleSheet("font-size: 11px; margin: 0; padding: 0;")
+        self.designer_selection_label.setWordWrap(False)
+        self.designer_selection_label.setMaximumHeight(16)
+        self.designer_selection_label.setStyleSheet("font-size: 10px; margin: 0; padding: 0; color: #9fb0c6;")
         layout.addWidget(self.designer_selection_label)
         self.designer_kind_combo.currentIndexChanged.connect(self.refresh_designer_element_list)
+        self.designer_domain_combo.currentIndexChanged.connect(self._on_designer_domain_changed)
         
-        # Szybkie dodawanie
+        # Szybkie dodawanie (grupy: podstawowe / muzyka / pozostałe widgety)
         self.designer_quick_add_container = QWidget()
         quick_container_layout = QVBoxLayout(self.designer_quick_add_container)
         quick_container_layout.setContentsMargins(0, 0, 0, 0)
-        quick_container_layout.setSpacing(2)
-        quick_grid = QGridLayout()
-        self.quick_add_text_btn = QPushButton("Tekst")
-        self.quick_add_stat_btn = QPushButton("Statystyka")
-        self.quick_add_image_btn = QPushButton("Obraz")
+        quick_container_layout.setSpacing(6)
+
+        self.quick_add_group_basics = QGroupBox("Basics")
+        self.quick_add_group_basics.setFlat(True)
+        basics_grid = QGridLayout(self.quick_add_group_basics)
+        basics_grid.setHorizontalSpacing(3)
+        basics_grid.setVerticalSpacing(3)
+        self.quick_add_text_btn = QPushButton("Text")
+        self.quick_add_stat_btn = QPushButton("Stat")
+        self.quick_add_image_btn = QPushButton("Image")
         self.quick_add_panel_btn = QPushButton("Panel")
-        quick_grid.setHorizontalSpacing(3)
-        quick_grid.setVerticalSpacing(3)
         for btn in (self.quick_add_text_btn, self.quick_add_stat_btn, self.quick_add_image_btn, self.quick_add_panel_btn):
             btn.setObjectName("quickAddButton")
             btn.setMinimumHeight(24)
+        basics_grid.addWidget(self.quick_add_text_btn, 0, 0)
+        basics_grid.addWidget(self.quick_add_stat_btn, 0, 1)
+        basics_grid.addWidget(self.quick_add_image_btn, 1, 0)
+        basics_grid.addWidget(self.quick_add_panel_btn, 1, 1)
+
+        self.quick_add_group_music = QGroupBox("Music & audio")
+        self.quick_add_group_music.setFlat(True)
+        music_grid = QGridLayout(self.quick_add_group_music)
+        music_grid.setHorizontalSpacing(3)
+        music_grid.setVerticalSpacing(3)
         self.quick_add_now_playing_btn = QPushButton("Now Playing")
         self.quick_add_now_playing_btn.setObjectName("quickAddButton")
         self.quick_add_now_playing_btn.setMinimumHeight(24)
@@ -3856,30 +4012,35 @@ class TrofeoGui(QMainWindow):
         self.quick_add_now_playing_mini_btn = QPushButton("Now Playing Mini")
         self.quick_add_now_playing_mini_btn.setObjectName("quickAddButton")
         self.quick_add_now_playing_mini_btn.setMinimumHeight(24)
+        self.quick_add_volume_btn = QPushButton("Volume")
+        self.quick_add_volume_btn.setObjectName("quickAddButton")
+        self.quick_add_volume_btn.setMinimumHeight(24)
+        self.quick_add_equalizer_btn = QPushButton("Graphic EQ")
+        self.quick_add_equalizer_btn.setObjectName("quickAddButton")
+        self.quick_add_equalizer_btn.setMinimumHeight(24)
+        music_grid.addWidget(self.quick_add_now_playing_btn, 0, 0)
+        music_grid.addWidget(self.quick_add_now_playing_hero_btn, 0, 1)
+        music_grid.addWidget(self.quick_add_now_playing_mini_btn, 1, 0)
+        music_grid.addWidget(self.quick_add_volume_btn, 1, 1)
+        music_grid.addWidget(self.quick_add_equalizer_btn, 2, 0, 1, 2)
+
+        self.quick_add_group_widgets = QGroupBox("Widgets")
+        self.quick_add_group_widgets.setFlat(True)
+        widgets_grid = QGridLayout(self.quick_add_group_widgets)
+        widgets_grid.setHorizontalSpacing(3)
+        widgets_grid.setVerticalSpacing(3)
         self.quick_add_analog_clock_btn = QPushButton("Analog Clock")
         self.quick_add_analog_clock_btn.setObjectName("quickAddButton")
         self.quick_add_analog_clock_btn.setMinimumHeight(24)
         self.quick_add_gauge_set_btn = QPushButton("Gauge Set")
         self.quick_add_gauge_set_btn.setObjectName("quickAddButton")
         self.quick_add_gauge_set_btn.setMinimumHeight(24)
-        self.quick_add_volume_btn = QPushButton("Volume")
-        self.quick_add_volume_btn.setObjectName("quickAddButton")
-        self.quick_add_volume_btn.setMinimumHeight(24)
-        quick_buttons = [
-            self.quick_add_text_btn,
-            self.quick_add_stat_btn,
-            self.quick_add_image_btn,
-            self.quick_add_panel_btn,
-            self.quick_add_now_playing_btn,
-            self.quick_add_now_playing_hero_btn,
-            self.quick_add_now_playing_mini_btn,
-            self.quick_add_analog_clock_btn,
-            self.quick_add_gauge_set_btn,
-            self.quick_add_volume_btn,
-        ]
-        for i, btn in enumerate(quick_buttons):
-            quick_grid.addWidget(btn, i // 3, i % 3)
-        quick_container_layout.addLayout(quick_grid)
+        widgets_grid.addWidget(self.quick_add_analog_clock_btn, 0, 0)
+        widgets_grid.addWidget(self.quick_add_gauge_set_btn, 0, 1)
+
+        quick_container_layout.addWidget(self.quick_add_group_basics)
+        quick_container_layout.addWidget(self.quick_add_group_music)
+        quick_container_layout.addWidget(self.quick_add_group_widgets)
         self.designer_quick_add_container.hide()
         layout.addWidget(self.designer_quick_add_container)
         self.quick_add_text_btn.clicked.connect(lambda: self.quick_add_designer_element("texts"))
@@ -3892,26 +4053,10 @@ class TrofeoGui(QMainWindow):
         self.quick_add_analog_clock_btn.clicked.connect(lambda: self.add_analog_clock_widget("classic"))
         self.quick_add_gauge_set_btn.clicked.connect(lambda: self.add_gauge_ring_bundle("system"))
         self.quick_add_volume_btn.clicked.connect(self.add_volume_widget)
+        self.quick_add_equalizer_btn.clicked.connect(self.add_graphic_equalizer_widget)
         self.designer_quick_add_menu = QMenu(self.designer_quick_add_toggle_btn)
-        for label, handler in (
-            ("Tekst", lambda: self.quick_add_designer_element("texts")),
-            ("Statystyka", lambda: self.quick_add_designer_element("stats")),
-            ("Obraz", lambda: self.quick_add_designer_element("images")),
-            ("Panel", lambda: self.quick_add_designer_element("panels")),
-            ("Now Playing", self.add_now_playing_widget),
-            ("Now Playing Hero", self.add_now_playing_widget_hero),
-            ("Now Playing Mini", self.add_now_playing_widget_mini),
-            ("Analog Clock Classic", lambda: self.add_analog_clock_widget("classic")),
-            ("Analog Clock Modern", lambda: self.add_analog_clock_widget("modern")),
-            ("Analog Clock Nordic", lambda: self.add_analog_clock_widget("nordic")),
-            ("Gauge Set: System Trio", lambda: self.add_gauge_ring_bundle("system")),
-            ("Gauge Set: Nordic Trio", lambda: self.add_gauge_ring_bundle("nordic")),
-            ("Gauge Set: Cyber Trio", lambda: self.add_gauge_ring_bundle("cyber")),
-            ("Gauge Set: Thermal Trio", lambda: self.add_gauge_ring_bundle("thermal")),
-            ("Volume", self.add_volume_widget),
-        ):
-            action = self.designer_quick_add_menu.addAction(label)
-            action.triggered.connect(handler)
+        self._populate_designer_quick_add_menu()
+        self._refresh_designer_quick_add_groups()
         self.designer_quick_add_toggle_btn.setMenu(self.designer_quick_add_menu)
         
         self.designer_element_list.setMinimumHeight(140)
@@ -3927,14 +4072,16 @@ class TrofeoGui(QMainWindow):
         self.designer_component_search.textChanged.connect(self.filter_designer_element_list)
         layout.addWidget(self.designer_element_list, 1)
         
-        move_box = QGroupBox("Przesuwanie zaznaczenia")
+        move_box = QGroupBox("Nudge selection")
+        self.designer_move_box = move_box
         move_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         move_layout = QVBoxLayout(move_box)
         move_layout.setContentsMargins(4, 4, 4, 4)
         move_layout.setSpacing(2)
         move_step_row = QHBoxLayout()
         move_step_row.setSpacing(5)
-        move_step_row.addWidget(QLabel("Krok:"))
+        self.designer_nudge_step_label = QLabel("Step:")
+        move_step_row.addWidget(self.designer_nudge_step_label)
         self.designer_nudge_step_combo = QComboBox()
         for step in (1, 2, 3, 5, 8, 10, 16, 24, 32):
             self.designer_nudge_step_combo.addItem(f"{step} px", step)
@@ -3950,19 +4097,19 @@ class TrofeoGui(QMainWindow):
         self.designer_nudge_up_btn = QPushButton()
         self.designer_nudge_up_btn.setIcon(_sty.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
         self.designer_nudge_up_btn.setIconSize(_nudge_icon_sz)
-        self.designer_nudge_up_btn.setToolTip("Przesuń w górę")
+        self.designer_nudge_up_btn.setToolTip("Nudge up")
         self.designer_nudge_left_btn = QPushButton()
         self.designer_nudge_left_btn.setIcon(_sty.standardIcon(QStyle.StandardPixmap.SP_ArrowLeft))
         self.designer_nudge_left_btn.setIconSize(_nudge_icon_sz)
-        self.designer_nudge_left_btn.setToolTip("Przesuń w lewo")
+        self.designer_nudge_left_btn.setToolTip("Nudge left")
         self.designer_nudge_right_btn = QPushButton()
         self.designer_nudge_right_btn.setIcon(_sty.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
         self.designer_nudge_right_btn.setIconSize(_nudge_icon_sz)
-        self.designer_nudge_right_btn.setToolTip("Przesuń w prawo")
+        self.designer_nudge_right_btn.setToolTip("Nudge right")
         self.designer_nudge_down_btn = QPushButton()
         self.designer_nudge_down_btn.setIcon(_sty.standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
         self.designer_nudge_down_btn.setIconSize(_nudge_icon_sz)
-        self.designer_nudge_down_btn.setToolTip("Przesuń w dół")
+        self.designer_nudge_down_btn.setToolTip("Nudge down")
         for btn in (
             self.designer_nudge_up_btn,
             self.designer_nudge_left_btn,
@@ -3986,7 +4133,7 @@ class TrofeoGui(QMainWindow):
         move_actions_row.setContentsMargins(0, 0, 0, 0)
         move_actions_row.setSpacing(6)
         move_actions_row.addStretch(1)
-        self.designer_remove_btn = QPushButton("🗑 Usuń")
+        self.designer_remove_btn = QPushButton("🗑 Delete")
         self.designer_remove_btn.setMinimumHeight(28)
         self.designer_remove_btn.setMaximumWidth(112)
         self.designer_remove_btn.setStyleSheet(
@@ -4003,13 +4150,13 @@ class TrofeoGui(QMainWindow):
 
     def _setup_inspector_tabs(self, container_layout: QVBoxLayout) -> None:
         """Konfiguruje prawy panel właściwości z zakładkami."""
-        box = QGroupBox("Właściwości Elementu")
+        box = QGroupBox("Element properties")
         box.setObjectName("designerSectionBox")
         self.props_box = box
         layout = QVBoxLayout(box)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
-        self.inspector_selection_summary = QLabel("Wybierz element, aby edytować jego właściwości.")
+        self.inspector_selection_summary = QLabel("Select an element to edit its properties.")
         self.inspector_selection_summary.setObjectName("selectionSummaryLabel")
         self.inspector_selection_summary.setWordWrap(True)
         layout.addWidget(self.inspector_selection_summary)
@@ -4054,6 +4201,7 @@ class TrofeoGui(QMainWindow):
 
         self.inspector_general, self.inspector_general_layout = make_tab()
         self.inspector_content, self.inspector_content_layout = make_tab()
+        self.inspector_music, self.inspector_music_layout = make_tab()
         self.inspector_appearance, self.inspector_appearance_layout = make_tab()
         self.inspector_gauge, self.inspector_gauge_layout = make_tab()
         self.inspector_geometry, self.inspector_geometry_layout = make_tab()
@@ -4061,9 +4209,53 @@ class TrofeoGui(QMainWindow):
         self.inspector_media, self.inspector_media_layout = make_tab()
         self.inspector_animation, self.inspector_animation_layout = make_tab()
 
+        self.inspector_music_spectrum_placeholder = QLabel(
+            "Animated spectrum / EQ visualizer: reserved for a future update."
+        )
+        self.inspector_music_spectrum_placeholder.setWordWrap(True)
+        self.inspector_music_spectrum_placeholder.setObjectName("selectionSummaryLabel")
+        self.inspector_music_tools_row = QWidget()
+        music_tools_layout = QHBoxLayout(self.inspector_music_tools_row)
+        music_tools_layout.setContentsMargins(0, 0, 0, 0)
+        music_tools_layout.setSpacing(6)
+        self.music_tool_now_playing_btn = QPushButton("Now Playing")
+        self.music_tool_hero_btn = QPushButton("Hero")
+        self.music_tool_mini_btn = QPushButton("Mini")
+        self.music_tool_volume_btn = QPushButton("Volume")
+        self.music_tool_eq_btn = QPushButton("Graphic EQ")
+        for btn in (
+            self.music_tool_now_playing_btn,
+            self.music_tool_hero_btn,
+            self.music_tool_mini_btn,
+            self.music_tool_volume_btn,
+            self.music_tool_eq_btn,
+        ):
+            btn.setObjectName("quickAddButton")
+            btn.setMinimumHeight(24)
+            music_tools_layout.addWidget(btn)
+        self.music_tool_now_playing_btn.clicked.connect(self.add_now_playing_widget)
+        self.music_tool_hero_btn.clicked.connect(self.add_now_playing_widget_hero)
+        self.music_tool_mini_btn.clicked.connect(self.add_now_playing_widget_mini)
+        self.music_tool_volume_btn.clicked.connect(self.add_volume_widget)
+        self.music_tool_eq_btn.clicked.connect(self.add_graphic_equalizer_widget)
+        self.row_music_tools = make_label("Music tools")
+        self.inspector_music_layout.addRow(self.row_music_tools, self.inspector_music_tools_row)
+        self.row_music_equalizer_bars = make_label("EQ bars")
+        self.row_music_equalizer_gap = make_label("Bar gap")
+        self.row_music_equalizer_mirror = make_label("Mirror mode")
+        self.inspector_music_layout.addRow(self.row_music_equalizer_bars, self.designer_equalizer_bars_spin)
+        self.inspector_music_layout.addRow(self.row_music_equalizer_gap, self.designer_equalizer_gap_spin)
+        self.inspector_music_layout.addRow(self.row_music_equalizer_mirror, self.designer_equalizer_mirror_chk)
+        self.inspector_music_hint = QLabel("")
+        self.inspector_music_hint.setWordWrap(True)
+        self.inspector_music_hint.setObjectName("selectionSummaryLabel")
+        self.inspector_music_layout.addRow(self.inspector_music_spectrum_placeholder)
+        self.inspector_music_layout.addRow(self.inspector_music_hint)
+
         for l in [
             self.inspector_general_layout,
             self.inspector_content_layout,
+            self.inspector_music_layout,
             self.inspector_appearance_layout,
             self.inspector_gauge_layout,
             self.inspector_geometry_layout,
@@ -4098,6 +4290,7 @@ class TrofeoGui(QMainWindow):
         self.inspector_content_layout.addRow(self.row_content_stat_range, self.designer_stat_range_row)
         self.row_content_stat_show_value = make_label("Tekst wartości")
         self.inspector_content_layout.addRow(self.row_content_stat_show_value, self.designer_stat_show_value_chk)
+        self._stat_binding_rows_layout = self.inspector_content_layout
 
         self.designer_font_minus_btn = QPushButton("−")
         self.designer_font_minus_btn.setMinimumWidth(36)
@@ -4319,14 +4512,15 @@ class TrofeoGui(QMainWindow):
         self.inspector_animation_layout.addRow(make_label("Oś czasu"), self.bg_animation_timeline)
         self.inspector_animation_layout.addRow(make_label("Klatki"), self.bg_animation_list)
 
-        self.inspector_tabs.addTab(self.inspector_general, "Ogólne")
-        self.inspector_tabs.addTab(self.inspector_content, "Treść")
-        self.inspector_tabs.addTab(self.inspector_appearance, "Styl")
+        self.inspector_tabs.addTab(self.inspector_general, "General")
+        self.inspector_tabs.addTab(self.inspector_content, "Content")
+        self.inspector_tabs.addTab(self.inspector_music, "Music")
+        self.inspector_tabs.addTab(self.inspector_appearance, "Style")
         self.inspector_tabs.addTab(self.inspector_gauge, "Gauge")
-        self.inspector_tabs.addTab(self.inspector_geometry, "Pozycja")
-        self.inspector_tabs.addTab(self.inspector_image, "Obraz")
-        self.inspector_tabs.addTab(self.inspector_media, "Multimedia")
-        self.inspector_tabs.addTab(self.inspector_animation, "Animacja")
+        self.inspector_tabs.addTab(self.inspector_geometry, "Position")
+        self.inspector_tabs.addTab(self.inspector_image, "Image")
+        self.inspector_tabs.addTab(self.inspector_media, "Media")
+        self.inspector_tabs.addTab(self.inspector_animation, "Animation")
 
         compact_widgets = [
             self.designer_id_edit,
@@ -4948,11 +5142,26 @@ class TrofeoGui(QMainWindow):
                     self.quick_add_stat_btn,
                     self.quick_add_image_btn,
                     self.quick_add_panel_btn,
+                ],
+                extra_px=int(24 * scale),
+                min_px=int(92 * scale),
+                max_px=int(180 * scale),
+            )
+            self._apply_equal_width_for_group(
+                [
                     self.quick_add_now_playing_btn,
                     self.quick_add_now_playing_hero_btn,
                     self.quick_add_now_playing_mini_btn,
-                    self.quick_add_analog_clock_btn,
                     self.quick_add_volume_btn,
+                ],
+                extra_px=int(24 * scale),
+                min_px=int(92 * scale),
+                max_px=int(180 * scale),
+            )
+            self._apply_equal_width_for_group(
+                [
+                    self.quick_add_analog_clock_btn,
+                    self.quick_add_gauge_set_btn,
                 ],
                 extra_px=int(24 * scale),
                 min_px=int(92 * scale),
@@ -5054,7 +5263,7 @@ class TrofeoGui(QMainWindow):
             self.designer_quick_add_container.setVisible(False)
         if hasattr(self, "designer_quick_add_toggle_btn"):
             self.designer_quick_add_toggle_btn.setVisible(True)
-            self.designer_quick_add_toggle_btn.setText("+ komponent")
+            self.designer_quick_add_toggle_btn.setText(self._tr("+ component", "+ komponent"))
         if hasattr(self, "designer_inspector_container"):
             self.designer_inspector_container.setVisible(True)
         if hasattr(self, "designer_collection_hint"):
@@ -5071,14 +5280,27 @@ class TrofeoGui(QMainWindow):
             elif assets_expanded and media_idx >= 0:
                 self.inspector_tabs.setCurrentIndex(media_idx)
         if hasattr(self, "designer_assets_toggle_btn"):
-            self.designer_assets_toggle_btn.setText("Ukryj multi" if assets_expanded and not animation_mode else "Multimedia")
+            self.designer_assets_toggle_btn.setText(
+                self._tr("Hide media", "Ukryj multi")
+                if assets_expanded and not animation_mode
+                else self._tr("Media", "Multimedia")
+            )
             self.designer_assets_toggle_btn.setVisible(True)
         if hasattr(self, "designer_animation_mode_btn"):
-            self.designer_animation_mode_btn.setText("Wyjdź z anim." if animation_mode else "Animacja")
+            self.designer_animation_mode_btn.setText(
+                self._tr("Exit animation", "Wyjdź z anim.") if animation_mode else self._tr("Animation", "Animacja")
+            )
         if hasattr(self, "designer_details_toggle_btn"):
-            self.designer_details_toggle_btn.setText("Ukryj wsk." if details_expanded else "Wsk.")
+            self.designer_details_toggle_btn.setText(
+                self._tr("Hide tips", "Ukryj wsk.") if details_expanded else self._tr("Tips", "Wsk.")
+            )
         if short and hasattr(self, "preview_info_label"):
-            self.preview_info_label.setText("Kliknij, przeciągnij lub zaznacz element na podglądzie.")
+            self.preview_info_label.setText(
+                self._tr(
+                    "Click, drag, or select an element on the preview.",
+                    "Kliknij, przeciągnij lub zaznacz element na podglądzie.",
+                )
+            )
 
     def _set_designer_toolbar_feedback(self, text: str, *, auto_clear_ms: int | None = 4200) -> None:
         message = str(text).strip()
@@ -5155,6 +5377,300 @@ class TrofeoGui(QMainWindow):
     def _tr(self, en_text: str, pl_text: str) -> str:
         return pl_text if self._current_ui_language() == "pl" else en_text
 
+    def _populate_designer_quick_add_menu(self) -> None:
+        menu = getattr(self, "designer_quick_add_menu", None)
+        if menu is None:
+            return
+        menu.clear()
+        tr = self._tr
+        domain = self._designer_domain_mode()
+
+        def add_section(title: str) -> None:
+            try:
+                menu.addSection(title)
+            except Exception:
+                menu.addSeparator()
+
+        basics: list[tuple[str, object]] = [
+            (tr("Text", "Tekst"), lambda: self.quick_add_designer_element("texts")),
+            (tr("Stat", "Statystyka"), lambda: self.quick_add_designer_element("stats")),
+            (tr("Image", "Obraz"), lambda: self.quick_add_designer_element("images")),
+            (tr("Panel", "Panel"), lambda: self.quick_add_designer_element("panels")),
+        ]
+        music_audio: list[tuple[str, object]] = [
+            (tr("Now Playing", "Now Playing"), self.add_now_playing_widget),
+            (tr("Now Playing Hero", "Now Playing Hero"), self.add_now_playing_widget_hero),
+            (tr("Now Playing Mini", "Now Playing Mini"), self.add_now_playing_widget_mini),
+            (tr("Volume", "Głośność"), self.add_volume_widget),
+            (tr("Graphic EQ", "Korektor graficzny"), self.add_graphic_equalizer_widget),
+        ]
+        widgets: list[tuple[str, object]] = [
+            (tr("Analog Clock Classic", "Analog Clock Classic"), lambda: self.add_analog_clock_widget("classic")),
+            (tr("Analog Clock Modern", "Analog Clock Modern"), lambda: self.add_analog_clock_widget("modern")),
+            (tr("Analog Clock Nordic", "Analog Clock Nordic"), lambda: self.add_analog_clock_widget("nordic")),
+            (tr("Gauge Set: System Trio", "Gauge Set: System Trio"), lambda: self.add_gauge_ring_bundle("system")),
+            (tr("Gauge Set: Nordic Trio", "Gauge Set: Nordic Trio"), lambda: self.add_gauge_ring_bundle("nordic")),
+            (tr("Gauge Set: Cyber Trio", "Gauge Set: Cyber Trio"), lambda: self.add_gauge_ring_bundle("cyber")),
+            (tr("Gauge Set: Thermal Trio", "Gauge Set: Thermal Trio"), lambda: self.add_gauge_ring_bundle("thermal")),
+        ]
+
+        if domain in {"all", "system"}:
+            add_section(tr("Basics", "Podstawowe"))
+            for label, handler in basics:
+                action = menu.addAction(label)
+                action.triggered.connect(handler)
+        if domain in {"all", "music"}:
+            add_section(tr("Music & audio", "Muzyka i audio"))
+            for label, handler in music_audio:
+                action = menu.addAction(label)
+                action.triggered.connect(handler)
+        if domain != "music":
+            add_section(tr("Widgets", "Widgety"))
+            for label, handler in widgets:
+                action = menu.addAction(label)
+                action.triggered.connect(handler)
+
+    def _refresh_designer_quick_add_groups(self) -> None:
+        domain = self._designer_domain_mode()
+        if hasattr(self, "quick_add_group_basics"):
+            self.quick_add_group_basics.setVisible(domain in {"all", "system"})
+        if hasattr(self, "quick_add_group_music"):
+            self.quick_add_group_music.setVisible(domain in {"all", "music"})
+        if hasattr(self, "quick_add_group_widgets"):
+            self.quick_add_group_widgets.setVisible(domain != "music")
+
+    def _on_designer_domain_changed(self, _index: int) -> None:
+        current_source = str(self.designer_source_combo.currentData() or "").strip()
+        self._populate_designer_source_combo(current_source)
+        self._populate_designer_quick_add_menu()
+        self._refresh_designer_quick_add_groups()
+        self.filter_designer_element_list()
+
+    def _refresh_extended_ui_labels(self) -> None:
+        tr = self._tr
+        if hasattr(self, "endpoint_box"):
+            self.endpoint_box.setTitle(tr("Backend", "Backend"))
+        if hasattr(self, "control_box"):
+            self.control_box.setTitle(tr("Device control", "Kontrola urządzenia"))
+        if hasattr(self, "runtime_hero_text_label"):
+            self.runtime_hero_text_label.setText(
+                tr(
+                    "Control the panel like a native Plasma app: start the runtime, push single frames "
+                    "and manage themes from clear cards instead of raw fields.",
+                    "Steruj panelem jak natywną aplikacją Plasma: uruchom runtime, wyślij pojedyncze klatki "
+                    "i zarządzaj motywami z czytelnych kart zamiast surowych pól.",
+                )
+            )
+        if hasattr(self, "runtime_sections_tabs"):
+            self.runtime_sections_tabs.setTabText(0, tr("Device", "Urządzenie"))
+            self.runtime_sections_tabs.setTabText(1, tr("Image", "Obraz"))
+            self.runtime_sections_tabs.setTabText(2, tr("Themes", "Motywy"))
+        if hasattr(self, "work_box"):
+            self.work_box.setTitle(tr("Single image", "Pojedynczy obraz"))
+        if hasattr(self, "cfg_box"):
+            self.cfg_box.setTitle(tr("Playback settings", "Ustawienia odtwarzania"))
+        if hasattr(self, "status_box"):
+            self.status_box.setTitle(tr("System monitor", "Monitor systemu"))
+        if hasattr(self, "runtime_legacy_theme_box"):
+            self.runtime_legacy_theme_box.setTitle(tr("Theme library", "Biblioteka motywów"))
+        if hasattr(self, "runtime_theme_cards_box"):
+            self.runtime_theme_cards_box.setTitle(tr("Theme cards", "Karty motywów"))
+        if hasattr(self, "system_intro_text_label"):
+            self.system_intro_text_label.setText(
+                tr(
+                    "This tab shows backend status, device state and basic host metrics. "
+                    "Quick actions use the same live API endpoints as before.",
+                    "Ta zakładka pokazuje status backendu, stan urządzenia i podstawowe metryki hosta. "
+                    "Szybkie akcje korzystają z tych samych endpointów API co wcześniej.",
+                )
+            )
+        if hasattr(self, "backend_status_box"):
+            self.backend_status_box.setTitle(tr("Backend status", "Status backendu"))
+        if hasattr(self, "system_api_status_title"):
+            self.system_api_status_title.setText(tr("API Server", "Serwer API"))
+        if hasattr(self, "system_ws_status_title"):
+            self.system_ws_status_title.setText(tr("WebSocket", "WebSocket"))
+        if hasattr(self, "system_lcd_status_title"):
+            self.system_lcd_status_title.setText(tr("LCD Daemon", "Demon LCD"))
+        if hasattr(self, "system_queue_status_title"):
+            self.system_queue_status_title.setText(tr("Queue Worker", "Worker kolejki"))
+        if hasattr(self, "system_theme_engine_title"):
+            self.system_theme_engine_title.setText(tr("Theme Engine", "Silnik motywów"))
+        if hasattr(self, "system_backup_title"):
+            self.system_backup_title.setText(tr("Auto Backup", "Auto backup"))
+        if hasattr(self, "system_info_box"):
+            self.system_info_box.setTitle(tr("System information", "Informacje o systemie"))
+        if hasattr(self, "resources_box"):
+            self.resources_box.setTitle(tr("System resources", "Zasoby systemu"))
+        if hasattr(self, "system_cpu_title"):
+            self.system_cpu_title.setText(tr("CPU", "CPU"))
+        if hasattr(self, "system_mem_title"):
+            self.system_mem_title.setText(tr("RAM", "RAM"))
+        if hasattr(self, "system_disk_title"):
+            self.system_disk_title.setText(tr("DISK", "DYSK"))
+        if hasattr(self, "system_temp_title"):
+            self.system_temp_title.setText(tr("TEMP", "TEMP"))
+        if hasattr(self, "runtime_dashboard_device_box"):
+            self.runtime_dashboard_device_box.setTitle(tr("Network & device", "Sieć i urządzenie"))
+        if hasattr(self, "system_events_box"):
+            self.system_events_box.setTitle(tr("System events", "Zdarzenia systemowe"))
+        if hasattr(self, "system_events_header_labels") and len(getattr(self, "system_events_header_labels", [])) == 4:
+            hdr = self.system_events_header_labels
+            hdr[0].setText(tr("Time", "Czas"))
+            hdr[1].setText(tr("Level", "Poziom"))
+            hdr[2].setText(tr("Source", "Źródło"))
+            hdr[3].setText(tr("Message", "Komunikat"))
+        if hasattr(self, "system_quick_actions_box"):
+            self.system_quick_actions_box.setTitle(tr("Quick actions", "Szybkie akcje"))
+        if hasattr(self, "system_restart_backend_btn"):
+            self.system_restart_backend_btn.setText(tr("Restart backend", "Restart backendu"))
+        if hasattr(self, "system_restart_service_btn"):
+            self.system_restart_service_btn.setText(tr("Restart service", "Restart usługi"))
+        if hasattr(self, "system_refresh_status_btn"):
+            self.system_refresh_status_btn.setText(tr("Refresh status", "Odśwież status"))
+        if hasattr(self, "system_export_logs_btn"):
+            self.system_export_logs_btn.setText(tr("Export logs", "Eksport logów"))
+        if hasattr(self, "system_diagnostic_btn"):
+            self.system_diagnostic_btn.setText(tr("Diagnostics", "Diagnostyka"))
+        if hasattr(self, "config_intro_text_label"):
+            self.config_intro_text_label.setText(
+                tr(
+                    "Configuration centralizes interface settings, LCD preferences and integrations in one place. "
+                    "App theme management now lives here instead of the top control bar.",
+                    "Konfiguracja grupuje ustawienia interfejsu, preferencje LCD i integracje w jednym miejscu. "
+                    "Motyw aplikacji jest ustawiany tutaj zamiast na górnym pasku.",
+                )
+            )
+        if hasattr(self, "designer_elements_box"):
+            self.designer_elements_box.setTitle(tr("Layers & components", "Warstwy i komponenty"))
+        if hasattr(self, "quick_add_group_basics"):
+            self.quick_add_group_basics.setTitle(tr("Basics", "Podstawowe"))
+        if hasattr(self, "quick_add_group_music"):
+            self.quick_add_group_music.setTitle(tr("Music & audio", "Muzyka i audio"))
+        if hasattr(self, "quick_add_group_widgets"):
+            self.quick_add_group_widgets.setTitle(tr("Widgets", "Widgety"))
+        if hasattr(self, "designer_component_search"):
+            self.designer_component_search.setPlaceholderText(tr("Search layers or text…", "Szukaj warstwy lub tekstu…"))
+        if hasattr(self, "designer_kind_combo"):
+            kind_labels = [
+                (tr("Texts", "Teksty"), "texts"),
+                (tr("Stats", "Statystyki"), "stats"),
+                (tr("Images", "Obrazy"), "images"),
+                (tr("Panels", "Panele"), "panels"),
+            ]
+            current_kind = str(self.designer_kind_combo.currentData() or "texts")
+            self.designer_kind_combo.blockSignals(True)
+            self.designer_kind_combo.clear()
+            for text, data in kind_labels:
+                self.designer_kind_combo.addItem(text, data)
+            idx = self.designer_kind_combo.findData(current_kind)
+            self.designer_kind_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self.designer_kind_combo.blockSignals(False)
+        if hasattr(self, "designer_domain_combo"):
+            labels = [
+                (tr("All", "Wszystko"), "all"),
+                (tr("System", "System"), "system"),
+                (tr("Music", "Muzyka"), "music"),
+            ]
+            current = str(self.designer_domain_combo.currentData() or "all")
+            self.designer_domain_combo.blockSignals(True)
+            self.designer_domain_combo.clear()
+            for text, data in labels:
+                self.designer_domain_combo.addItem(text, data)
+            idx = self.designer_domain_combo.findData(current)
+            self.designer_domain_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self.designer_domain_combo.blockSignals(False)
+        if hasattr(self, "designer_quick_add_toggle_btn"):
+            self.designer_quick_add_toggle_btn.setText("+")
+            self.designer_quick_add_toggle_btn.setToolTip(tr("Add component", "Dodaj komponent"))
+        if hasattr(self, "designer_source_combo"):
+            current_source = str(self.designer_source_combo.currentData() or "").strip()
+            self._populate_designer_source_combo(current_source)
+        if hasattr(self, "quick_add_text_btn"):
+            self.quick_add_text_btn.setText(tr("Text", "Tekst"))
+        if hasattr(self, "quick_add_stat_btn"):
+            self.quick_add_stat_btn.setText(tr("Stat", "Statystyka"))
+        if hasattr(self, "quick_add_image_btn"):
+            self.quick_add_image_btn.setText(tr("Image", "Obraz"))
+        if hasattr(self, "quick_add_panel_btn"):
+            self.quick_add_panel_btn.setText(tr("Panel", "Panel"))
+        if hasattr(self, "quick_add_now_playing_btn"):
+            self.quick_add_now_playing_btn.setText(tr("Now Playing", "Now Playing"))
+        if hasattr(self, "quick_add_now_playing_hero_btn"):
+            self.quick_add_now_playing_hero_btn.setText(tr("Now Playing Hero", "Now Playing Hero"))
+        if hasattr(self, "quick_add_now_playing_mini_btn"):
+            self.quick_add_now_playing_mini_btn.setText(tr("Now Playing Mini", "Now Playing Mini"))
+        if hasattr(self, "quick_add_volume_btn"):
+            self.quick_add_volume_btn.setText(tr("Volume", "Głośność"))
+        if hasattr(self, "quick_add_equalizer_btn"):
+            self.quick_add_equalizer_btn.setText(tr("Graphic EQ", "Korektor"))
+        if hasattr(self, "quick_add_analog_clock_btn"):
+            self.quick_add_analog_clock_btn.setText(tr("Analog Clock", "Zegar analogowy"))
+        if hasattr(self, "quick_add_gauge_set_btn"):
+            self.quick_add_gauge_set_btn.setText(tr("Gauge Set", "Zestaw gauge"))
+        if hasattr(self, "designer_move_box"):
+            self.designer_move_box.setTitle(tr("Nudge selection", "Przesuwanie zaznaczenia"))
+        if hasattr(self, "designer_nudge_step_label"):
+            self.designer_nudge_step_label.setText(tr("Step:", "Krok:"))
+        if hasattr(self, "designer_nudge_up_btn"):
+            self.designer_nudge_up_btn.setToolTip(tr("Nudge up", "Przesuń w górę"))
+        if hasattr(self, "designer_nudge_left_btn"):
+            self.designer_nudge_left_btn.setToolTip(tr("Nudge left", "Przesuń w lewo"))
+        if hasattr(self, "designer_nudge_right_btn"):
+            self.designer_nudge_right_btn.setToolTip(tr("Nudge right", "Przesuń w prawo"))
+        if hasattr(self, "designer_nudge_down_btn"):
+            self.designer_nudge_down_btn.setToolTip(tr("Nudge down", "Przesuń w dół"))
+        if hasattr(self, "designer_remove_btn"):
+            self.designer_remove_btn.setText(tr("🗑 Delete", "🗑 Usuń"))
+        if hasattr(self, "props_box"):
+            self.props_box.setTitle(tr("Element properties", "Właściwości elementu"))
+        if hasattr(self, "inspector_selection_summary"):
+            self.inspector_selection_summary.setText(
+                tr("Select an element to edit its properties.", "Wybierz element, aby edytować jego właściwości.")
+            )
+        if hasattr(self, "inspector_tabs"):
+            self.inspector_tabs.setTabText(0, tr("General", "Ogólne"))
+            self.inspector_tabs.setTabText(1, tr("Content", "Treść"))
+            self.inspector_tabs.setTabText(2, tr("Music", "Muzyka"))
+            self.inspector_tabs.setTabText(3, tr("Style", "Styl"))
+            self.inspector_tabs.setTabText(4, tr("Gauge", "Gauge"))
+            self.inspector_tabs.setTabText(5, tr("Position", "Pozycja"))
+            self.inspector_tabs.setTabText(6, tr("Image", "Obraz"))
+            self.inspector_tabs.setTabText(7, tr("Background", "Tło"))
+            self.inspector_tabs.setTabText(8, tr("Animation", "Animacja"))
+        if hasattr(self, "music_tool_now_playing_btn"):
+            self.music_tool_now_playing_btn.setText(tr("Now Playing", "Now Playing"))
+        if hasattr(self, "music_tool_hero_btn"):
+            self.music_tool_hero_btn.setText(tr("Hero", "Hero"))
+        if hasattr(self, "music_tool_mini_btn"):
+            self.music_tool_mini_btn.setText(tr("Mini", "Mini"))
+        if hasattr(self, "music_tool_volume_btn"):
+            self.music_tool_volume_btn.setText(tr("Volume", "Głośność"))
+        if hasattr(self, "music_tool_eq_btn"):
+            self.music_tool_eq_btn.setText(tr("Graphic EQ", "Korektor"))
+        if hasattr(self, "log_panel_box"):
+            self.log_panel_box.setTitle(tr("API & application logs", "Logi API i aplikacji"))
+        if hasattr(self, "log_filter_edit"):
+            self.log_filter_edit.setPlaceholderText(tr("Filter logs…", "Filtr logów…"))
+        if hasattr(self, "log_only_errors_chk"):
+            self.log_only_errors_chk.setText(tr("Errors only", "Tylko błędy"))
+        if hasattr(self, "log_hide_status_chk"):
+            self.log_hide_status_chk.setText(tr("Hide status lines", "Ukryj status"))
+        if hasattr(self, "log_copy_btn"):
+            self.log_copy_btn.setText(tr("Copy view", "Kopiuj widok"))
+        if hasattr(self, "log_copy_selection_btn"):
+            self.log_copy_selection_btn.setText(tr("Copy selection", "Kopiuj zaznaczenie"))
+        if hasattr(self, "log_clear_btn"):
+            self.log_clear_btn.setText(tr("Clear", "Wyczyść"))
+        if hasattr(self, "log_search_label"):
+            self.log_search_label.setText(tr("Search:", "Szukaj:"))
+        if hasattr(self, "preview_guides_chk"):
+            self.preview_guides_chk.setText(tr("Show layer bounds", "Pokaż ramki warstw"))
+        self._populate_designer_quick_add_menu()
+        self._update_image_tools_availability()
+        # Avoid calling _apply_designer_aux_visibility here: _refresh_localized_texts already runs
+        # _apply_sidebar_mode → _apply_responsive_layout_metrics → _apply_designer_aux_visibility.
+
     def _refresh_localized_texts(self) -> None:
         if hasattr(self, "brand_sub"):
             self.brand_sub.setText("TROFEO LCD")
@@ -5203,7 +5719,7 @@ class TrofeoGui(QMainWindow):
             self.main_tabs.setTabText(3, self._tr("Logs", "Logi"))
         if hasattr(self, "studio_sections_tabs"):
             self.studio_sections_tabs.setTabText(0, self._tr("Theme Gallery", "Galeria motywów"))
-            self.studio_sections_tabs.setTabText(1, "Designer")
+            self.studio_sections_tabs.setTabText(1, self._tr("Designer", "Projektant"))
         if hasattr(self, "appearance_box"):
             self.appearance_box.setTitle(self._tr("App Appearance", "Wygląd Aplikacji"))
         if hasattr(self, "paths_box"):
@@ -5260,6 +5776,7 @@ class TrofeoGui(QMainWindow):
             self.theme_browser_controls_type_label.setText(self._tr("Type", "Typ"))
         if hasattr(self, "theme_browser_controls_sort_label"):
             self.theme_browser_controls_sort_label.setText(self._tr("Sort", "Sortuj"))
+        self._refresh_extended_ui_labels()
 
     def _apply_language_selection(self, _value: str | None = None, *, persist: bool = True) -> None:
         if hasattr(self, "header_language_combo"):
@@ -5275,7 +5792,11 @@ class TrofeoGui(QMainWindow):
             if hasattr(self, "header_language_combo"):
                 idx = self.header_language_combo.findData(self._ui_language)
                 if idx >= 0:
-                    self.header_language_combo.setCurrentIndex(idx)
+                    self.header_language_combo.blockSignals(True)
+                    try:
+                        self.header_language_combo.setCurrentIndex(idx)
+                    finally:
+                        self.header_language_combo.blockSignals(False)
             ui_mode = str(payload.get("ui_mode", "")).strip()
             if ui_mode and hasattr(self, "ui_mode_combo"):
                 self.ui_mode_combo.setCurrentText(ui_mode)
@@ -8575,6 +9096,69 @@ class TrofeoGui(QMainWindow):
         self.preview_info_label.setText("Dodano widget Volume: poziom głośności i stan wyciszenia.")
         self.schedule_preview_theme_doc()
 
+    def add_graphic_equalizer_widget(self) -> None:
+        if self.theme_doc_model is None:
+            self.reload_designer_from_json()
+        if self.theme_doc_model is None:
+            return
+        self.push_designer_history()
+        background = self.theme_doc_model.setdefault("background", {})
+        panels = background.setdefault("panels", [])
+        panels.append(
+            {
+                "id": self._next_item_id("panels", "panel_music_eq"),
+                "rect": [860, 276, 520, 108],
+                "radius": 18,
+                "fill": [8, 14, 24, 186],
+                "opacity": 1.0,
+                "z_index": 95,
+                "visible": True,
+                "locked": False,
+            }
+        )
+        stats = self.theme_doc_model.setdefault("stats", [])
+        stats.append(
+            {
+                "id": self._next_item_id("stats", "stat_music_equalizer"),
+                "label": "EQ",
+                "source": "volume_percent",
+                "format": "{value}",
+                "x": 882,
+                "y": 294,
+                "box_width": 476,
+                "box_height": 72,
+                "font_family": "DejaVu Sans",
+                "font_size": 22,
+                "font_bold": True,
+                "font_italic": False,
+                "font_underline": False,
+                "marquee": False,
+                "marquee_speed": 55.0,
+                "label_color": [149, 206, 152],
+                "value_color": [246, 231, 152],
+                "display": "equalizer",
+                "min_value": 0.0,
+                "max_value": 100.0,
+                "track_color": [0, 0, 0, 0],
+                "fill_color": [102, 226, 120, 255],
+                "stroke_width": 0,
+                "show_value_text": True,
+                "equalizer_bars": 20,
+                "equalizer_gap": 4,
+                "equalizer_mirror": False,
+                "align": "left",
+                "z_index": 214,
+                "visible": True,
+                "locked": False,
+            }
+        )
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        self.preview_info_label.setText(
+            "Dodano widget Graphic EQ: animowany pasek muzyczny sterowany głośnością i stanem odtwarzania."
+        )
+        self.schedule_preview_theme_doc()
+
     def add_analog_clock_widget(self, style: str = "classic") -> None:
         if self.theme_doc_model is None:
             self.reload_designer_from_json()
@@ -9118,8 +9702,11 @@ class TrofeoGui(QMainWindow):
         if collection == "stats":
             label = str(item.get("label", "")).strip()
             source = str(item.get("source", "")).strip() or "stat"
-            title = f"{label} [{source}]" if label else source
-            return f"{prefix}{title[:34]}"
+            display = str(item.get("display", "text")).strip().lower()
+            if display == "equalizer":
+                return f"{prefix}{(label or 'Graphic EQ')[:40]}"
+            title = label or self._humanize_stat_source(source)
+            return f"{prefix}{title[:40]}"
         if collection == "panels":
             rect = item.get("rect", [0, 0, 0, 0])
             size = f"{rect[2]}x{rect[3]}" if isinstance(rect, list) and len(rect) == 4 else "panel"
@@ -9273,6 +9860,9 @@ class TrofeoGui(QMainWindow):
         if collection == "stats":
             source = str(item.get("source", "")).strip()
             label = str(item.get("label", "")).strip()
+            display = str(item.get("display", "text")).strip().lower()
+            if display == "equalizer":
+                return f"music equalizer • {int(item.get('equalizer_bars', 18))} bars"
             source_text = label or source or "Statystyka"
             return f"{source_text} • {int(item.get('font_size', 22))} px"
         if collection == "images":
@@ -9361,11 +9951,23 @@ class TrofeoGui(QMainWindow):
         ident = str(item.get("id", "")).strip().lower()
         source = str(item.get("source", "")).strip().lower()
         label = str(item.get("label", "")).strip().lower()
-        if source.startswith("media_") or source == "media_cover":
+        display = str(item.get("display", "")).strip().lower()
+        if source.startswith("media_") or source == "media_cover" or self._is_music_stat_source(source):
+            return True
+        if display in MUSIC_VISUAL_STAT_DISPLAYS:
             return True
         if ident.startswith("panel_media") or ident.startswith("stat_media") or ident.startswith("img_media"):
             return True
-        return "media" in ident or "now playing" in label
+        if ident.startswith("panel_volume") or ident.startswith("stat_volume") or ident.startswith("panel_music_eq"):
+            return True
+        return "media" in ident or "now playing" in label or "equalizer" in ident or "graphic eq" in label
+
+    def _item_matches_designer_domain(self, item: dict[str, Any], collection: str, domain: str) -> bool:
+        domain_key = str(domain).strip().lower() or "all"
+        if domain_key == "all":
+            return True
+        is_music = self._is_media_related_item(item, collection)
+        return is_music if domain_key == "music" else not is_music
 
     def select_all_designer_elements(self) -> None:
         rows = [row for row in range(self.designer_element_list.count()) if not self.designer_element_list.item(row).isHidden()]
@@ -9419,6 +10021,9 @@ class TrofeoGui(QMainWindow):
 
     def filter_designer_element_list(self) -> None:
         needle = self.designer_component_search.text().strip().lower() if hasattr(self, "designer_component_search") else ""
+        domain = self._designer_domain_mode()
+        collection = self._selected_collection()
+        items = self._current_theme_items() if self.theme_doc_model is not None else []
         for row in range(self.designer_element_list.count()):
             item = self.designer_element_list.item(row)
             widget = self.designer_element_list.itemWidget(item)
@@ -9433,7 +10038,21 @@ class TrofeoGui(QMainWindow):
                 ).lower()
             else:
                 hay = (item.text() or "").lower()
-            item.setHidden(bool(needle) and needle not in hay)
+            model_item = items[row] if 0 <= row < len(items) else {}
+            domain_hidden = not self._item_matches_designer_domain(model_item, collection, domain)
+            text_hidden = bool(needle) and needle not in hay
+            item.setHidden(domain_hidden or text_hidden)
+        current_row = self.designer_element_list.currentRow()
+        if 0 <= current_row < self.designer_element_list.count():
+            current_item = self.designer_element_list.item(current_row)
+            if current_item is not None and current_item.isHidden():
+                replacement = -1
+                for row in range(self.designer_element_list.count()):
+                    candidate = self.designer_element_list.item(row)
+                    if candidate is not None and not candidate.isHidden():
+                        replacement = row
+                        break
+                self.designer_element_list.setCurrentRow(replacement)
         self._update_designer_element_list_height()
 
     def _update_designer_element_list_height(self) -> None:
@@ -9515,6 +10134,7 @@ class TrofeoGui(QMainWindow):
             if image_idx >= 0:
                 current_collection = self._selected_collection() if hasattr(self, "designer_kind_combo") else ""
                 self.inspector_tabs.setTabVisible(image_idx, (not simple) or current_collection == "images")
+        self._refresh_inspector_music_layout()
 
     def _set_designer_inspector_docked_bottom(self, dock_bottom: bool) -> None:
         container = getattr(self, "designer_inspector_container", None)
@@ -9788,6 +10408,159 @@ class TrofeoGui(QMainWindow):
     def _set_field_enabled(self, widget: QWidget, enabled: bool) -> None:
         widget.setEnabled(enabled)
 
+    def _stat_binding_row_pairs(self) -> list[tuple[QLabel, QWidget]]:
+        return [
+            (self.row_content_source, self.designer_source_combo),
+            (self.row_content_format, self.designer_format_edit),
+            (self.row_content_stat_display, self.designer_stat_display_combo),
+            (self.row_content_stat_range, self.designer_stat_range_row),
+            (self.row_content_stat_show_value, self.designer_stat_show_value_chk),
+        ]
+
+    def _move_stat_binding_rows_to_music(self) -> None:
+        if not hasattr(self, "inspector_music_layout"):
+            return
+        if getattr(self, "_stat_binding_rows_layout", None) is self.inspector_music_layout:
+            return
+        content = self.inspector_content_layout
+        music = self.inspector_music_layout
+        pairs = self._stat_binding_row_pairs()
+        for _lbl, field in pairs:
+            try:
+                content.removeRow(field)
+            except Exception:
+                pass
+        for lbl, fld in reversed(pairs):
+            music.insertRow(0, lbl, fld)
+        self._stat_binding_rows_layout = self.inspector_music_layout
+
+    def _move_stat_binding_rows_to_content(self) -> None:
+        if not hasattr(self, "inspector_content_layout"):
+            return
+        if getattr(self, "_stat_binding_rows_layout", None) is self.inspector_content_layout:
+            return
+        content = self.inspector_content_layout
+        music = self.inspector_music_layout
+        pairs = self._stat_binding_row_pairs()
+        for _lbl, field in pairs:
+            try:
+                music.removeRow(field)
+            except Exception:
+                pass
+        insert_at = 2
+        for lbl, fld in pairs:
+            content.insertRow(insert_at, lbl, fld)
+            insert_at += 1
+        self._stat_binding_rows_layout = self.inspector_content_layout
+
+    def _sync_stat_binding_row_visibility(self, collection: str) -> None:
+        is_stat = collection == "stats"
+        on_music = getattr(self, "_stat_binding_rows_layout", None) is getattr(self, "inspector_music_layout", None)
+        lay = self.inspector_music_layout if on_music else self.inspector_content_layout
+        for lbl, field in self._stat_binding_row_pairs():
+            self._set_form_row_visible(lay, lbl, field, is_stat)
+
+    def _refresh_inspector_music_layout(self) -> None:
+        if not hasattr(self, "inspector_music"):
+            return
+        music_idx = self.inspector_tabs.indexOf(self.inspector_music)
+        multi = self._selected_items_multi_any()
+        coll = self._selected_collection()
+
+        simple_mode = bool(
+            hasattr(self, "designer_mode_combo")
+            and str(self.designer_mode_combo.currentText()).strip().lower() == "simple"
+        )
+
+        if len(multi) != 1:
+            self._move_stat_binding_rows_to_content()
+            if music_idx >= 0:
+                self.inspector_tabs.setTabVisible(music_idx, False)
+            if hasattr(self, "inspector_music_spectrum_placeholder"):
+                self.inspector_music_spectrum_placeholder.setVisible(False)
+            if hasattr(self, "inspector_music_hint"):
+                self.inspector_music_hint.setVisible(False)
+            self._sync_stat_binding_row_visibility(coll)
+            return
+
+        _c, _r, item = multi[0]
+        src = str(self.designer_source_combo.currentData() or "").strip() if coll == "stats" else ""
+        want_music_tab = False
+        show_music_stat_rows = False
+
+        if coll == "stats":
+            display_mode = str(item.get("display", "text")).strip().lower() if item is not None else ""
+            show_music_stat_rows = src in MUSIC_AUDIO_STAT_SOURCES or display_mode in MUSIC_VISUAL_STAT_DISPLAYS
+            want_music_tab = show_music_stat_rows
+        elif coll == "panels" and item is not None:
+            pid = str(item.get("id", "")).strip()
+            want_music_tab = any(pid.startswith(p) for p in MUSIC_RELATED_PANEL_ID_PREFIXES)
+        elif coll == "images" and item is not None:
+            want_music_tab = str(item.get("source", "")).strip() in MUSIC_RELATED_IMAGE_SOURCES
+
+        if coll == "stats" and show_music_stat_rows and not simple_mode:
+            self._move_stat_binding_rows_to_music()
+        else:
+            self._move_stat_binding_rows_to_content()
+
+        tab_shown = bool(want_music_tab) and not simple_mode
+        if music_idx >= 0:
+            self.inspector_tabs.setTabVisible(music_idx, tab_shown)
+
+        hint_panel = (
+            coll == "panels"
+            and item is not None
+            and any(str(item.get("id", "")).strip().startswith(p) for p in MUSIC_RELATED_PANEL_ID_PREFIXES)
+        )
+        hint_image = (
+            coll == "images"
+            and item is not None
+            and str(item.get("source", "")).strip() in MUSIC_RELATED_IMAGE_SOURCES
+        )
+        if hasattr(self, "inspector_music_hint"):
+            if hint_panel:
+                self.inspector_music_hint.setText(
+                    self._tr(
+                        "This panel is used by Music / Now Playing bundles (appearance is edited under Style).",
+                        "Ten panel jest używany w zestawach Muzyka / Now Playing (wygląd ustawisz w zakładce Styl).",
+                    )
+                )
+            elif hint_image:
+                self.inspector_music_hint.setText(
+                    self._tr(
+                        "Album art / media backdrop: crop and opacity under Image; synchronized spectrum EQ will appear here later.",
+                        "Okładka / tło mediów: kadrowanie i przezroczystość w zakładce Obraz; zsynchronizowany korektor widma pojawi się tu później.",
+                    )
+                )
+            elif coll == "stats" and item is not None and str(item.get("display", "")).strip().lower() == "equalizer":
+                self.inspector_music_hint.setText(
+                    self._tr(
+                        "Graphic EQ is a music-only animated display. It reacts to volume and playback state; use bars / gap / mirror below.",
+                        "Graphic EQ to animowany widok tylko dla muzyki. Reaguje na głośność i stan odtwarzania; niżej ustawisz liczbę słupków, odstęp i tryb mirror.",
+                    )
+                )
+            else:
+                self.inspector_music_hint.clear()
+            show_music_hint = bool(tab_shown and (hint_panel or hint_image))
+            if coll == "stats" and item is not None and str(item.get("display", "")).strip().lower() == "equalizer":
+                show_music_hint = bool(tab_shown)
+            self.inspector_music_hint.setVisible(show_music_hint)
+
+        if hasattr(self, "inspector_music_spectrum_placeholder"):
+            pl = self._tr(
+                "Animated spectrum / EQ visualizer: reserved for a future update.",
+                "Animowany korektor / wizualizacja widma: zarezerwowane na przyszłą aktualizację.",
+            )
+            self.inspector_music_spectrum_placeholder.setText(pl)
+            show_eq_placeholder = (
+                coll == "stats"
+                and item is not None
+                and str(item.get("display", "")).strip().lower() == "equalizer"
+            )
+            self.inspector_music_spectrum_placeholder.setVisible(bool(tab_shown and not show_eq_placeholder))
+
+        self._sync_stat_binding_row_visibility(coll)
+
     def preview_zoom_fit(self) -> None:
         self.preview_label.set_zoom_mode("fit")
 
@@ -9810,11 +10583,7 @@ class TrofeoGui(QMainWindow):
 
         self._set_form_row_visible(inspector_content_layout := self.inspector_content.layout(), self.row_content_text, self.designer_text_edit, is_text)
         self._set_form_row_visible(inspector_content_layout, self.row_content_label, self.designer_label_edit, is_stat)
-        self._set_form_row_visible(inspector_content_layout, self.row_content_source, self.designer_source_combo, is_stat)
-        self._set_form_row_visible(inspector_content_layout, self.row_content_format, self.designer_format_edit, is_stat)
-        self._set_form_row_visible(inspector_content_layout, self.row_content_stat_display, self.designer_stat_display_combo, is_stat)
-        self._set_form_row_visible(inspector_content_layout, self.row_content_stat_range, self.designer_stat_range_row, is_stat)
-        self._set_form_row_visible(inspector_content_layout, self.row_content_stat_show_value, self.designer_stat_show_value_chk, is_stat)
+        # Stat binding rows (source, format, …) live on Content or Music tab — visibility via _refresh_inspector_music_layout().
         self.designer_source_combo.setToolTip("Źródło danych dla tej statystyki.")
         self.designer_format_edit.setPlaceholderText("{value}")
         self.designer_label_edit.setPlaceholderText("Np. CPU, RAM, Temp")
@@ -9895,7 +10664,7 @@ class TrofeoGui(QMainWindow):
                 collections = sorted({selected_collection for selected_collection, _selected_row in selected_entries})
                 meta = ", ".join(collections)
                 self.designer_selection_label.setText(
-                    f"Grupa: {group_label or 'Wieloselekcja'} • {len(selected_multi_any)} elementów • {meta}"
+                    f"Grupa: {group_label or 'Multi'} • {len(selected_multi_any)} • {meta}"
                 )
                 self.inspector_selection_summary.setText(
                     "Dostępne są wspólne ustawienia: widoczność, blokada, warstwa i przesuwanie całej grupy."
@@ -9913,14 +10682,14 @@ class TrofeoGui(QMainWindow):
                 self.panel_radius_spin.setValue(0)
                 self._clear_stat_gauge_fields()
                 self._clear_stat_sparkline_fields()
+                self._clear_stat_equalizer_fields()
                 self._load_motion_track_fields(None, collection)
                 self.inspector_tabs.setCurrentWidget(self.inspector_general)
                 return
 
             if active_item is None:
                 self.designer_selection_label.setText(
-                    "Brak zaznaczenia. Wybierz warstwę z listy po lewej albo kliknij element na podglądzie. "
-                    "Szybki start: Tekst, Statystyka, Obraz, Panel."
+                    "Brak zaznaczenia • kliknij warstwę lub element na podglądzie"
                 )
                 self.inspector_selection_summary.setText("Wybierz element z listy warstw albo kliknij go na podglądzie.")
                 self.designer_id_edit.clear()
@@ -9948,6 +10717,7 @@ class TrofeoGui(QMainWindow):
                 self.designer_fill_color_edit.clear()
                 self._clear_stat_gauge_fields()
                 self._clear_stat_sparkline_fields()
+                self._clear_stat_equalizer_fields()
                 self.designer_stat_stroke_width_spin.setValue(12)
                 self.designer_path_edit.clear()
                 self.designer_w_spin.setValue(1)
@@ -9965,7 +10735,7 @@ class TrofeoGui(QMainWindow):
                 return
 
             self.designer_selection_label.setText(
-                f"Aktywny: {self._display_name_for_item(active_item, active_collection, active_row)}"
+                self._display_name_for_item(active_item, active_collection, active_row)
             )
             self.inspector_selection_summary.setText(
                 f"Edytujesz element: {str(active_item.get('id', f'item_{active_row}'))}"
@@ -10035,10 +10805,14 @@ class TrofeoGui(QMainWindow):
                 self.designer_sparkline_points_spin.setValue(int(active_item.get("sparkline_points", 42)))
                 self.designer_sparkline_fill_opacity_spin.setValue(float(active_item.get("sparkline_fill_opacity", 0.18)))
                 self.designer_sparkline_show_points_chk.setChecked(bool(active_item.get("sparkline_show_points", True)))
+                self.designer_equalizer_bars_spin.setValue(int(active_item.get("equalizer_bars", 18)))
+                self.designer_equalizer_gap_spin.setValue(int(active_item.get("equalizer_gap", 4)))
+                self.designer_equalizer_mirror_chk.setChecked(bool(active_item.get("equalizer_mirror", False)))
             else:
                 self.designer_stat_stroke_width_spin.setValue(12)
                 self._clear_stat_gauge_fields()
                 self._clear_stat_sparkline_fields()
+                self._clear_stat_equalizer_fields()
             self.designer_path_edit.setText(str(active_item.get("path", "")))
             if active_collection in {"texts", "stats"}:
                 self.designer_w_spin.setValue(int(active_item.get("box_width", 320 if active_collection == "texts" else 160)))
@@ -10064,6 +10838,7 @@ class TrofeoGui(QMainWindow):
             self._load_motion_track_fields(active_item, active_collection)
         finally:
             self._designer_updating = False
+        self._refresh_inspector_music_layout()
         self._refresh_all_color_previews()
         preview_image_path = ""
         if active_item is not None:
@@ -10166,18 +10941,25 @@ class TrofeoGui(QMainWindow):
         self.designer_sparkline_fill_opacity_spin.setValue(0.18)
         self.designer_sparkline_show_points_chk.setChecked(True)
 
+    def _clear_stat_equalizer_fields(self) -> None:
+        self.designer_equalizer_bars_spin.setValue(18)
+        self.designer_equalizer_gap_spin.setValue(4)
+        self.designer_equalizer_mirror_chk.setChecked(False)
+
     def _update_gauge_stat_inspector_visibility(self) -> None:
         gauge_layout = self.inspector_gauge.layout()
         gauge_tab_idx = self.inspector_tabs.indexOf(getattr(self, "inspector_gauge", None))
         selected_multi = self._selected_items_multi_any()
         show_gauge = False
         show_sparkline = False
+        show_equalizer = False
         if len(selected_multi) == 1:
             coll, _row, sel_item = selected_multi[0]
             if coll == "stats" and sel_item is not None:
                 display = str(sel_item.get("display", "text")).strip().lower()
                 show_gauge = display == "gauge"
                 show_sparkline = display == "sparkline"
+                show_equalizer = display == "equalizer"
         if gauge_tab_idx >= 0:
             self.inspector_tabs.setTabVisible(gauge_tab_idx, show_gauge)
         gauge_rows = (
@@ -10202,6 +10984,14 @@ class TrofeoGui(QMainWindow):
         )
         for row_label, widget in sparkline_rows:
             self._set_form_row_visible(appearance_layout, row_label, widget, show_sparkline)
+        music_layout = self.inspector_music.layout()
+        equalizer_rows = (
+            (self.row_music_equalizer_bars, self.designer_equalizer_bars_spin),
+            (self.row_music_equalizer_gap, self.designer_equalizer_gap_spin),
+            (self.row_music_equalizer_mirror, self.designer_equalizer_mirror_chk),
+        )
+        for row_label, widget in equalizer_rows:
+            self._set_form_row_visible(music_layout, row_label, widget, show_equalizer)
 
     def _parse_color_line(self, value: str, fallback: list[int]) -> list[int]:
         raw = value.strip()
@@ -10428,6 +11218,20 @@ class TrofeoGui(QMainWindow):
                     self.designer_h_spin.setValue(sh)
                 finally:
                     self._designer_updating = False
+            elif item["display"] == "equalizer":
+                ew = max(180, self._snap_value(int(self.designer_w_spin.value())))
+                eh = max(52, self._snap_value(int(self.designer_h_spin.value())))
+                item["box_width"] = ew
+                item["box_height"] = eh
+                item["equalizer_bars"] = int(self.designer_equalizer_bars_spin.value())
+                item["equalizer_gap"] = int(self.designer_equalizer_gap_spin.value())
+                item["equalizer_mirror"] = bool(self.designer_equalizer_mirror_chk.isChecked())
+                self._designer_updating = True
+                try:
+                    self.designer_w_spin.setValue(ew)
+                    self.designer_h_spin.setValue(eh)
+                finally:
+                    self._designer_updating = False
             item["min_value"] = min_value
             item["max_value"] = max_value
             item["show_value_text"] = bool(self.designer_stat_show_value_chk.isChecked())
@@ -10490,6 +11294,7 @@ class TrofeoGui(QMainWindow):
             item["opacity"] = float(self.panel_opacity_spin.value())
             item["radius"] = int(self.panel_radius_spin.value())
 
+        self._refresh_inspector_music_layout()
         self.write_designer_to_json()
         self._refresh_designer_list_row(row)
         if 0 <= row < self.designer_element_list.count() and self.designer_element_list.currentRow() != row:

@@ -724,6 +724,110 @@ def _draw_stat_sparkline(
         draw.ellipse((end_x - dot_r, end_y - dot_r, end_x + dot_r, end_y + dot_r), fill=value_fill)
 
 
+def _draw_stat_equalizer(
+    canvas: Image.Image,
+    item: dict[str, Any],
+    *,
+    label: str,
+    value_text: str,
+    numeric_value: float,
+    min_value: float,
+    max_value: float,
+    label_fill: tuple[int, int, int, int],
+    value_fill: tuple[int, int, int, int],
+    track_fill: tuple[int, int, int, int],
+    fill_color: tuple[int, int, int, int],
+    snapshot: dict[str, str],
+) -> None:
+    draw = ImageDraw.Draw(canvas)
+    x = int(item["x"])
+    y = int(item["y"])
+    box_width = max(1, int(item.get("box_width", 360)))
+    box_height = max(1, int(item.get("box_height", 88)))
+    pad_x = max(6, int(round(box_width * 0.03)))
+    pad_y = max(5, int(round(box_height * 0.08)))
+    bars = max(6, min(64, int(item.get("equalizer_bars", 18) or 18)))
+    gap = max(0, min(16, int(item.get("equalizer_gap", 4) or 4)))
+    mirror = bool(item.get("equalizer_mirror", False))
+    show_value = bool(item.get("show_value_text", True))
+    font_size = int(item.get("font_size", 22))
+    header_font = _load_font(
+        max(10, int(round(font_size * 0.56))),
+        bold=False,
+        italic=False,
+        font_family=str(item.get("font_family", "DejaVu Sans")),
+    )
+    value_font = _load_font(
+        max(12, int(round(font_size * 0.82))),
+        bold=True,
+        italic=False,
+        font_family=str(item.get("font_family", "DejaVu Sans")),
+    )
+    header_h = 0
+    if label or show_value:
+        header_h = max(
+            (draw.textbbox((0, 0), label, font=header_font)[3] if label else 0),
+            (draw.textbbox((0, 0), value_text, font=value_font)[3] if show_value else 0),
+        )
+    plot_left = x + pad_x
+    plot_top = y + pad_y + (header_h + max(3, pad_y // 2) if header_h else 0)
+    plot_right = x + box_width - pad_x
+    plot_bottom = y + box_height - pad_y
+    if track_fill[3] > 0:
+        draw.rounded_rectangle(
+            (x, y, x + box_width, y + box_height),
+            radius=max(8, int(round(min(box_width, box_height) * 0.1))),
+            fill=track_fill,
+        )
+    if label:
+        _draw_styled_text(draw, (plot_left, y + pad_y), label, font=header_font, fill=label_fill, bold=False, underline=False)
+    if show_value:
+        vb = draw.textbbox((0, 0), value_text, font=value_font)
+        vx = plot_right - (vb[2] - vb[0])
+        _draw_styled_text(draw, (vx, y + pad_y), value_text, font=value_font, fill=value_fill, bold=True, underline=False)
+    span = max_value - min_value
+    ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
+    media_state = str(snapshot.get("media_state", "")).strip().lower()
+    is_playing = media_state == "playing"
+    is_paused = media_state == "paused"
+    content_w = max(1, plot_right - plot_left)
+    plot_h = max(8, plot_bottom - plot_top)
+    bar_width = max(3, (content_w - gap * (bars - 1)) // bars)
+    total_w = bar_width * bars + gap * (bars - 1)
+    start_x = plot_left + max(0, (content_w - total_w) // 2)
+    mid_y = plot_top + plot_h / 2.0
+    seed = (sum(ord(ch) for ch in str(item.get("id", "eq"))) % 31) / 7.0
+    phase_t = time.time() * (3.6 if is_playing else 1.2)
+    for idx in range(bars):
+        px = start_x + idx * (bar_width + gap)
+        phase = phase_t + seed + idx * 0.63
+        slow = (math.sin(phase) + 1.0) * 0.5
+        fast = (math.sin(phase * 1.93 + 0.7) + 1.0) * 0.5
+        pulse = (math.sin(phase * 0.47 + 1.8) + 1.0) * 0.5
+        combined = slow * 0.46 + fast * 0.36 + pulse * 0.18
+        weight = 0.62 + 0.38 * math.sin(((idx + 1) / float(bars + 1)) * math.pi)
+        if is_playing:
+            level = min(1.0, 0.10 + combined * ((0.28 + ratio * 0.64) * weight))
+        elif is_paused:
+            level = min(0.34, 0.05 + combined * 0.16 * weight)
+        else:
+            level = 0.06 + combined * 0.06 * weight
+        bar_fill = _lerp_rgba(fill_color, value_fill, max(0.0, min(1.0, level)) * 0.72)
+        if mirror:
+            half_h = max(2, int(round((plot_h * 0.48) * level)))
+            top = int(round(mid_y - half_h))
+            bottom = int(round(mid_y + half_h))
+        else:
+            bar_h = max(3, int(round((plot_h - 2) * level)))
+            top = plot_bottom - bar_h
+            bottom = plot_bottom
+        draw.rounded_rectangle(
+            (px, top, px + bar_width, bottom),
+            radius=max(2, min(6, bar_width // 2)),
+            fill=bar_fill,
+        )
+
+
 def _motion_progress(track: dict[str, Any], frame_index: int) -> float:
     start = int(track.get("frame_start", 0))
     end = int(track.get("frame_end", start))
@@ -1176,7 +1280,7 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
         display = str(item.get("display", "text")).strip().lower()
         marquee = bool(item.get("marquee", False))
         numeric_value = _parse_numeric_stat_value(value)
-        if display in {"progress", "gauge", "sparkline"} and numeric_value is not None:
+        if display in {"progress", "gauge", "sparkline", "equalizer"} and numeric_value is not None:
             min_value = float(item.get("min_value", 0.0))
             max_value = float(item.get("max_value", 100.0))
             if display == "progress":
@@ -1225,7 +1329,7 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
                     display_ratio=display_ratio,
                     arc_fill=arc_fill,
                 )
-            else:
+            elif display == "sparkline":
                 cache_key = f"{item.get('id', 'stat')}::{item.get('source', '')}"
                 history = _update_sparkline_history(cache_key, numeric_value, int(item.get("sparkline_points", 42)))
                 _draw_stat_sparkline(
@@ -1240,6 +1344,21 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
                     value_fill=value_fill,
                     track_fill=track_fill,
                     fill_color=fill_color,
+                )
+            else:
+                _draw_stat_equalizer(
+                    canvas,
+                    item,
+                    label=label,
+                    value_text=value_text,
+                    numeric_value=numeric_value,
+                    min_value=min_value,
+                    max_value=max_value,
+                    label_fill=label_fill,
+                    value_fill=value_fill,
+                    track_fill=track_fill,
+                    fill_color=fill_color,
+                    snapshot=snapshot,
                 )
             continue
         if not marquee and not label and item["align"] == "left":
