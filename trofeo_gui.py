@@ -3641,6 +3641,12 @@ class TrofeoGui(QMainWindow):
         self.designer_tool_scale_btn = AnimatedToolbarButton("Scale")
         self.designer_tool_crop_btn = AnimatedToolbarButton("Crop")
         self.designer_crop_reset_btn = AnimatedToolbarButton("Reset crop")
+        self.designer_preview_undo_btn = AnimatedToolbarButton("↶")
+        self.designer_preview_redo_btn = AnimatedToolbarButton("↷")
+        self.designer_align_left_btn = AnimatedToolbarButton("⟸")
+        self.designer_align_center_h_btn = AnimatedToolbarButton("↔")
+        self.designer_align_center_v_btn = AnimatedToolbarButton("↕")
+        self.designer_align_right_btn = AnimatedToolbarButton("⟹")
         self.designer_crop_reset_btn.setObjectName("secondaryAccentButton")
         for btn in (
             self.designer_tool_auto_btn,
@@ -3654,13 +3660,50 @@ class TrofeoGui(QMainWindow):
             btn.setMaximumHeight(28)
             btn.setMinimumWidth(56)
             btn.setObjectName("modeToggleButton")
-        self.designer_crop_reset_btn.setMinimumHeight(26)
-        self.designer_crop_reset_btn.setMaximumHeight(28)
+        for btn in (
+            self.designer_crop_reset_btn,
+            self.designer_preview_undo_btn,
+            self.designer_preview_redo_btn,
+            self.designer_align_left_btn,
+            self.designer_align_center_h_btn,
+            self.designer_align_center_v_btn,
+            self.designer_align_right_btn,
+        ):
+            btn.setMinimumHeight(26)
+            btn.setMaximumHeight(28)
+        for btn in (
+            self.designer_preview_undo_btn,
+            self.designer_preview_redo_btn,
+            self.designer_align_left_btn,
+            self.designer_align_center_h_btn,
+            self.designer_align_center_v_btn,
+            self.designer_align_right_btn,
+        ):
+            btn.setMinimumWidth(30)
+            btn.setMaximumWidth(34)
+            btn.setObjectName("secondaryAccentButton")
+        self.designer_preview_undo_btn.setToolTip(self._tr("Undo designer change", "Cofnij zmianę w projektancie"))
+        self.designer_preview_redo_btn.setToolTip(self._tr("Redo designer change", "Ponów zmianę w projektancie"))
+        self.designer_align_left_btn.setToolTip(self._tr("Align selected element to the left edge", "Wyrównaj zaznaczenie do lewej krawędzi"))
+        self.designer_align_center_h_btn.setToolTip(self._tr("Center selected element horizontally", "Wycentruj zaznaczenie w poziomie"))
+        self.designer_align_center_v_btn.setToolTip(self._tr("Center selected element vertically", "Wycentruj zaznaczenie w pionie"))
+        self.designer_align_right_btn.setToolTip(self._tr("Align selected element to the right edge", "Wyrównaj zaznaczenie do prawej krawędzi"))
         preview_tools_row.addWidget(self.designer_tool_auto_btn)
         preview_tools_row.addWidget(self.designer_tool_select_btn)
         preview_tools_row.addWidget(self.designer_tool_move_btn)
         preview_tools_row.addWidget(self.designer_tool_scale_btn)
         preview_tools_row.addWidget(self.designer_tool_crop_btn)
+        preview_tools_row.addSpacing(4)
+        preview_tools_row.addWidget(self.designer_preview_undo_btn)
+        preview_tools_row.addWidget(self.designer_preview_redo_btn)
+        preview_tools_row.addSpacing(4)
+        preview_tools_row.addWidget(self.designer_snap_chk)
+        preview_tools_row.addWidget(self.designer_snap_spin)
+        preview_tools_row.addSpacing(4)
+        preview_tools_row.addWidget(self.designer_align_left_btn)
+        preview_tools_row.addWidget(self.designer_align_center_h_btn)
+        preview_tools_row.addWidget(self.designer_align_center_v_btn)
+        preview_tools_row.addWidget(self.designer_align_right_btn)
         preview_tools_row.addSpacing(6)
         preview_tools_row.addWidget(self.designer_crop_reset_btn)
         preview_tools_row.addStretch(1)
@@ -3773,6 +3816,12 @@ class TrofeoGui(QMainWindow):
         self.designer_tool_scale_btn.clicked.connect(lambda: self._set_designer_mouse_tool("scale"))
         self.designer_tool_crop_btn.clicked.connect(lambda: self._set_designer_mouse_tool("crop"))
         self.designer_crop_reset_btn.clicked.connect(self._reset_selected_image_crop)
+        self.designer_preview_undo_btn.clicked.connect(self.undo_designer_change)
+        self.designer_preview_redo_btn.clicked.connect(self.redo_designer_change)
+        self.designer_align_left_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("left"))
+        self.designer_align_center_h_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("center-h"))
+        self.designer_align_center_v_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("center-v"))
+        self.designer_align_right_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("right"))
 
         
         self.bg_path_browse_btn.clicked.connect(self.browse_background_path)
@@ -4213,6 +4262,103 @@ class TrofeoGui(QMainWindow):
         if hasattr(self, "preview_info_label"):
             self.preview_info_label.setText(hint_map.get(normalized, hint_map["auto"]))
         self._update_designer_mouse_tools_availability()
+
+    def _designer_snap_threshold(self) -> int:
+        base = max(1, int(self.designer_snap_spin.value())) if hasattr(self, "designer_snap_spin") else 8
+        return max(6, min(24, base))
+
+    def _apply_canvas_element_snap(
+        self,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        collection: str,
+        index: int,
+    ) -> tuple[int, int, list[tuple[str, int]]]:
+        if not getattr(self, "designer_snap_chk", None) or not self.designer_snap_chk.isChecked():
+            return int(x), int(y), []
+        threshold = self._designer_snap_threshold()
+        candidates_x = [("left", x), ("center", x + w // 2), ("right", x + w)]
+        candidates_y = [("top", y), ("center", y + h // 2), ("bottom", y + h)]
+        targets_x = [
+            24,
+            max(0, self.preview_label._canvas_size.width() - 24),
+            self.preview_label._canvas_size.width() // 2,
+        ]
+        targets_y = [
+            18,
+            max(0, self.preview_label._canvas_size.height() - 18),
+            self.preview_label._canvas_size.height() // 2,
+        ]
+        for item in self._all_canvas_elements():
+            if item["collection"] == collection and int(item["index"]) == index:
+                continue
+            if not bool(item.get("visible", True)):
+                continue
+            rx, ry, rw, rh = item["rect"]
+            targets_x.extend([int(rx), int(rx + rw // 2), int(rx + rw)])
+            targets_y.extend([int(ry), int(ry + rh // 2), int(ry + rh)])
+
+        best_x: tuple[int, int] | None = None
+        best_y: tuple[int, int] | None = None
+        for _kind, candidate in candidates_x:
+            for target in targets_x:
+                delta = target - candidate
+                if abs(delta) <= threshold and (best_x is None or abs(delta) < abs(best_x[1])):
+                    best_x = (target, delta)
+        for _kind, candidate in candidates_y:
+            for target in targets_y:
+                delta = target - candidate
+                if abs(delta) <= threshold and (best_y is None or abs(delta) < abs(best_y[1])):
+                    best_y = (target, delta)
+        snapped_x = int(x + (best_x[1] if best_x is not None else 0))
+        snapped_y = int(y + (best_y[1] if best_y is not None else 0))
+        guides = self.preview_label._compute_snap_guides(snapped_x, snapped_y, w, h, collection, index)
+        return snapped_x, snapped_y, guides
+
+    def _align_selected_elements_to_canvas(self, mode: str) -> None:
+        if self.theme_doc_model is None:
+            return
+        selected = self._selected_items_multi_any()
+        if not selected:
+            return
+        canvas = self.theme_doc_model.get("canvas", {}) if isinstance(self.theme_doc_model, dict) else {}
+        canvas_width = int(canvas.get("width", 1920))
+        canvas_height = int(canvas.get("height", 462))
+        self.push_designer_history()
+        for collection, _row, item in selected:
+            if bool(item.get("locked", False)):
+                continue
+            rect_x, rect_y, rect_w, rect_h = self._selected_item_rect(item, collection)
+            next_x = rect_x
+            next_y = rect_y
+            if mode == "center-h":
+                next_x = (canvas_width - rect_w) // 2
+            elif mode == "center-v":
+                next_y = (canvas_height - rect_h) // 2
+            elif mode == "left":
+                next_x = 0
+            elif mode == "right":
+                next_x = canvas_width - rect_w
+            elif mode == "top":
+                next_y = 0
+            elif mode == "bottom":
+                next_y = canvas_height - rect_h
+            if collection in {"images", "panels"}:
+                item["rect"] = [
+                    self._snap_value(int(next_x)),
+                    self._snap_value(int(next_y)),
+                    int(rect_w),
+                    int(rect_h),
+                ]
+            else:
+                item["x"] = self._snap_value(int(next_x))
+                item["y"] = self._snap_value(int(next_y))
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        self._update_preview_canvas_overlay()
+        self.schedule_preview_theme_doc()
 
     def _ensure_preview_selection_visible(self, entries: list[tuple[str, int]]) -> None:
         if not entries:
@@ -12133,8 +12279,16 @@ class TrofeoGui(QMainWindow):
         selected_keys = {(selected_collection, selected_row) for selected_collection, selected_row, _selected_item in selected}
         if len(selected) > 1 and (collection, index) in selected_keys:
             current_rect = self._selected_item_rect(item, collection)
-            delta_x = int(x) - int(current_rect[0])
-            delta_y = int(y) - int(current_rect[1])
+            snapped_x, snapped_y, guides = self._apply_canvas_element_snap(
+                int(x),
+                int(y),
+                int(current_rect[2]),
+                int(current_rect[3]),
+                collection,
+                index,
+            )
+            delta_x = int(snapped_x) - int(current_rect[0])
+            delta_y = int(snapped_y) - int(current_rect[1])
             if delta_x or delta_y:
                 for selected_collection, _row, selected_item in selected:
                     if bool(selected_item.get("locked", False)):
@@ -12151,15 +12305,41 @@ class TrofeoGui(QMainWindow):
                     else:
                         selected_item["x"] = self._snap_value(int(selected_item.get("x", 0)) + delta_x)
                         selected_item["y"] = self._snap_value(int(selected_item.get("y", 0)) + delta_y)
+            self.preview_label.set_temporary_guides(guides, f"Δx {delta_x:+d}  Δy {delta_y:+d}")
             self._sync_drag_editor_state(collection, index)
             return
         if collection in {"images", "panels"}:
             rect = item.get("rect", [0, 0, 1, 1])
             if isinstance(rect, list) and len(rect) == 4:
-                item["rect"] = [self._snap_value(int(x)), self._snap_value(int(y)), int(rect[2]), int(rect[3])]
+                snapped_x, snapped_y, guides = self._apply_canvas_element_snap(
+                    int(x),
+                    int(y),
+                    int(rect[2]),
+                    int(rect[3]),
+                    collection,
+                    index,
+                )
+                item["rect"] = [self._snap_value(int(snapped_x)), self._snap_value(int(snapped_y)), int(rect[2]), int(rect[3])]
+                self.preview_label.set_temporary_guides(
+                    guides,
+                    f"Δx {int(item['rect'][0]) - int(rect[0]):+d}  Δy {int(item['rect'][1]) - int(rect[1]):+d}",
+                )
         else:
-            item["x"] = self._snap_value(int(x))
-            item["y"] = self._snap_value(int(y))
+            current_rect = self._selected_item_rect(item, collection)
+            snapped_x, snapped_y, guides = self._apply_canvas_element_snap(
+                int(x),
+                int(y),
+                int(current_rect[2]),
+                int(current_rect[3]),
+                collection,
+                index,
+            )
+            item["x"] = self._snap_value(int(snapped_x))
+            item["y"] = self._snap_value(int(snapped_y))
+            self.preview_label.set_temporary_guides(
+                guides,
+                f"Δx {int(item['x']) - int(current_rect[0]):+d}  Δy {int(item['y']) - int(current_rect[1]):+d}",
+            )
         self._sync_drag_editor_state(collection, index)
 
     def resize_designer_element(self, collection: str, index: int, x: int, y: int, width: int, height: int) -> None:
