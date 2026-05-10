@@ -107,6 +107,21 @@ def _normalize_rect(value: Any, path: str) -> list[int]:
     return out
 
 
+def _normalize_crop_box(value: Any, path: str) -> list[float]:
+    items = _expect_list(value, path)
+    if len(items) != 4:
+        raise _fail(path, "crop_box must have 4 numbers: [left, top, right, bottom]")
+    out: list[float] = []
+    for idx, item in enumerate(items):
+        num = float(_expect_number(item, f"{path}[{idx}]"))
+        if not (0.0 <= num <= 1.0):
+            raise _fail(f"{path}[{idx}]", "crop_box values must be in range 0.0..1.0")
+        out.append(num)
+    if out[2] <= out[0] or out[3] <= out[1]:
+        raise _fail(path, "crop_box right/bottom must be greater than left/top")
+    return out
+
+
 def _normalize_meta(raw: Any) -> dict[str, Any]:
     data = _expect_dict(raw, "meta")
     name = _expect_str(data.get("name", ""), "meta.name").strip()
@@ -359,6 +374,9 @@ def _normalize_image_item(raw: Any, idx: int) -> dict[str, Any]:
     clock_style = _expect_str(data.get("clock_style", "classic"), f"{path}.clock_style").strip().lower()
     if clock_style not in KNOWN_CLOCK_STYLE:
         raise _fail(f"{path}.clock_style", f"must be one of {sorted(KNOWN_CLOCK_STYLE)}")
+    crop_box = None
+    if data.get("crop_box") is not None:
+        crop_box = _normalize_crop_box(data.get("crop_box"), f"{path}.crop_box")
     return {
         "id": str(data.get("id", f"image_{idx}")).strip() or f"image_{idx}",
         "path": src,
@@ -378,6 +396,7 @@ def _normalize_image_item(raw: Any, idx: int) -> dict[str, Any]:
         "clock_hand_color": _normalize_color(data.get("clock_hand_color", [240, 244, 250, 255]), f"{path}.clock_hand_color"),
         "clock_second_color": _normalize_color(data.get("clock_second_color", [255, 92, 92, 255]), f"{path}.clock_second_color"),
         "clock_center_color": _normalize_color(data.get("clock_center_color", [255, 255, 255, 255]), f"{path}.clock_center_color"),
+        "crop_box": crop_box,
         "rotation": int(_expect_number(data.get("rotation", 0), f"{path}.rotation")),
         "z_index": int(_expect_number(data.get("z_index", 100), f"{path}.z_index")),
         "visible": bool(data.get("visible", True)),

@@ -218,6 +218,7 @@ class PreviewLabel(QLabel):
     element_moved = Signal(str, int, int, int)
     element_resized = Signal(str, int, int, int, int, int)
     elements_box_selected = Signal(object)
+    crop_rect_selected = Signal(object)
     cursor_changed = Signal(object)
     drag_started = Signal()
     drag_finished = Signal()
@@ -247,6 +248,7 @@ class PreviewLabel(QLabel):
         self._zoom_percent = 100
         self._guide_lines: list[tuple[str, int]] = []
         self._movement_badge: str = ""
+        self._tool_mode = "auto"
 
     def set_preview_pixmap(self, pixmap: QPixmap | None, *, display_rotation: int = 0) -> None:
         self._display_rotation = int(display_rotation) % 360
@@ -302,6 +304,20 @@ class PreviewLabel(QLabel):
         self._zoom_percent = max(25, min(300, int(percent)))
         self._refresh_scaled_pixmap()
 
+    def set_tool_mode(self, mode: str) -> None:
+        normalized = str(mode).strip().lower() or "auto"
+        if normalized not in {"auto", "move", "scale", "crop"}:
+            normalized = "auto"
+        self._tool_mode = normalized
+        cursor = Qt.ArrowCursor
+        if normalized == "move":
+            cursor = Qt.SizeAllCursor
+        elif normalized == "scale":
+            cursor = Qt.SizeFDiagCursor
+        elif normalized == "crop":
+            cursor = Qt.CrossCursor
+        self.setCursor(cursor)
+
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         self._refresh_scaled_pixmap()
@@ -320,6 +336,12 @@ class PreviewLabel(QLabel):
         img_y = int(round(local_y * src_h / self._draw_height))
         img_x = max(0, min(src_w - 1, img_x))
         img_y = max(0, min(src_h - 1, img_y))
+        if self._tool_mode == "crop":
+            self._selection_origin_widget = pos
+            self._selection_current_widget = pos
+            self._drag_mode = None
+            self.update()
+            return
         hit = self._hit_test(event.position().toPoint())
         if hit is not None:
             collection, index, mode = hit
@@ -331,7 +353,12 @@ class PreviewLabel(QLabel):
                 self.element_selected.emit(collection, index)
             rect = self._element_rect_for_canvas(collection, index)
             if rect is not None:
-                self._drag_mode = mode
+                forced_mode = mode
+                if self._tool_mode == "move":
+                    forced_mode = "move"
+                elif self._tool_mode == "scale":
+                    forced_mode = "resize"
+                self._drag_mode = forced_mode
                 self._drag_origin = QPoint(img_x, img_y)
                 self._drag_start_rect = rect
                 self._had_drag_motion = False
@@ -383,9 +410,20 @@ class PreviewLabel(QLabel):
         elif self._selection_origin_widget is not None and self._selection_current_widget is not None:
             selection_rect = QRect(self._selection_origin_widget, self._selection_current_widget).normalized()
             if selection_rect.width() >= 8 or selection_rect.height() >= 8:
-                selected = self._elements_in_widget_rect(selection_rect)
-                if selected:
-                    self.elements_box_selected.emit(selected)
+                if self._tool_mode == "crop":
+                    start_img = self._widget_to_image_point(self._selection_origin_widget)
+                    end_img = self._widget_to_image_point(self._selection_current_widget)
+                    if start_img is not None and end_img is not None:
+                        left = min(start_img.x(), end_img.x())
+                        top = min(start_img.y(), end_img.y())
+                        right = max(start_img.x(), end_img.x())
+                        bottom = max(start_img.y(), end_img.y())
+                        if right - left >= 4 and bottom - top >= 4:
+                            self.crop_rect_selected.emit((left, top, right, bottom))
+                else:
+                    selected = self._elements_in_widget_rect(selection_rect)
+                    if selected:
+                        self.elements_box_selected.emit(selected)
             else:
                 img_pos = self._widget_to_image_point(event.position().toPoint())
                 if img_pos is not None:
@@ -3482,6 +3520,41 @@ class TrofeoGui(QMainWindow):
         self.designer_canvas_workbench.setObjectName("designerSectionBox")
         canvas_vbox = QVBoxLayout(self.designer_canvas_workbench)
         canvas_vbox.setContentsMargins(0, 0, 0, 0) # Przejmujemy niewykorzystaną część
+        canvas_vbox.setSpacing(6)
+
+        preview_tools_row = QHBoxLayout()
+        preview_tools_row.setContentsMargins(10, 10, 10, 0)
+        preview_tools_row.setSpacing(6)
+        preview_tools_label = QLabel("Mouse:")
+        preview_tools_label.setObjectName("selectionSummaryLabel")
+        preview_tools_row.addWidget(preview_tools_label)
+        self.designer_tool_auto_btn = AnimatedToolbarButton("Auto")
+        self.designer_tool_move_btn = AnimatedToolbarButton("Move")
+        self.designer_tool_scale_btn = AnimatedToolbarButton("Scale")
+        self.designer_tool_crop_btn = AnimatedToolbarButton("Crop")
+        self.designer_crop_reset_btn = AnimatedToolbarButton("Reset crop")
+        self.designer_crop_reset_btn.setObjectName("secondaryAccentButton")
+        for btn in (
+            self.designer_tool_auto_btn,
+            self.designer_tool_move_btn,
+            self.designer_tool_scale_btn,
+            self.designer_tool_crop_btn,
+        ):
+            btn.setCheckable(True)
+            btn.setMinimumHeight(26)
+            btn.setMaximumHeight(28)
+            btn.setMinimumWidth(56)
+            btn.setObjectName("modeToggleButton")
+        self.designer_crop_reset_btn.setMinimumHeight(26)
+        self.designer_crop_reset_btn.setMaximumHeight(28)
+        preview_tools_row.addWidget(self.designer_tool_auto_btn)
+        preview_tools_row.addWidget(self.designer_tool_move_btn)
+        preview_tools_row.addWidget(self.designer_tool_scale_btn)
+        preview_tools_row.addWidget(self.designer_tool_crop_btn)
+        preview_tools_row.addSpacing(6)
+        preview_tools_row.addWidget(self.designer_crop_reset_btn)
+        preview_tools_row.addStretch(1)
+        canvas_vbox.addLayout(preview_tools_row)
         
         preview_scroll = QScrollArea()
         preview_scroll.setWidgetResizable(True); preview_scroll.setAlignment(Qt.AlignCenter)
@@ -3576,6 +3649,19 @@ class TrofeoGui(QMainWindow):
         self.designer_animation_mode_btn.toggled.connect(self._sync_designer_preview_policy)
         self.designer_assets_toggle_btn.toggled.connect(self._sync_designer_preview_policy)
         self.designer_details_toggle_btn.toggled.connect(self._sync_designer_preview_policy)
+        self.preview_label.element_selected.connect(self._handle_preview_element_selected)
+        self.preview_label.element_moved.connect(self.move_designer_element)
+        self.preview_label.element_resized.connect(self.resize_designer_element)
+        self.preview_label.elements_box_selected.connect(self._handle_preview_elements_box_selected)
+        self.preview_label.crop_rect_selected.connect(self._handle_preview_crop_rect_selected)
+        self.preview_label.cursor_changed.connect(self.update_preview_coords)
+        self.preview_label.drag_started.connect(self.begin_designer_drag)
+        self.preview_label.drag_finished.connect(self.finish_designer_drag)
+        self.designer_tool_auto_btn.clicked.connect(lambda: self._set_designer_mouse_tool("auto"))
+        self.designer_tool_move_btn.clicked.connect(lambda: self._set_designer_mouse_tool("move"))
+        self.designer_tool_scale_btn.clicked.connect(lambda: self._set_designer_mouse_tool("scale"))
+        self.designer_tool_crop_btn.clicked.connect(lambda: self._set_designer_mouse_tool("crop"))
+        self.designer_crop_reset_btn.clicked.connect(self._reset_selected_image_crop)
 
         
         self.bg_path_browse_btn.clicked.connect(self.browse_background_path)
@@ -3661,6 +3747,7 @@ class TrofeoGui(QMainWindow):
 
         logs_layout.addWidget(log_box, 1)
         self._update_image_tools_availability()
+        self._set_designer_mouse_tool("auto")
         self.apply_designer_mode(self.designer_mode_combo.currentText())
         self._sync_shell_navigation()
         self._apply_sidebar_mode()
@@ -3932,6 +4019,243 @@ class TrofeoGui(QMainWindow):
             button.setEnabled(available)
             button.setToolTip(message)
 
+    def _designer_preview_tool_mode(self) -> str:
+        label = getattr(self, "preview_label", None)
+        if label is None:
+            return "auto"
+        return str(getattr(label, "_tool_mode", "auto")).strip().lower() or "auto"
+
+    def _selected_image_entry_for_crop(self) -> tuple[str, int, dict[str, Any]] | None:
+        selected = self._selected_items_multi_any()
+        if len(selected) != 1:
+            return None
+        collection, row, item = selected[0]
+        if collection != "images":
+            return None
+        rect = item.get("rect", [])
+        if not isinstance(rect, list) or len(rect) != 4 or int(rect[2]) <= 0 or int(rect[3]) <= 0:
+            return None
+        return collection, row, item
+
+    def _update_designer_mouse_tools_availability(self) -> None:
+        image_entry = self._selected_image_entry_for_crop()
+        crop_available = image_entry is not None
+        crop_reset_btn = getattr(self, "designer_crop_reset_btn", None)
+        if crop_reset_btn is not None:
+            has_crop = crop_available and bool(image_entry[2].get("crop_box"))
+            crop_reset_btn.setEnabled(bool(has_crop))
+        crop_btn = getattr(self, "designer_tool_crop_btn", None)
+        if crop_btn is not None:
+            crop_btn.setToolTip(
+                self._tr(
+                    "Draw a crop area on the preview for the selected image.",
+                    "Narysuj kadr na podglądzie dla wybranego obrazu.",
+                )
+                if crop_available
+                else self._tr(
+                    "Select exactly one image layer to crop it on the preview.",
+                    "Wybierz dokładnie jedną warstwę obrazu, aby kadrować ją na podglądzie.",
+                )
+            )
+
+    def _set_designer_mouse_tool(self, mode: str) -> None:
+        normalized = str(mode).strip().lower() or "auto"
+        if normalized not in {"auto", "move", "scale", "crop"}:
+            normalized = "auto"
+        if hasattr(self, "preview_label"):
+            self.preview_label.set_tool_mode(normalized)
+        button_map = {
+            "auto": getattr(self, "designer_tool_auto_btn", None),
+            "move": getattr(self, "designer_tool_move_btn", None),
+            "scale": getattr(self, "designer_tool_scale_btn", None),
+            "crop": getattr(self, "designer_tool_crop_btn", None),
+        }
+        for tool_name, button in button_map.items():
+            if button is None:
+                continue
+            button.blockSignals(True)
+            button.setChecked(tool_name == normalized)
+            button.blockSignals(False)
+        hint_map = {
+            "auto": self._tr(
+                "Auto mode: click to select, drag to move, use the corner handle to scale.",
+                "Tryb auto: kliknij, aby zaznaczyć, przeciągnij, aby przesunąć, użyj narożnika do skalowania.",
+            ),
+            "move": self._tr(
+                "Move mode: drag the selected element on the preview.",
+                "Tryb przesuwania: przeciągnij zaznaczony element bezpośrednio na podglądzie.",
+            ),
+            "scale": self._tr(
+                "Scale mode: drag on the preview to resize the selected element.",
+                "Tryb skalowania: przeciągnij na podglądzie, aby zmienić rozmiar zaznaczonego elementu.",
+            ),
+            "crop": self._tr(
+                "Crop mode: draw a crop rectangle for the selected image.",
+                "Tryb kadrowania: narysuj prostokąt kadru dla zaznaczonego obrazu.",
+            ),
+        }
+        if hasattr(self, "preview_info_label"):
+            self.preview_info_label.setText(hint_map.get(normalized, hint_map["auto"]))
+        self._update_designer_mouse_tools_availability()
+
+    def _ensure_preview_selection_visible(self, entries: list[tuple[str, int]]) -> None:
+        if not entries:
+            return
+        domain = self._designer_domain_mode()
+        if domain == "all":
+            return
+        for collection, row in entries:
+            items = self._theme_items_for_collection(collection)
+            if 0 <= row < len(items) and not self._item_matches_designer_domain(items[row], collection, domain):
+                combo = getattr(self, "designer_domain_combo", None)
+                if combo is not None:
+                    idx = combo.findData("all")
+                    if idx >= 0 and idx != combo.currentIndex():
+                        combo.setCurrentIndex(idx)
+                return
+
+    def _select_designer_entries_from_preview(
+        self,
+        entries: list[tuple[str, int]],
+        *,
+        group_label: str = "",
+    ) -> None:
+        normalized = self._normalize_designer_selection(entries)
+        if not normalized:
+            return
+        self._ensure_preview_selection_visible(normalized)
+        current_collection = self._selected_collection()
+        target_collection = current_collection
+        target_rows = [row for collection, row in normalized if collection == current_collection]
+        if not target_rows:
+            target_collection = normalized[0][0]
+            combo_index = self.designer_kind_combo.findData(target_collection)
+            if combo_index >= 0 and combo_index != self.designer_kind_combo.currentIndex():
+                self.designer_kind_combo.setCurrentIndex(combo_index)
+            target_rows = [row for collection, row in normalized if collection == target_collection]
+        self.designer_element_list.blockSignals(True)
+        self.designer_element_list.clearSelection()
+        for row in target_rows:
+            item = self.designer_element_list.item(row)
+            if item is not None and not item.isHidden():
+                item.setSelected(True)
+        self.designer_element_list.setCurrentRow(min(target_rows) if target_rows else -1)
+        self.designer_element_list.blockSignals(False)
+        self._set_designer_selection_group(
+            normalized,
+            group_label=group_label or self._selection_group_label_for_entries(normalized),
+        )
+        self.update_layer_row_visuals()
+        self.load_selected_designer_item()
+        self._update_preview_canvas_overlay()
+
+    def _handle_preview_element_selected(self, collection: str, index: int) -> None:
+        self._select_designer_entries_from_preview([(collection, index)])
+
+    def _handle_preview_elements_box_selected(self, entries: object) -> None:
+        if not isinstance(entries, list):
+            return
+        normalized: list[tuple[str, int]] = []
+        for entry in entries:
+            if (
+                isinstance(entry, tuple)
+                and len(entry) == 2
+                and isinstance(entry[0], str)
+                and isinstance(entry[1], int)
+            ):
+                normalized.append((entry[0], entry[1]))
+        if not normalized:
+            return
+        self._select_designer_entries_from_preview(normalized)
+
+    def _reset_selected_image_crop(self) -> None:
+        image_entry = self._selected_image_entry_for_crop()
+        if image_entry is None:
+            QMessageBox.information(
+                self,
+                self._tr("Crop", "Kadrowanie"),
+                self._tr(
+                    "Select exactly one image layer before clearing the crop.",
+                    "Wybierz dokładnie jedną warstwę obrazu przed czyszczeniem kadru.",
+                ),
+            )
+            return
+        _collection, row, item = image_entry
+        if item.get("crop_box") is None:
+            return
+        self.push_designer_history()
+        item.pop("crop_box", None)
+        self.write_designer_to_json()
+        self._refresh_designer_list_row(row)
+        self.load_selected_designer_item()
+        self._update_preview_canvas_overlay()
+        self.schedule_preview_theme_doc()
+        self._set_designer_toolbar_feedback(
+            self._tr("Image crop cleared.", "Kadr obrazu został wyczyszczony."),
+        )
+
+    def _handle_preview_crop_rect_selected(self, rect: object) -> None:
+        image_entry = self._selected_image_entry_for_crop()
+        if image_entry is None:
+            self._set_designer_toolbar_feedback(
+                self._tr(
+                    "Select one image layer first, then draw a crop rectangle.",
+                    "Najpierw wybierz jedną warstwę obrazu, a potem narysuj prostokąt kadru.",
+                )
+            )
+            return
+        if not (isinstance(rect, tuple) and len(rect) == 4):
+            return
+        try:
+            left, top, right, bottom = [int(v) for v in rect]
+        except Exception:
+            return
+        _collection, row, item = image_entry
+        item_rect = item.get("rect", [0, 0, 1, 1])
+        if not isinstance(item_rect, list) or len(item_rect) != 4:
+            return
+        img_x, img_y, img_w, img_h = [int(v) for v in item_rect]
+        if img_w <= 0 or img_h <= 0:
+            return
+        inter_left = max(img_x, min(left, right))
+        inter_top = max(img_y, min(top, bottom))
+        inter_right = min(img_x + img_w, max(left, right))
+        inter_bottom = min(img_y + img_h, max(top, bottom))
+        if inter_right - inter_left < 4 or inter_bottom - inter_top < 4:
+            self._set_designer_toolbar_feedback(
+                self._tr(
+                    "The crop area must overlap the selected image.",
+                    "Obszar kadru musi pokrywać się z zaznaczonym obrazem.",
+                )
+            )
+            return
+        crop_box = [
+            max(0.0, min(1.0, (inter_left - img_x) / max(1, img_w))),
+            max(0.0, min(1.0, (inter_top - img_y) / max(1, img_h))),
+            max(0.0, min(1.0, (inter_right - img_x) / max(1, img_w))),
+            max(0.0, min(1.0, (inter_bottom - img_y) / max(1, img_h))),
+        ]
+        if crop_box[2] - crop_box[0] < 0.01 or crop_box[3] - crop_box[1] < 0.01:
+            return
+        self.push_designer_history()
+        if (
+            crop_box[0] <= 0.01
+            and crop_box[1] <= 0.01
+            and crop_box[2] >= 0.99
+            and crop_box[3] >= 0.99
+        ):
+            item.pop("crop_box", None)
+            message = self._tr("Image crop cleared.", "Kadr obrazu został wyczyszczony.")
+        else:
+            item["crop_box"] = [round(value, 4) for value in crop_box]
+            message = self._tr("Image crop updated from preview.", "Kadr obrazu został zaktualizowany z podglądu.")
+        self.write_designer_to_json()
+        self._refresh_designer_list_row(row)
+        self.load_selected_designer_item()
+        self._update_preview_canvas_overlay()
+        self.schedule_preview_theme_doc()
+        self._set_designer_toolbar_feedback(message)
+
     def _setup_designer_layers_panel(self, parent_layout: QVBoxLayout) -> None:
         """Konfiguruje lewy panel z listą warstw."""
         box = QGroupBox("Layers & components")
@@ -3953,24 +4277,25 @@ class TrofeoGui(QMainWindow):
         self.designer_component_search.setMaximumHeight(26)
         search_row.addWidget(self.designer_component_search, 1)
         self.designer_domain_combo = QComboBox()
-        self.designer_domain_combo.setMaximumWidth(76)
+        self.designer_domain_combo.setMaximumWidth(68)
         self.designer_domain_combo.setMaximumHeight(26)
         for key, label in DESIGNER_DOMAIN_MODES:
             self.designer_domain_combo.addItem(label, key)
         search_row.addWidget(self.designer_domain_combo, 0)
-        self.designer_kind_combo.setMaximumWidth(92)
+        self.designer_kind_combo.setMaximumWidth(84)
         self.designer_kind_combo.setMaximumHeight(26)
         search_row.addWidget(self.designer_kind_combo, 0)
         self.designer_quick_add_toggle_btn = QPushButton("+")
         self.designer_quick_add_toggle_btn.setMinimumHeight(24)
         self.designer_quick_add_toggle_btn.setMaximumHeight(26)
-        self.designer_quick_add_toggle_btn.setMaximumWidth(34)
+        self.designer_quick_add_toggle_btn.setMaximumWidth(28)
         search_row.addWidget(self.designer_quick_add_toggle_btn)
         layout.addLayout(search_row)
         self.designer_selection_label.setObjectName("selectionSummaryLabel")
         self.designer_selection_label.setWordWrap(False)
         self.designer_selection_label.setMaximumHeight(16)
         self.designer_selection_label.setStyleSheet("font-size: 10px; margin: 0; padding: 0; color: #9fb0c6;")
+        self.designer_selection_label.setToolTip("")
         layout.addWidget(self.designer_selection_label)
         self.designer_kind_combo.currentIndexChanged.connect(self.refresh_designer_element_list)
         self.designer_domain_combo.currentIndexChanged.connect(self._on_designer_domain_changed)
@@ -10666,6 +10991,9 @@ class TrofeoGui(QMainWindow):
                 self.designer_selection_label.setText(
                     f"Grupa: {group_label or 'Multi'} • {len(selected_multi_any)} • {meta}"
                 )
+                self.designer_selection_label.setToolTip(
+                    f"Grupa: {group_label or 'Multi'} • {len(selected_multi_any)} • {meta}"
+                )
                 self.inspector_selection_summary.setText(
                     "Dostępne są wspólne ustawienia: widoczność, blokada, warstwa i przesuwanie całej grupy."
                 )
@@ -10685,10 +11013,14 @@ class TrofeoGui(QMainWindow):
                 self._clear_stat_equalizer_fields()
                 self._load_motion_track_fields(None, collection)
                 self.inspector_tabs.setCurrentWidget(self.inspector_general)
+                self._update_designer_mouse_tools_availability()
                 return
 
             if active_item is None:
                 self.designer_selection_label.setText(
+                    "Brak zaznaczenia • kliknij warstwę lub element na podglądzie"
+                )
+                self.designer_selection_label.setToolTip(
                     "Brak zaznaczenia • kliknij warstwę lub element na podglądzie"
                 )
                 self.inspector_selection_summary.setText("Wybierz element z listy warstw albo kliknij go na podglądzie.")
@@ -10732,9 +11064,13 @@ class TrofeoGui(QMainWindow):
                 self.panel_opacity_spin.setValue(1.0)
                 self.panel_radius_spin.setValue(0)
                 self._load_motion_track_fields(None, collection)
+                self._update_designer_mouse_tools_availability()
                 return
 
             self.designer_selection_label.setText(
+                self._display_name_for_item(active_item, active_collection, active_row)
+            )
+            self.designer_selection_label.setToolTip(
                 self._display_name_for_item(active_item, active_collection, active_row)
             )
             self.inspector_selection_summary.setText(
@@ -10852,6 +11188,7 @@ class TrofeoGui(QMainWindow):
         )
         self._update_preview_canvas_overlay()
         self._update_gauge_stat_inspector_visibility()
+        self._update_designer_mouse_tools_availability()
 
     def _populate_designer_stat_gauge_preset_combo(self) -> None:
         self.designer_stat_gauge_preset_combo.clear()

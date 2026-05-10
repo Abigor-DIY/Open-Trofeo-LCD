@@ -922,6 +922,21 @@ def _fit_image(src: Image.Image, width: int, height: int, fit: str) -> Image.Ima
     return canvas
 
 
+def _apply_crop_box(src: Image.Image, crop_box: list[float] | tuple[float, float, float, float] | None) -> Image.Image:
+    if not crop_box or len(crop_box) != 4:
+        return src
+    try:
+        left_n, top_n, right_n, bottom_n = [float(v) for v in crop_box]
+    except Exception:
+        return src
+    src_w, src_h = src.size
+    left = max(0, min(src_w - 1, int(round(left_n * src_w))))
+    top = max(0, min(src_h - 1, int(round(top_n * src_h))))
+    right = max(left + 1, min(src_w, int(round(right_n * src_w))))
+    bottom = max(top + 1, min(src_h, int(round(bottom_n * src_h))))
+    return src.crop((left, top, right, bottom))
+
+
 def _apply_rounded_alpha(image: Image.Image, radius: int) -> Image.Image:
     if radius <= 0:
         return image
@@ -1165,12 +1180,14 @@ def render_images(canvas: Image.Image, theme: ThemeDocument, base_dir: Path, sna
             if not src_path.exists():
                 continue
             src = Image.open(src_path).convert("RGBA")
+            src = _apply_crop_box(src, item.get("crop_box"))
             fitted = _fit_image(src, w, h, item["fit"])
         else:
             src_path = _resolve_asset_path(base_dir, item["path"])
             if not src_path.exists():
                 continue
             src = Image.open(src_path).convert("RGBA")
+            src = _apply_crop_box(src, item.get("crop_box"))
             fitted = _fit_image(src, w, h, item["fit"])
         rotation = int(item.get("rotation", 0)) % 360
         if rotation:
