@@ -306,7 +306,7 @@ class PreviewLabel(QLabel):
 
     def set_tool_mode(self, mode: str) -> None:
         normalized = str(mode).strip().lower() or "auto"
-        if normalized not in {"auto", "move", "scale", "crop"}:
+        if normalized not in {"auto", "select", "move", "scale", "crop"}:
             normalized = "auto"
         self._tool_mode = normalized
         cursor = Qt.ArrowCursor
@@ -343,6 +343,20 @@ class PreviewLabel(QLabel):
             self.update()
             return
         hit = self._hit_test(event.position().toPoint())
+        if self._tool_mode == "select":
+            if hit is not None:
+                collection, index, _mode = hit
+                target = (collection, index)
+                preserve_multi = target in self._selected_many and len(self._selected_many) > 1
+                self._selected = target
+                if not preserve_multi:
+                    self._selected_many = {target}
+                    self.element_selected.emit(collection, index)
+                self.update()
+                return
+            self._selection_origin_widget = pos
+            self._selection_current_widget = pos
+            return
         if hit is not None:
             collection, index, mode = hit
             target = (collection, index)
@@ -357,7 +371,10 @@ class PreviewLabel(QLabel):
                 if self._tool_mode == "move":
                     forced_mode = "move"
                 elif self._tool_mode == "scale":
-                    forced_mode = "resize"
+                    if forced_mode.startswith("resize-"):
+                        pass
+                    else:
+                        forced_mode = self._preferred_resize_mode(self._canvas_rect_to_widget_rect(rect), pos)
                 self._drag_mode = forced_mode
                 self._drag_origin = QPoint(img_x, img_y)
                 self._drag_start_rect = rect
@@ -388,15 +405,24 @@ class PreviewLabel(QLabel):
         if self._drag_mode == "move":
             self._guide_lines = self._compute_snap_guides(start_x + dx, start_y + dy, start_w, start_h, collection, index)
             self.element_moved.emit(collection, index, start_x + dx, start_y + dy)
-        elif self._drag_mode == "resize":
-            self._guide_lines = self._compute_snap_guides(start_x, start_y, max(1, start_w + dx), max(1, start_h + dy), collection, index)
+        elif self._drag_mode.startswith("resize"):
+            next_x, next_y, next_w, next_h = self._resize_rect_from_drag(
+                self._drag_mode,
+                start_x,
+                start_y,
+                start_w,
+                start_h,
+                dx,
+                dy,
+            )
+            self._guide_lines = self._compute_snap_guides(next_x, next_y, next_w, next_h, collection, index)
             self.element_resized.emit(
                 collection,
                 index,
-                start_x,
-                start_y,
-                max(1, start_w + dx),
-                max(1, start_h + dy),
+                next_x,
+                next_y,
+                next_w,
+                next_h,
             )
 
     def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
@@ -455,8 +481,14 @@ class PreviewLabel(QLabel):
                 painter.setPen(pen)
                 painter.drawRect(rect)
                 painter.drawText(rect.topLeft() + QPoint(4, 14), str(item["label"]))
-                if self._selected == key:
-                    painter.fillRect(self._resize_handle_rect(rect), QColor("#5ec8ff"))
+                if is_selected:
+                    self._paint_selection_handles(painter, rect, key == self._selected)
+            if len(self._selected_many) > 1:
+                group_rect = self._group_bounds_rect()
+                if group_rect is not None:
+                    painter.setPen(QPen(QColor("#5ec8ff"), 1, Qt.DashLine))
+                    painter.drawRoundedRect(group_rect.adjusted(-8, -8, 8, 8), 10, 10)
+                    painter.drawText(group_rect.topLeft() + QPoint(6, -6), "Group")
             if self._selection_origin_widget is not None and self._selection_current_widget is not None:
                 select_rect = QRect(self._selection_origin_widget, self._selection_current_widget).normalized()
                 painter.setPen(QPen(QColor("#89ddff"), 1, Qt.DashLine))
@@ -504,16 +536,91 @@ class PreviewLabel(QLabel):
         wh = max(1, int(round(h * self._draw_height / src_h)))
         return QRect(wx, wy, ww, wh)
 
-    def _resize_handle_rect(self, rect: QRect) -> QRect:
-        return QRect(rect.right() - 10, rect.bottom() - 10, 16, 16)
+    def _resize_handle_rects(self, rect: QRect) -> dict[str, QRect]:
+        size = 12
+        return {
+            "resize-tl": QRect(rect.left() - size // 2, rect.top() - size // 2, size, size),
+            "resize-tr": QRect(rect.right() - size // 2, rect.top() - size // 2, size, size),
+            "resize-bl": QRect(rect.left() - size // 2, rect.bottom() - size // 2, size, size),
+            "resize-br": QRect(rect.right() - size // 2, rect.bottom() - size // 2, size, size),
+        }
+
+    def _paint_selection_handles(self, painter: QPainter, rect: QRect, active: bool) -> None:
+        fill = QColor("#5ec8ff" if active else "#cfeeff")
+        outline = QColor("#0f172a")
+        painter.setPen(QPen(outline, 1))
+        painter.setBrush(fill)
+        for handle in self._resize_handle_rects(rect).values():
+            painter.drawRect(handle)
+
+    def _preferred_resize_mode(self, rect: QRect, pos: QPoint) -> str:
+        horizontal = "l" if pos.x() <= rect.center().x() else "r"
+        vertical = "t" if pos.y() <= rect.center().y() else "b"
+        return f"resize-{vertical}{horizontal}"
+
+    def _resize_rect_from_drag(
+        self,
+        mode: str,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        dx: int,
+        dy: int,
+    ) -> tuple[int, int, int, int]:
+        left = x
+        top = y
+        right = x + width
+        bottom = y + height
+        if mode == "resize-tl":
+            left += dx
+            top += dy
+        elif mode == "resize-tr":
+            right += dx
+            top += dy
+        elif mode == "resize-bl":
+            left += dx
+            bottom += dy
+        else:
+            right += dx
+            bottom += dy
+        min_size = 1
+        if right - left < min_size:
+            if "l" in mode:
+                left = right - min_size
+            else:
+                right = left + min_size
+        if bottom - top < min_size:
+            if "t" in mode:
+                top = bottom - min_size
+            else:
+                bottom = top + min_size
+        return int(left), int(top), int(right - left), int(bottom - top)
+
+    def _group_bounds_rect(self) -> QRect | None:
+        selected_rects: list[QRect] = []
+        for item in self._elements:
+            key = (str(item["collection"]), int(item["index"]))
+            if key not in self._selected_many:
+                continue
+            rect = self._canvas_rect_to_widget_rect(item["rect"])
+            if rect.width() > 0 and rect.height() > 0:
+                selected_rects.append(rect)
+        if not selected_rects:
+            return None
+        group_rect = QRect(selected_rects[0])
+        for rect in selected_rects[1:]:
+            group_rect = group_rect.united(rect)
+        return group_rect
 
     def _hit_test(self, pos: QPoint) -> tuple[str, int, str] | None:
         for item in reversed(self._elements):
             if not bool(item.get("visible", True)):
                 continue
             rect = self._canvas_rect_to_widget_rect(item["rect"])
-            if self._resize_handle_rect(rect).contains(pos):
-                return item["collection"], item["index"], "resize"
+            for handle_name, handle_rect in self._resize_handle_rects(rect).items():
+                if handle_rect.contains(pos):
+                    return item["collection"], item["index"], handle_name
             hit_rect = rect.adjusted(-8, -8, 8, 8)
             if hit_rect.contains(pos):
                 return item["collection"], item["index"], "move"
@@ -3529,6 +3636,7 @@ class TrofeoGui(QMainWindow):
         preview_tools_label.setObjectName("selectionSummaryLabel")
         preview_tools_row.addWidget(preview_tools_label)
         self.designer_tool_auto_btn = AnimatedToolbarButton("Auto")
+        self.designer_tool_select_btn = AnimatedToolbarButton("Select")
         self.designer_tool_move_btn = AnimatedToolbarButton("Move")
         self.designer_tool_scale_btn = AnimatedToolbarButton("Scale")
         self.designer_tool_crop_btn = AnimatedToolbarButton("Crop")
@@ -3536,6 +3644,7 @@ class TrofeoGui(QMainWindow):
         self.designer_crop_reset_btn.setObjectName("secondaryAccentButton")
         for btn in (
             self.designer_tool_auto_btn,
+            self.designer_tool_select_btn,
             self.designer_tool_move_btn,
             self.designer_tool_scale_btn,
             self.designer_tool_crop_btn,
@@ -3548,6 +3657,7 @@ class TrofeoGui(QMainWindow):
         self.designer_crop_reset_btn.setMinimumHeight(26)
         self.designer_crop_reset_btn.setMaximumHeight(28)
         preview_tools_row.addWidget(self.designer_tool_auto_btn)
+        preview_tools_row.addWidget(self.designer_tool_select_btn)
         preview_tools_row.addWidget(self.designer_tool_move_btn)
         preview_tools_row.addWidget(self.designer_tool_scale_btn)
         preview_tools_row.addWidget(self.designer_tool_crop_btn)
@@ -3658,6 +3768,7 @@ class TrofeoGui(QMainWindow):
         self.preview_label.drag_started.connect(self.begin_designer_drag)
         self.preview_label.drag_finished.connect(self.finish_designer_drag)
         self.designer_tool_auto_btn.clicked.connect(lambda: self._set_designer_mouse_tool("auto"))
+        self.designer_tool_select_btn.clicked.connect(lambda: self._set_designer_mouse_tool("select"))
         self.designer_tool_move_btn.clicked.connect(lambda: self._set_designer_mouse_tool("move"))
         self.designer_tool_scale_btn.clicked.connect(lambda: self._set_designer_mouse_tool("scale"))
         self.designer_tool_crop_btn.clicked.connect(lambda: self._set_designer_mouse_tool("crop"))
@@ -4060,12 +4171,13 @@ class TrofeoGui(QMainWindow):
 
     def _set_designer_mouse_tool(self, mode: str) -> None:
         normalized = str(mode).strip().lower() or "auto"
-        if normalized not in {"auto", "move", "scale", "crop"}:
+        if normalized not in {"auto", "select", "move", "scale", "crop"}:
             normalized = "auto"
         if hasattr(self, "preview_label"):
             self.preview_label.set_tool_mode(normalized)
         button_map = {
             "auto": getattr(self, "designer_tool_auto_btn", None),
+            "select": getattr(self, "designer_tool_select_btn", None),
             "move": getattr(self, "designer_tool_move_btn", None),
             "scale": getattr(self, "designer_tool_scale_btn", None),
             "crop": getattr(self, "designer_tool_crop_btn", None),
@@ -4080,6 +4192,10 @@ class TrofeoGui(QMainWindow):
             "auto": self._tr(
                 "Auto mode: click to select, drag to move, use the corner handle to scale.",
                 "Tryb auto: kliknij, aby zaznaczyć, przeciągnij, aby przesunąć, użyj narożnika do skalowania.",
+            ),
+            "select": self._tr(
+                "Select mode: click to select or draw a box to select a whole group.",
+                "Tryb zaznaczania: kliknij, aby zaznaczyć, albo narysuj ramkę wyboru dla całej grupy.",
             ),
             "move": self._tr(
                 "Move mode: drag the selected element on the preview.",
@@ -4166,7 +4282,7 @@ class TrofeoGui(QMainWindow):
                 normalized.append((entry[0], entry[1]))
         if not normalized:
             return
-        self._select_designer_entries_from_preview(normalized)
+        self._select_designer_entries_from_preview(normalized, group_label=self._tr("Selection Box", "Zaznaczenie ramką"))
 
     def _reset_selected_image_crop(self) -> None:
         image_entry = self._selected_image_entry_for_crop()
