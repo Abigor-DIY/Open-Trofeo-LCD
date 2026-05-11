@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import signal
 import subprocess
 import tempfile
@@ -36,6 +37,12 @@ from theme_schema import (
     normalize_theme_document,
     save_theme_document,
 )
+
+DEFAULT_LIVE_REFRESH_INTERVAL_S = 1.0
+FAST_VISUAL_REFRESH_INTERVAL_S = 0.25
+MIN_LIVE_REFRESH_INTERVAL_S = 0.15
+FAST_VISUAL_FULL_STATS_INTERVAL_S = 1.5
+LIVE_REFRESH_LOG_INTERVAL_S = 5.0
 
 
 def now_iso() -> str:
@@ -144,6 +151,12 @@ class ReplayController:
         fd, tmp_name = tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=str(self.runtime_dir))
         os.close(fd)
         return Path(tmp_name)
+
+    def _theme_live_staging_dir(self) -> Path:
+        """Fixed paths for live theme PNGs so quick theme switches do not orphan TRCC workers."""
+        staging = self.runtime_dir / "theme-live-staging"
+        staging.mkdir(parents=True, exist_ok=True)
+        return staging
 
     def _kill_orphan_display_helpers(self) -> list[int]:
         patterns = [
@@ -477,15 +490,15 @@ class ReplayController:
             "frame_count": len(rendered_frames),
         }
 
-    def _split_media_overlay_document(self, document: dict[str, Any] | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    def _split_live_overlay_document(self, document: dict[str, Any] | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         if not isinstance(document, dict):
             return None, None
         base_doc = deepcopy(document)
         overlay_doc = deepcopy(document)
-        media_stats: list[dict[str, Any]] = []
+        live_stats: list[dict[str, Any]] = []
         base_stats: list[dict[str, Any]] = []
-        media_item_ids: set[str] = set()
-        media_images: list[dict[str, Any]] = []
+        live_item_ids: set[str] = set()
+        live_images: list[dict[str, Any]] = []
         base_images: list[dict[str, Any]] = []
 
         for item in document.get("stats", []):
@@ -493,13 +506,11 @@ class ReplayController:
                 continue
             source = str(item.get("source", "")).strip()
             item_copy = deepcopy(item)
-            if source.startswith("media_"):
-                if source == "media_title":
-                    item_copy["marquee"] = False
-                media_stats.append(item_copy)
+            if source:
+                live_stats.append(item_copy)
                 item_id = str(item.get("id", "")).strip()
                 if item_id:
-                    media_item_ids.add(item_id)
+                    live_item_ids.add(item_id)
             else:
                 base_stats.append(item_copy)
 
@@ -508,21 +519,21 @@ class ReplayController:
                 continue
             item_copy = deepcopy(item)
             source = str(item.get("source", "")).strip()
-            if source in {"media_cover", "media_video_frame"}:
-                media_images.append(item_copy)
+            if source in {"analog_clock", "media_cover", "media_video_frame"}:
+                live_images.append(item_copy)
                 item_id = str(item.get("id", "")).strip()
                 if item_id:
-                    media_item_ids.add(item_id)
+                    live_item_ids.add(item_id)
             else:
                 base_images.append(item_copy)
 
-        if not media_stats and not media_images:
+        if not live_stats and not live_images:
             return base_doc, None
 
         base_doc["stats"] = base_stats
         base_doc["images"] = base_images
-        overlay_doc["stats"] = media_stats
-        overlay_doc["images"] = media_images
+        overlay_doc["stats"] = live_stats
+        overlay_doc["images"] = live_images
         overlay_doc["texts"] = []
         overlay_doc["background"] = {
             "kind": "color",
@@ -551,11 +562,14 @@ class ReplayController:
             effects["motion_tracks"] = [
                 deepcopy(track)
                 for track in motion_tracks
-                if isinstance(track, dict) and str(track.get("item_id", "")).strip() in media_item_ids
+                if isinstance(track, dict) and str(track.get("item_id", "")).strip() in live_item_ids
             ]
         else:
             effects["motion_tracks"] = []
         return base_doc, overlay_doc
+
+    def _split_media_overlay_document(self, document: dict[str, Any] | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        return self._split_live_overlay_document(document)
 
     def _render_theme_overlay_to_file(
         self,
@@ -613,6 +627,23 @@ class ReplayController:
             "height": composed.height,
         }
 
+    def _theme_has_heavy_live_overlay(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for item in document.get("stats", []):
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source", "")).strip()
+            display = str(item.get("display", "")).strip().lower()
+            if display == "equalizer" or source.startswith("media_"):
+                return True
+        for item in document.get("images", []):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("source", "")).strip() in {"analog_clock", "media_cover", "media_video_frame"}:
+                return True
+        return False
+
     def send_theme_doc(
         self,
         path: str | None = None,
@@ -622,11 +653,6 @@ class ReplayController:
         live_refresh: bool = True,
         keep_live_refresh_running: bool = False,
     ) -> dict[str, Any]:
-        send_result: dict[str, Any]
-        live_refresh_overlay_doc: dict[str, Any] | None = None
-        live_refresh_overlay_path: str | None = None
-        live_refresh_render_path: str | None = None
-        live_refresh_base_path: str | None = None
         theme_input = document
         if theme_input is None and path:
             try:
@@ -636,18 +662,50 @@ class ReplayController:
                     theme_input = raw_document
             except Exception:
                 theme_input = None
+        # Serialize display hand-off so two HTTP requests cannot start overlapping TRCC
+        # children (USB "in use by another process") and so live refresh cannot race
+        # a theme switch.
+        with self.lock:
+            return self._send_theme_doc_locked(
+                path=path,
+                theme_input=theme_input,
+                timeout_s=timeout_s,
+                resume_loop=resume_loop,
+                live_refresh=live_refresh,
+                keep_live_refresh_running=keep_live_refresh_running,
+            )
+
+    def _send_theme_doc_locked(
+        self,
+        *,
+        path: str | None,
+        theme_input: dict[str, Any] | None,
+        timeout_s: float,
+        resume_loop: bool,
+        live_refresh: bool,
+        keep_live_refresh_running: bool,
+    ) -> dict[str, Any]:
+        send_result: dict[str, Any]
+        live_refresh_overlay_doc: dict[str, Any] | None = None
+        live_refresh_overlay_path: str | None = None
+        live_refresh_render_path: str | None = None
+        live_refresh_base_path: str | None = None
         # Stop the previous live-refresh worker before switching the base theme.
-        # Otherwise the old worker can still repaint the LCD with the previous
-        # theme while the new TRCC worker is starting, which makes "Apply"
-        # appear to do nothing even though the API reports success.
         if not keep_live_refresh_running:
-            self._stop_live_theme_refresh()
+            # Overlay refresh can be slow (glow, media frames); wait long enough that
+            # we never overwrite staging PNGs while the old refresh thread still writes.
+            self._stop_live_theme_refresh(timeout=15.0)
+        live_refresh_needed = self._theme_has_live_sources(theme_input)
         if self.cfg.display_backend == "trcc":
             overlay_doc = None
             theme_for_animation = theme_input
-            if self._theme_has_media_sources(theme_input):
-                theme_for_animation, overlay_doc = self._split_media_overlay_document(theme_input)
-            animation_spec = self._theme_animation_spec(path=path, document=theme_for_animation, max_frames=None)
+            if live_refresh_needed:
+                theme_for_animation, overlay_doc = self._split_live_overlay_document(theme_input)
+            animation_spec = self._theme_animation_spec(
+                path=path,
+                document=theme_for_animation,
+                max_frames=None,
+            )
             if animation_spec is not None:
                 if overlay_doc is not None:
                     overlay_render = self._render_theme_overlay_to_file(
@@ -664,40 +722,44 @@ class ReplayController:
                     send_result["overlay_render"] = overlay_render
             else:
                 render_out_path = None
-                if overlay_doc is not None:
-                    runtime_dir = self._runtime_temp_dir("trofeo-theme-live-")
-                    live_refresh_base_path = str(runtime_dir / "base.png")
-                    live_refresh_overlay_path = str(runtime_dir / "overlay.png")
-                    render_out_path = str(runtime_dir / "current.png")
+                if live_refresh_needed:
+                    staging = self._theme_live_staging_dir()
+                    render_out_path = str(staging / "current.png")
                     live_refresh_render_path = render_out_path
-                    self._render_theme_doc_to_file(
+                    self._preflight_trcc_display_start()
+                    # Static live themes are more reliable when the native loop worker
+                    # watches a single atomically-replaced frame file. This avoids
+                    # freezes/regressions seen with the separate TRCC overlay worker.
+                    rendered = self._render_theme_doc_to_file(
                         path=path,
-                        document=theme_for_animation,
-                        out_path=live_refresh_base_path,
+                        document=theme_input,
+                        out_path=render_out_path,
                     )
-                    self._render_theme_overlay_to_file(
-                        overlay_doc,
-                        path=path,
-                        out_path=live_refresh_overlay_path,
-                        stats_override=self._merge_live_stats(self.stats_provider._read_media_now_playing()),
+                    send_result = self.send_image(
+                        image_path=rendered["image_path"],
+                        raw_jpeg_passthrough=False,
+                        timeout_s=timeout_s,
+                        resume_loop=resume_loop,
+                        stop_live_refresh=not keep_live_refresh_running,
                     )
-                    rendered = self._compose_overlay_frame(
-                        live_refresh_base_path,
-                        live_refresh_overlay_path,
-                        render_out_path,
-                    )
+                    send_result["rendered_theme"] = rendered
                 else:
-                    rendered = self._render_theme_doc_to_file(path=path, document=document, out_path=render_out_path)
-                send_result = self.send_image(
-                    image_path=rendered["image_path"],
-                    raw_jpeg_passthrough=False,
-                    timeout_s=timeout_s,
-                    resume_loop=resume_loop,
-                    stop_live_refresh=not keep_live_refresh_running,
-                )
-                send_result["rendered_theme"] = rendered
+                    rendered = self._render_theme_doc_to_file(path=path, document=theme_input, out_path=render_out_path)
+                    send_result = self.send_image(
+                        image_path=rendered["image_path"],
+                        raw_jpeg_passthrough=False,
+                        timeout_s=timeout_s,
+                        resume_loop=resume_loop,
+                        stop_live_refresh=not keep_live_refresh_running,
+                    )
+                    send_result["rendered_theme"] = rendered
         else:
-            rendered = self._render_theme_doc_to_file(path=path, document=document)
+            render_out_path = None
+            if live_refresh_needed:
+                staging = self._theme_live_staging_dir()
+                render_out_path = str(staging / "current.png")
+                live_refresh_render_path = render_out_path
+            rendered = self._render_theme_doc_to_file(path=path, document=theme_input, out_path=render_out_path)
             send_result = self.send_image(
                 image_path=rendered["image_path"],
                 raw_jpeg_passthrough=False,
@@ -708,11 +770,11 @@ class ReplayController:
             send_result["rendered_theme"] = rendered
         if live_refresh:
             theme_for_scan = theme_input
-            if self._theme_has_media_sources(theme_for_scan):
+            if self._theme_has_live_sources(theme_for_scan):
                 self._start_live_theme_refresh(
                     path=path,
                     document=theme_for_scan,
-                    interval_s=1.0,
+                    interval_s=self._theme_live_refresh_interval(theme_for_scan),
                     overlay_document=live_refresh_overlay_doc,
                     overlay_path=live_refresh_overlay_path,
                     refresh_target_path=live_refresh_render_path,
@@ -762,6 +824,85 @@ class ReplayController:
                 return True
         return False
 
+    def _theme_has_live_sources(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for entry in document.get("stats", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("source", "")).strip():
+                return True
+        for entry in document.get("images", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            source = str(entry.get("source", "")).strip()
+            if source in {"analog_clock", "media_cover", "media_video_frame"}:
+                return True
+        for entry in document.get("texts", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if bool(entry.get("marquee", False)):
+                return True
+        return False
+
+    def _theme_needs_periodic_live_refresh(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for entry in document.get("stats", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            source = str(entry.get("source", "")).strip()
+            if source and not source.startswith("media_"):
+                return True
+            if str(entry.get("display", "")).strip().lower() == "equalizer":
+                return True
+        for entry in document.get("images", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("source", "")).strip() == "analog_clock":
+                return True
+        for entry in document.get("texts", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if bool(entry.get("marquee", False)):
+                return True
+        return False
+
+    def _theme_has_fast_visual_live_refresh(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for entry in document.get("stats", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            source = str(entry.get("source", "")).strip()
+            display = str(entry.get("display", "")).strip().lower()
+            if display == "equalizer":
+                return True
+            if source == "time_hms":
+                return True
+        for entry in document.get("images", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("source", "")).strip() == "analog_clock":
+                return True
+        return False
+
+    def _theme_live_refresh_interval(self, document: dict[str, Any] | None) -> float:
+        if self._theme_has_fast_visual_live_refresh(document):
+            return FAST_VISUAL_REFRESH_INTERVAL_S
+        return DEFAULT_LIVE_REFRESH_INTERVAL_S
+
+    def _theme_has_marquee_motion(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for section in ("stats", "texts"):
+            for entry in document.get(section, []):
+                if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                    continue
+                if bool(entry.get("marquee", False)) and str(entry.get("align", "left")).strip().lower() == "left":
+                    return True
+        return False
+
     def _theme_has_background_animation(self, document: dict[str, Any] | None) -> bool:
         if not isinstance(document, dict):
             return False
@@ -769,14 +910,11 @@ class ReplayController:
         if not isinstance(effects, dict):
             return False
         animation = effects.get("animation", {})
-        if not isinstance(animation, dict):
-            return False
-        if not bool(animation.get("enabled", False)):
-            return False
-        if not bool(animation.get("use_as_background", True)):
-            return False
-        frames = animation.get("frame_paths", [])
-        return isinstance(frames, list) and len(frames) > 1
+        if isinstance(animation, dict) and bool(animation.get("enabled", False)) and bool(animation.get("use_as_background", True)):
+            frames = animation.get("frame_paths", [])
+            if isinstance(frames, list) and len(frames) > 1:
+                return True
+        return False
 
     def _live_theme_worker(
         self,
@@ -795,9 +933,14 @@ class ReplayController:
         last_refresh = 0.0
         last_fallback = 0.0
         last_event_at = 0.0
+        last_live_refresh_log_at = 0.0
         animated_theme = self._theme_has_background_animation(document)
         cheap_overlay_mode = isinstance(overlay_document, dict) and bool(overlay_path)
         fast_file_refresh_mode = bool(refresh_target_path) and not cheap_overlay_mode
+        has_media_sources = self._theme_has_media_sources(document) or self._theme_has_media_sources(overlay_document)
+        periodic_live_refresh = self._theme_needs_periodic_live_refresh(document) or self._theme_needs_periodic_live_refresh(overlay_document)
+        fast_visual_refresh = self._theme_has_fast_visual_live_refresh(document) or self._theme_has_fast_visual_live_refresh(overlay_document)
+        marquee_motion = self._theme_has_marquee_motion(document) or self._theme_has_marquee_motion(overlay_document)
         overlay_sources: set[str] = set()
         if isinstance(overlay_document, dict):
             for item in overlay_document.get("stats", []):
@@ -812,11 +955,32 @@ class ReplayController:
                 source = str(item.get("source", "")).strip()
                 if source:
                     overlay_sources.add(source)
-        fallback_interval_s = 300.0 if cheap_overlay_mode else (3600.0 if animated_theme else (120.0 if fast_file_refresh_mode else max(10.0, interval_s)))
-        last_media_sig: tuple[str, str, str, str, str] | None = None
+        heavy_overlay = self._theme_has_heavy_live_overlay(overlay_document)
+        if cheap_overlay_mode:
+            if fast_visual_refresh:
+                fallback_interval_s = FAST_VISUAL_REFRESH_INTERVAL_S
+            else:
+                fallback_interval_s = 300.0
+        elif fast_visual_refresh:
+            fallback_interval_s = FAST_VISUAL_REFRESH_INTERVAL_S
+        elif marquee_motion:
+            fallback_interval_s = 0.25
+        elif periodic_live_refresh:
+            fallback_interval_s = max(0.3, interval_s)
+        else:
+            fallback_interval_s = 3600.0 if animated_theme else (120.0 if fast_file_refresh_mode else max(10.0, interval_s))
+        last_media_sig: tuple[str, str, str, str, str, str] | None = None
         last_probe = 0.0
-        probe_interval_s = 0.45 if cheap_overlay_mode else (0.25 if fast_file_refresh_mode else max(0.7, min(2.0, interval_s)))
-        min_refresh_gap_s = 0.18 if cheap_overlay_mode else (12.0 if animated_theme else (0.12 if fast_file_refresh_mode else 0.25))
+        if fast_visual_refresh:
+            probe_interval_s = 3.0
+        else:
+            probe_interval_s = 0.45 if cheap_overlay_mode else (0.25 if fast_file_refresh_mode else max(0.7, min(2.0, interval_s)))
+        if cheap_overlay_mode and fast_visual_refresh:
+            min_refresh_gap_s = 0.07
+        elif cheap_overlay_mode:
+            min_refresh_gap_s = 0.15 if heavy_overlay else 0.10
+        else:
+            min_refresh_gap_s = 12.0 if animated_theme else (0.08 if fast_file_refresh_mode else 0.25)
 
         media_players: dict[str, dict[str, str]] = {}
 
@@ -877,6 +1041,21 @@ class ReplayController:
                     best_media = dict(media)
             return best_media
 
+        def _resolve_media_cover_fast(raw_path: str, player_name: str, title: str, artist: str, album: str) -> str:
+            try:
+                cover_path = self.stats_provider._normalize_media_cover_path(raw_path)
+                if cover_path:
+                    stable_key = ""
+                    if any(part and part != "N/A" for part in (title, artist, album)):
+                        stable_key = self.stats_provider._cover_lookup_key(player_name, title, artist, album)
+                    return self.stats_provider._copy_media_cover_to_runtime(cover_path, stable_key=stable_key)
+                if any(part and part != "N/A" for part in (title, artist, album)):
+                    cache_key = self.stats_provider._cover_lookup_key(player_name, title, artist, album)
+                    return self.stats_provider._cached_cover_for_key(cache_key)
+            except Exception:
+                return ""
+            return ""
+
         def _merge_follow_metadata(line: str, current: dict[str, str]) -> tuple[str, dict[str, str]]:
             parts = line.rstrip("\n").split("\t")
             player = parts[0].strip() if len(parts) > 0 else ""
@@ -905,12 +1084,12 @@ class ReplayController:
                 candidate["media_album"] = "N/A"
             if media_url:
                 candidate["media_source_url"] = media_url
-            cover_path = self.stats_provider.resolve_media_cover_path(
+            cover_path = _resolve_media_cover_fast(
                 art_url,
-                player_name=player or str(candidate.get("media_app", "")),
-                title=str(candidate.get("media_title", "")),
-                artist=str(candidate.get("media_artist", "")),
-                album=str(candidate.get("media_album", "")),
+                player or str(candidate.get("media_app", "")),
+                str(candidate.get("media_title", "")),
+                str(candidate.get("media_artist", "")),
+                str(candidate.get("media_album", "")),
             )
             if cover_path:
                 candidate["media_cover_path"] = cover_path
@@ -931,10 +1110,30 @@ class ReplayController:
                     )
             return player or candidate.get("media_app", ""), candidate
 
-        media_cache = _normalize_media(self.stats_provider._read_media_now_playing())
+        media_cache = _normalize_media(self.stats_provider._read_media_now_playing()) if has_media_sources else _default_media()
         last_media_sig = _media_sig(media_cache)
         if media_cache.get("media_app") and media_cache["media_app"] != "N/A":
             media_players[media_cache["media_app"]] = dict(media_cache)
+        try:
+            stats_cache = self._merge_live_stats(media_cache)
+        except Exception:
+            stats_cache = dict(media_cache)
+        last_full_stats_at = time.time()
+        full_stats_interval_s = FAST_VISUAL_FULL_STATS_INTERVAL_S if fast_visual_refresh else max(1.0, interval_s)
+
+        def _cached_live_stats(media_override: dict[str, str]) -> dict[str, str]:
+            values = dict(stats_cache)
+            local_now = time.localtime()
+            values["time_hms"] = time.strftime("%H:%M:%S", local_now)
+            values["date_ymd"] = time.strftime("%Y-%m-%d", local_now)
+            values.update({str(key): str(value) for key, value in media_override.items()})
+            return values
+
+        def _refresh_full_live_stats(media_override: dict[str, str]) -> dict[str, str]:
+            nonlocal stats_cache, last_full_stats_at
+            stats_cache = self._merge_live_stats(media_override)
+            last_full_stats_at = time.time()
+            return dict(stats_cache)
 
         def _start_followers() -> tuple[subprocess.Popen | None, subprocess.Popen | None]:
             meta = None
@@ -1002,20 +1201,23 @@ class ReplayController:
             except Exception:
                 pass
 
-        follow_meta, follow_status = _start_followers()
+        follow_meta, follow_status = _start_followers() if has_media_sources else (None, None)
         while not self.live_theme_stop.is_set():
             now = time.time()
             event = False
+            refresh_reason = ""
 
-            for proc in (follow_meta, follow_status):
-                if proc is not None and proc.poll() is not None:
-                    event = True
-            if (follow_meta is None or follow_meta.poll() is not None) and (follow_status is None or follow_status.poll() is not None):
-                follow_meta, follow_status = _start_followers()
+            if has_media_sources:
+                for proc in (follow_meta, follow_status):
+                    if proc is not None and proc.poll() is not None:
+                        event = True
+                        refresh_reason = refresh_reason or "media"
+                if (follow_meta is None or follow_meta.poll() is not None) and (follow_status is None or follow_status.poll() is not None):
+                    follow_meta, follow_status = _start_followers()
 
             had_follow_data = False
             deadline = time.time() + (0.10 if cheap_overlay_mode else (0.12 if fast_file_refresh_mode else 0.35))
-            while True:
+            while has_media_sources:
                 timeout = max(0.0, deadline - time.time())
                 if timeout <= 0:
                     break
@@ -1058,11 +1260,12 @@ class ReplayController:
                         last_media_sig = _media_sig(media_cache)
                 if changed or (not cheap_overlay_mode and not fast_file_refresh_mode):
                     event = True
+                    refresh_reason = "media"
                     last_event_at = event_ts
             if not had_follow_data:
                 self.live_theme_stop.wait(0.05 if cheap_overlay_mode else (0.08 if fast_file_refresh_mode else 0.2))
 
-            if now - last_probe >= probe_interval_s:
+            if has_media_sources and not event and now - last_probe >= probe_interval_s:
                 last_probe = now
                 try:
                     media = _normalize_media(self.stats_provider._read_media_now_playing())
@@ -1074,6 +1277,7 @@ class ReplayController:
                             media_players[media["media_app"]] = dict(media)
                         if media.get("media_state") in {"playing", "paused"} or media.get("media_title") not in {"", "N/A"}:
                             event = True
+                            refresh_reason = "media"
                             last_event_at = time.time()
                     elif sig != last_media_sig:
                         prev = last_media_sig
@@ -1098,23 +1302,33 @@ class ReplayController:
                             elif changed_state and "media_state" in overlay_sources:
                                 event = True
                             if event:
+                                refresh_reason = "media"
                                 last_event_at = time.time()
                         elif animated_theme:
                             changed_track = (sig[2], sig[3]) != (prev[2], prev[3])
                             if changed_track:
                                 event = True
+                                refresh_reason = "media"
                         else:
                             event = True
+                            refresh_reason = "media"
                 except Exception:
                     pass
 
             if now - last_fallback >= fallback_interval_s:
                 event = True
+                if not refresh_reason:
+                    refresh_reason = "periodic" if now - last_full_stats_at >= full_stats_interval_s else "motion"
                 last_fallback = now
 
             if event and now - last_refresh >= min_refresh_gap_s:
                 try:
-                    merged_stats = self._merge_live_stats(media_cache)
+                    if fast_visual_refresh:
+                        merged_stats = _refresh_full_live_stats(media_cache)
+                    elif refresh_reason in {"media", "motion"}:
+                        merged_stats = _cached_live_stats(media_cache)
+                    else:
+                        merged_stats = _refresh_full_live_stats(media_cache)
                     if overlay_document is not None and overlay_path and refresh_target_path and base_render_path:
                         self._render_theme_overlay_to_file(
                             deepcopy(overlay_document),
@@ -1152,11 +1366,16 @@ class ReplayController:
                         )
                     last_refresh = time.time()
                     if cheap_overlay_mode or fast_file_refresh_mode:
+                        should_log = (last_refresh - last_live_refresh_log_at) >= LIVE_REFRESH_LOG_INTERVAL_S
+                        if not should_log:
+                            continue
+                        last_live_refresh_log_at = last_refresh
+                        delay_ms = int(max(0.0, last_refresh - last_event_at) * 1000) if refresh_reason == "media" and last_event_at > 0 else None
                         self._log(
-                            "media overlay refreshed"
+                            "live theme refreshed"
                             + (
-                                f" delay_ms={int(max(0.0, last_refresh - last_event_at) * 1000)}"
-                                if last_event_at > 0
+                                f" delay_ms={delay_ms}"
+                                if delay_ms is not None
                                 else ""
                             )
                             + f" state={media_cache.get('media_state', '')}"
@@ -1197,7 +1416,7 @@ class ReplayController:
                 args=(
                     path,
                     frozen_doc,
-                    max(0.3, float(interval_s)),
+                    max(MIN_LIVE_REFRESH_INTERVAL_S, float(interval_s)),
                     frozen_overlay_doc,
                     overlay_path,
                     refresh_target_path,
@@ -1676,8 +1895,14 @@ class ReplayController:
 
         return {"running": True, "pid": self.proc.pid, "mode": self.mode}
 
-    def _start_trcc_static_overlay_worker(self, image_path: Path, overlay_path: Path) -> dict[str, Any]:
-        self._preflight_trcc_display_start()
+    def _start_trcc_static_overlay_worker(
+        self,
+        image_path: Path,
+        overlay_path: Path,
+        *,
+        poll_interval_s: float = 0.25,
+        keepalive_s: float = 1.5,
+    ) -> dict[str, Any]:
         trcc_bin = Path(self.cfg.trcc_bin).expanduser()
         if not trcc_bin.is_absolute():
             trcc_bin = (self.cfg.workdir / trcc_bin).resolve()
@@ -1690,48 +1915,70 @@ class ReplayController:
         if not self.cfg.trcc_static_overlay_script.exists():
             raise RuntimeError(f"Brak skryptu TRCC static overlay worker: {self.cfg.trcc_static_overlay_script}")
 
-        ensure_parent(self.cfg.child_log_file)
-        child_log = open(self.cfg.child_log_file, "a", encoding="utf-8")
-        child_log.write(f"\n[{now_iso()}] start static overlay base={image_path} overlay={overlay_path}\n")
-        child_log.flush()
+        def _read_start_tail() -> str:
+            try:
+                return self.cfg.child_log_file.read_text(encoding="utf-8", errors="replace")[-1600:]
+            except Exception:
+                return ""
 
-        cmd = [
+        cmd_base = [
             str(trcc_python),
             str(self.cfg.trcc_static_overlay_script),
             str(image_path),
             "--overlay",
             str(overlay_path),
             "--interval",
-            "0.5",
+            f"{max(0.05, float(poll_interval_s)):.3f}",
+            "--keepalive",
+            f"{max(0.05, float(keepalive_s)):.3f}",
         ]
-        self._log("start static overlay worker: " + " ".join(cmd))
-        try:
-            self.proc = subprocess.Popen(
-                cmd,
-                cwd=self.cfg.workdir,
-                stdout=child_log,
-                stderr=subprocess.STDOUT,
-                text=True,
+
+        startup_tail = ""
+        for attempt in range(3):
+            self._preflight_trcc_display_start()
+            ensure_parent(self.cfg.child_log_file)
+            child_log = open(self.cfg.child_log_file, "a", encoding="utf-8")
+            child_log.write(
+                f"\n[{now_iso()}] start static overlay base={image_path} overlay={overlay_path} attempt={attempt + 1}\n"
             )
-            self.proc_started_at = time.time()
-            self.mode = "static-image"
-            self.last_error = None
-            child_log.close()
-        except Exception:
-            child_log.close()
-            raise
+            child_log.flush()
 
-        time.sleep(1.2)
-        self._cleanup_proc_locked()
-        if self.proc is None or self.proc.poll() is not None:
-            tail = ""
+            self._log("start static overlay worker: " + " ".join(cmd_base))
             try:
-                tail = self.cfg.child_log_file.read_text(encoding="utf-8", errors="replace")[-1200:]
+                self.proc = subprocess.Popen(
+                    cmd_base,
+                    cwd=self.cfg.workdir,
+                    stdout=child_log,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                self.proc_started_at = time.time()
+                self.mode = "static-image"
+                self.last_error = None
+                child_log.close()
             except Exception:
-                pass
-            raise RuntimeError(f"static overlay worker failed to start: {tail.strip() or 'unknown error'}")
+                child_log.close()
+                raise
 
-        return {"running": True, "pid": self.proc.pid, "mode": self.mode}
+            time.sleep(1.0 if attempt == 0 else 1.15)
+            self._cleanup_proc_locked()
+            if self.proc is not None and self.proc.poll() is None:
+                return {"running": True, "pid": self.proc.pid, "mode": self.mode}
+
+            startup_tail = _read_start_tail().strip()
+            if attempt < 2 and (
+                "in use by another process" in startup_tail.lower()
+                or "operation timed out" in startup_tail.lower()
+                or "failed to load" in startup_tail.lower()
+                or "resolution is (0, 0)" in startup_tail.lower()
+            ):
+                self._log("static overlay worker retry after device busy or init failure")
+                self._stop_display_worker(timeout=2.0)
+                time.sleep(1.0)
+                continue
+            break
+
+        raise RuntimeError(f"static overlay worker failed to start: {startup_tail or 'unknown error'}")
 
     def _start_trcc_animation_worker(self, animation_spec: dict[str, Any]) -> dict[str, Any]:
         self._preflight_trcc_display_start()
@@ -2021,7 +2268,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             if path == "/v1/shutdown":
                 result = ctl.stop_loop()
                 self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
-                callback = getattr(self, "request_shutdown_cb", None)
+                callback = getattr(type(self), "request_shutdown_cb", None)
                 if callable(callback):
                     callback("api shutdown")
                 return
@@ -2230,6 +2477,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._write_json(500, {"ok": False, "error": str(exc), "status": ctl.status()})
 
     def log_message(self, fmt: str, *args: Any) -> None:
+        if self.path.startswith(("/health", "/v1/health", "/v1/status")):
+            return
         print(f"[{now_iso()}] http {self.address_string()} {fmt % args}", flush=True)
 
 
