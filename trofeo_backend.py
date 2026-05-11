@@ -1324,7 +1324,10 @@ class ReplayController:
             if event and now - last_refresh >= min_refresh_gap_s:
                 try:
                     if fast_visual_refresh:
-                        merged_stats = _refresh_full_live_stats(media_cache)
+                        if refresh_reason == "periodic":
+                            merged_stats = _refresh_full_live_stats(media_cache)
+                        else:
+                            merged_stats = _cached_live_stats(media_cache)
                     elif refresh_reason in {"media", "motion"}:
                         merged_stats = _cached_live_stats(media_cache)
                     else:
