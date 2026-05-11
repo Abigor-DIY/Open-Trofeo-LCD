@@ -727,22 +727,53 @@ class ReplayController:
                     render_out_path = str(staging / "current.png")
                     live_refresh_render_path = render_out_path
                     self._preflight_trcc_display_start()
-                    # Static live themes are more reliable when the native loop worker
-                    # watches a single atomically-replaced frame file. This avoids
-                    # freezes/regressions seen with the separate TRCC overlay worker.
-                    rendered = self._render_theme_doc_to_file(
-                        path=path,
-                        document=theme_input,
-                        out_path=render_out_path,
-                    )
-                    send_result = self.send_image(
-                        image_path=rendered["image_path"],
-                        raw_jpeg_passthrough=False,
-                        timeout_s=timeout_s,
-                        resume_loop=resume_loop,
-                        stop_live_refresh=not keep_live_refresh_running,
-                    )
-                    send_result["rendered_theme"] = rendered
+                    # Keep the stable native loop worker, but when the theme has a
+                    # separable live overlay (time/media/EQ/etc.) render only the
+                    # overlay on refresh and compose it onto a cached base frame.
+                    if overlay_doc is not None:
+                        live_refresh_base_path = str(staging / "base.png")
+                        live_refresh_overlay_path = str(staging / "overlay.png")
+                        rendered = self._render_theme_doc_to_file(
+                            path=path,
+                            document=theme_for_animation,
+                            out_path=live_refresh_base_path,
+                        )
+                        overlay_render = self._render_theme_overlay_to_file(
+                            overlay_doc,
+                            path=path,
+                            out_path=live_refresh_overlay_path,
+                            stats_override=self._merge_live_stats(self.stats_provider._read_media_now_playing()),
+                        )
+                        composed = self._compose_overlay_frame(
+                            live_refresh_base_path,
+                            live_refresh_overlay_path,
+                            render_out_path,
+                        )
+                        live_refresh_overlay_doc = overlay_doc
+                        send_result = self.send_image(
+                            image_path=composed["image_path"],
+                            raw_jpeg_passthrough=False,
+                            timeout_s=timeout_s,
+                            resume_loop=resume_loop,
+                            stop_live_refresh=not keep_live_refresh_running,
+                        )
+                        send_result["rendered_theme"] = rendered
+                        send_result["overlay_render"] = overlay_render
+                        send_result["composed_render"] = composed
+                    else:
+                        rendered = self._render_theme_doc_to_file(
+                            path=path,
+                            document=theme_input,
+                            out_path=render_out_path,
+                        )
+                        send_result = self.send_image(
+                            image_path=rendered["image_path"],
+                            raw_jpeg_passthrough=False,
+                            timeout_s=timeout_s,
+                            resume_loop=resume_loop,
+                            stop_live_refresh=not keep_live_refresh_running,
+                        )
+                        send_result["rendered_theme"] = rendered
                 else:
                     rendered = self._render_theme_doc_to_file(path=path, document=theme_input, out_path=render_out_path)
                     send_result = self.send_image(
