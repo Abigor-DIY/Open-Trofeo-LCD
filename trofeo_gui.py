@@ -3614,7 +3614,6 @@ class TrofeoGui(QMainWindow):
         self.bg_animation_blank_btn = QPushButton("Pusta")
         self.bg_animation_export_btn = QPushButton("Eksportuj")
         self.bg_animation_import_btn = QPushButton("Importuj")
-
         self.layout_preset_name_edit = QLineEdit(); self.layout_preset_combo = QComboBox()
         self.layout_preset_save_btn = QPushButton("Zapisz preset"); self.layout_preset_load_btn = QPushButton("Wczytaj preset")
         self.layout_preset_delete_btn = QPushButton("Usuń preset")
@@ -3976,7 +3975,6 @@ class TrofeoGui(QMainWindow):
         self.bg_animation_next_btn.clicked.connect(lambda: self.select_animation_frame(min(self.bg_animation_list.count() - 1, self.bg_animation_list.currentRow() + 1)))
         self.bg_animation_list.currentRowChanged.connect(self.select_animation_frame)
         self.bg_animation_list.rows_reordered.connect(self.on_animation_frames_reordered)
-        
         for widget, signal in [
             (self.bg_kind_combo, "currentTextChanged"), (self.bg_base_color_edit, "textChanged"),
             (self.bg_accent_color_edit, "textChanged"), (self.bg_texture_alpha_spin, "valueChanged"),
@@ -5155,8 +5153,11 @@ class TrofeoGui(QMainWindow):
         self.bg_animation_list.setMinimumHeight(120)
         animation_flags_row = wrap_row(self.bg_animation_enabled_chk, self.bg_animation_use_bg_chk)
         animation_speed_row = wrap_row(
+            QLabel("FPS"),
             self.bg_animation_fps_spin,
+            QLabel("Klatka"),
             self.bg_animation_frame_spin,
+            QLabel("Czas klatki (ms)"),
             self.bg_animation_duration_spin,
         )
         animation_nav_row = wrap_row(
@@ -6556,12 +6557,28 @@ class TrofeoGui(QMainWindow):
         payload = self._load_ui_state_payload()
         if bool(payload.get("onboarding_done")):
             return
-        if hasattr(self, "studio_toolbar_apply_btn"):
-            self.studio_toolbar_apply_btn.setToolTip("Renderuje motyw i wysyła go na LCD.")
-        if hasattr(self, "designer_import_image_btn"):
-            self.designer_import_image_btn.setToolTip("Importuje obraz, przygotowuje go pod LCD i dodaje jako warstwę Image.")
-        if hasattr(self, "bg_prepare_btn"):
-            self.bg_prepare_btn.setToolTip("Importuje i przygotowuje obraz tła w katalogu assetów motywu.")
+
+        def _safe_set_tooltip(attr_name: str, text: str) -> None:
+            widget = getattr(self, attr_name, None)
+            if widget is None:
+                return
+            try:
+                widget.setToolTip(text)
+            except RuntimeError:
+                # Some legacy toolbar buttons may still exist as Python attributes
+                # after their backing Qt object has already been deleted.
+                return
+
+        _safe_set_tooltip("designer_apply_btn", "Renderuje motyw i wysyła go na LCD.")
+        _safe_set_tooltip("studio_toolbar_apply_btn", "Renderuje motyw i wysyła go na LCD.")
+        _safe_set_tooltip(
+            "designer_import_image_btn",
+            "Importuje obraz, przygotowuje go pod LCD i dodaje jako warstwę Image.",
+        )
+        _safe_set_tooltip(
+            "bg_prepare_btn",
+            "Importuje i przygotowuje obraz tła w katalogu assetów motywu.",
+        )
         QMessageBox.information(
             self,
             "Pierwsze kroki",
@@ -10325,7 +10342,11 @@ class TrofeoGui(QMainWindow):
             self._designer_updating = False
         self._refresh_all_color_previews()
         self._refresh_animation_controls()
-        preview_path = self._current_animation_preview_path() if bool(animation.get("enabled", False)) and bool(animation.get("use_as_background", True)) else str(background.get("path", ""))
+        preview_path = ""
+        if not preview_path and bool(animation.get("enabled", False)) and bool(animation.get("use_as_background", True)):
+            preview_path = self._current_animation_preview_path()
+        if not preview_path:
+            preview_path = str(background.get("path", ""))
         self._set_image_preview_label(
             self.background_preview_label,
             preview_path,
@@ -12287,7 +12308,11 @@ class TrofeoGui(QMainWindow):
         self._refresh_animation_frame_list()
         self._update_animation_preview_timer()
         self._update_preview_canvas_overlay()
-        preview_path = self._current_animation_preview_path() if bool(animation.get("enabled", False)) and bool(animation.get("use_as_background", True)) else background.get("path", "")
+        preview_path = ""
+        if not preview_path and bool(animation.get("enabled", False)) and bool(animation.get("use_as_background", True)):
+            preview_path = self._current_animation_preview_path()
+        if not preview_path:
+            preview_path = background.get("path", "")
         self._set_image_preview_label(self.background_preview_label, str(preview_path), empty_text="Podgląd tła")
         self.schedule_preview_theme_doc()
 
