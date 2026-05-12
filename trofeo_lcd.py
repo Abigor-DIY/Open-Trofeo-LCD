@@ -1790,15 +1790,22 @@ def main():
 
     configure_lcd()
     loop_stream_ready = False
+    loop_stream_sends_since_guard = 0
 
     def pre_send_ops():
-        nonlocal loop_stream_ready
+        nonlocal loop_stream_ready, loop_stream_sends_since_guard
         if args.usb_reset_before_send:
             lcd.reset_device()
             configure_lcd()
             loop_stream_ready = False
+            loop_stream_sends_since_guard = 0
         if args.loop and loop_stream_ready:
-            return
+            # Fully skipping USB resync made the live loop faster, but it also
+            # caused recurring packet-1 timeouts and the LCD falling back to the
+            # vendor logo. Keep the fast path, but periodically resync the bus.
+            if loop_stream_sends_since_guard < 8:
+                loop_stream_sends_since_guard += 1
+                return
         if args.recover_before_send:
             lcd.recover_endpoints()
         if args.drain_in_before_send:
@@ -1807,9 +1814,10 @@ def main():
                 print(f"  in-drain: {drained} packets")
         if args.loop:
             loop_stream_ready = True
+            loop_stream_sends_since_guard = 0
 
     def reconnect_device():
-        nonlocal loop_stream_ready
+        nonlocal loop_stream_ready, loop_stream_sends_since_guard
         lcd.disconnect()
         if args.reconnect_delay > 0:
             time.sleep(args.reconnect_delay)
@@ -1817,10 +1825,11 @@ def main():
         if ok:
             configure_lcd()
             loop_stream_ready = False
+            loop_stream_sends_since_guard = 0
         return ok
 
     def send_with_retries(send_fn, label):
-        nonlocal loop_stream_ready
+        nonlocal loop_stream_ready, loop_stream_sends_since_guard
         attempts = 1 + args.frame_retries
         for attempt in range(1, attempts + 1):
             pre_send_ops()
@@ -1830,6 +1839,7 @@ def main():
                 return False
             print(f"BŁĄD wysyłania ({label}), ponawiam {attempt}/{attempts - 1}...")
             loop_stream_ready = False
+            loop_stream_sends_since_guard = 0
             if args.reconnect_on_fail:
                 if not reconnect_device():
                     print("BŁĄD reconnect po nieudanej wysyłce")
