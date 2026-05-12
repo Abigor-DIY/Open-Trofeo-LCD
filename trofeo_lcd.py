@@ -1833,13 +1833,18 @@ def main():
         cache = {
             "sig": None,
             "jpeg_data": None,
+            "reloaded": False,
+            "reload_ms": 0.0,
         }
         path_lower = filepath.lower()
 
         def _refresh_cache():
+            started = time.perf_counter()
             stat = os.stat(filepath)
             sig = (stat.st_mtime_ns, stat.st_size)
             if cache["sig"] == sig and cache["jpeg_data"] is not None:
+                cache["reloaded"] = False
+                cache["reload_ms"] = 0.0
                 return
 
             if args.raw_jpeg_passthrough and (path_lower.endswith(".jpg") or path_lower.endswith(".jpeg")):
@@ -1852,10 +1857,13 @@ def main():
 
             cache["jpeg_data"] = lcd.pad_jpeg_payload(jpeg_data, args.jpeg_pad_to_size)
             cache["sig"] = sig
+            cache["reloaded"] = True
+            cache["reload_ms"] = (time.perf_counter() - started) * 1000.0
 
         def _send():
             _refresh_cache()
-            return lcd.send_jpeg(
+            send_started = time.perf_counter()
+            ok = lcd.send_jpeg(
                 cache["jpeg_data"],
                 final_packet_mode=args.final_packet_mode,
                 header_size_mode=args.header_size_mode,
@@ -1875,6 +1883,14 @@ def main():
                 ack_on_seq0_only=args.ack_on_seq0_only,
                 packet_templates=image_packet_template if image_packet_template else None,
             )
+            send_ms = (time.perf_counter() - send_started) * 1000.0
+            if cache["reloaded"] or send_ms >= 120.0 or cache["reload_ms"] >= 120.0:
+                reload_note = f" reload_ms={int(round(cache['reload_ms']))}" if cache["reloaded"] else ""
+                print(
+                    f"[loop-send] file={os.path.basename(filepath)} send_ms={int(round(send_ms))}{reload_note}",
+                    flush=True,
+                )
+            return ok
 
         return _send
 

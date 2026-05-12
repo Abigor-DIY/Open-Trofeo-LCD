@@ -43,6 +43,7 @@ FAST_VISUAL_REFRESH_INTERVAL_S = 0.25
 MIN_LIVE_REFRESH_INTERVAL_S = 0.15
 FAST_VISUAL_FULL_STATS_INTERVAL_S = 1.5
 LIVE_REFRESH_LOG_INTERVAL_S = 5.0
+LIVE_REFRESH_SLOW_STAGE_MS = 120.0
 
 
 def now_iso() -> str:
@@ -1354,6 +1355,9 @@ class ReplayController:
 
             if event and now - last_refresh >= min_refresh_gap_s:
                 try:
+                    overlay_render_ms = None
+                    compose_ms = None
+                    full_render_ms = None
                     if fast_visual_refresh:
                         if refresh_reason == "periodic":
                             merged_stats = _refresh_full_live_stats(media_cache)
@@ -1364,31 +1368,39 @@ class ReplayController:
                     else:
                         merged_stats = _refresh_full_live_stats(media_cache)
                     if overlay_document is not None and overlay_path and refresh_target_path and base_render_path:
+                        stage_started = time.perf_counter()
                         self._render_theme_overlay_to_file(
                             deepcopy(overlay_document),
                             path=path,
                             out_path=overlay_path,
                             stats_override=merged_stats,
                         )
+                        overlay_render_ms = (time.perf_counter() - stage_started) * 1000.0
+                        stage_started = time.perf_counter()
                         self._compose_overlay_frame(
                             base_render_path,
                             overlay_path,
                             refresh_target_path,
                         )
+                        compose_ms = (time.perf_counter() - stage_started) * 1000.0
                     elif overlay_document is not None and overlay_path:
+                        stage_started = time.perf_counter()
                         self._render_theme_overlay_to_file(
                             deepcopy(overlay_document),
                             path=path,
                             out_path=overlay_path,
                             stats_override=merged_stats,
                         )
+                        overlay_render_ms = (time.perf_counter() - stage_started) * 1000.0
                     elif refresh_target_path:
+                        stage_started = time.perf_counter()
                         self._render_theme_doc_to_file(
                             path=path,
                             document=deepcopy(document),
                             out_path=refresh_target_path,
                             stats_override=merged_stats,
                         )
+                        full_render_ms = (time.perf_counter() - stage_started) * 1000.0
                     else:
                         self.send_theme_doc(
                             path=path,
@@ -1401,6 +1413,12 @@ class ReplayController:
                     last_refresh = time.time()
                     if cheap_overlay_mode or fast_file_refresh_mode:
                         should_log = (last_refresh - last_live_refresh_log_at) >= LIVE_REFRESH_LOG_INTERVAL_S
+                        if overlay_render_ms is not None and overlay_render_ms >= LIVE_REFRESH_SLOW_STAGE_MS:
+                            should_log = True
+                        if compose_ms is not None and compose_ms >= LIVE_REFRESH_SLOW_STAGE_MS:
+                            should_log = True
+                        if full_render_ms is not None and full_render_ms >= LIVE_REFRESH_SLOW_STAGE_MS:
+                            should_log = True
                         if not should_log:
                             continue
                         last_live_refresh_log_at = last_refresh
@@ -1416,6 +1434,21 @@ class ReplayController:
                             + f" title={media_cache.get('media_title', '')[:64]}"
                             + f" cover={'yes' if media_cache.get('media_cover_path') else 'no'}"
                             + f" video={'yes' if media_cache.get('media_video_frame_path') else 'no'}"
+                            + (
+                                f" overlay_ms={int(round(overlay_render_ms))}"
+                                if overlay_render_ms is not None
+                                else ""
+                            )
+                            + (
+                                f" compose_ms={int(round(compose_ms))}"
+                                if compose_ms is not None
+                                else ""
+                            )
+                            + (
+                                f" render_ms={int(round(full_render_ms))}"
+                                if full_render_ms is not None
+                                else ""
+                            )
                         )
                 except Exception as exc:
                     with self.lock:
