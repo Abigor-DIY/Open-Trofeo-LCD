@@ -30,9 +30,25 @@ AUTOSTART="${AUTOSTART:-1}"
 THEMES_FILE="${THEMES_FILE:-.trofeo-themes.json}"
 PLAYLIST_FILE="${PLAYLIST_FILE:-.trofeo-playlist.json}"
 
+backend_responding() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS --max-time 1 "http://${HOST}:${PORT}/health" >/dev/null 2>&1
+    return $?
+  fi
+  /usr/bin/python3 - <<PY >/dev/null 2>&1
+import sys, urllib.request
+try:
+    with urllib.request.urlopen("http://${HOST}:${PORT}/health", timeout=1) as resp:
+        sys.exit(0 if resp.status == 200 else 1)
+except Exception:
+    sys.exit(1)
+PY
+}
+
 mkdir -p "${LOG_DIR}"
 exec >> "${LOG_FILE}" 2>&1
 echo "[$(date --iso-8601=seconds)] start backend: host=${HOST} port=${PORT} frame=${FRAME_INDEX}"
+trap 'echo "[$(date --iso-8601=seconds)] backend wrapper interrupted"; exit 0' INT TERM
 
 cd "${WORKDIR}"
 
@@ -53,6 +69,14 @@ args=(
 
 if [[ "${AUTOSTART}" == "1" || "${AUTOSTART}" == "true" || "${AUTOSTART}" == "TRUE" ]]; then
   args+=(--autostart)
+fi
+
+if backend_responding; then
+  echo "[$(date --iso-8601=seconds)] backend already active on ${HOST}:${PORT}; entering standby guard"
+  while backend_responding; do
+    sleep 2
+  done
+  echo "[$(date --iso-8601=seconds)] standby guard released; port ${PORT} is free"
 fi
 
 exec /usr/bin/python3 "${WORKDIR}/trofeo_backend.py" "${args[@]}"

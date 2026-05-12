@@ -2615,7 +2615,15 @@ def main() -> None:
     controller.scan_capture()
 
     ApiHandler.controller = controller
-    httpd = ThreadingHTTPServer((cfg.host, cfg.port), ApiHandler)
+    try:
+        httpd = ThreadingHTTPServer((cfg.host, cfg.port), ApiHandler)
+    except OSError as exc:
+        if getattr(exc, "errno", None) == 98:
+            raise RuntimeError(
+                f"Backend already running on http://{cfg.host}:{cfg.port} "
+                f"(port in use). Avoid starting a second backend instance."
+            ) from exc
+        raise
     httpd.daemon_threads = True
 
     shutdown_once = threading.Event()
