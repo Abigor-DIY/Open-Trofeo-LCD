@@ -144,7 +144,7 @@ lsusb | grep 0416
 ## Usage
 
 ```bash
-# Test pattern (kolorowe paski)
+# Test pattern (color bars)
 python3 trofeo_lcd.py --test
 
 # Test pattern with packet plan printed
@@ -169,28 +169,28 @@ python3 trofeo_lcd.py --loop --interval 2.0 wallpaper.jpg
 python3 trofeo_lcd.py --monitor --quality 70
 ```
 
-W trybie `--monitor` driver pokazuje realne dane z Linuxa:
-- CPU usage (delta `/proc/stat`, bez blokującego sleep)
+In `--monitor` mode the driver displays live Linux data:
+- CPU usage (delta `/proc/stat`, without a blocking sleep)
 - per-core summary (avg/max)
 - CPU frequency (`/proc/cpuinfo`)
-- CPU temperature (best-effort z `thermal`/`hwmon`)
+- CPU temperature (best-effort from `thermal`/`hwmon`)
 - load average (`/proc/loadavg`)
 
-## Etap 2.1: Service Runtime (systemd user)
+## Stage 2.1: Service Runtime (systemd user)
 
-Ten etap uruchamia stabilny replay w tle (auto-restart + log do pliku), bez ręcznego odpalania długiej komendy.
+This stage runs stable replay in the background with auto-restart and file logging, without manually running a long command.
 
-### 1) Instalacja user service
+### 1) Install the user service
 
 ```bash
 scripts/trofeo_service.sh install
 ```
 
-To tworzy:
+This creates:
 - `~/.config/systemd/user/trofeo-lcd.service`
-- lokalny config: `.trofeo-service.env` (na bazie `.trofeo-service.env.example`)
+- local config: `.trofeo-service.env` based on `.trofeo-service.env.example`
 
-### 2) Start / status / logi
+### 2) Start, status and logs
 
 ```bash
 scripts/trofeo_service.sh start
@@ -198,14 +198,14 @@ scripts/trofeo_service.sh status
 scripts/trofeo_service.sh logs
 ```
 
-Uwaga:
-- Dla `systemd --user` nie używaj `sudo`.
-- Jeśli `start` nie powiedzie się, skrypt automatycznie pokaże `status` i ostatnie linie `journalctl`.
+Note:
+- Do not use `sudo` with `systemd --user`.
+- If `start` fails, the script automatically prints `status` and the latest `journalctl` lines.
 
-Log plikowy:
+File log:
 - `~/.local/state/open-trofeo-lcd/service.log`
 
-### 3) Autostart po zalogowaniu
+### 3) Autostart after login
 
 ```bash
 scripts/trofeo_service.sh enable
@@ -218,19 +218,19 @@ scripts/trofeo_service.sh stop
 scripts/trofeo_service.sh restart
 ```
 
-### Konfiguracja
+### Configuration
 
-Edytuj `.trofeo-service.env`:
-- `PCAP_FILE` (domyślnie `dzis.pcapng`)
+Edit `.trofeo-service.env`:
+- `PCAP_FILE` (default: `dzis.pcapng`)
 - `FRAME_INDEX`
-- timingi: `ACK_TIMEOUT_MS`, `INTER_PACKET_DELAY`, `FRAME_DELAY`
-- retry połączenia: `CONNECT_RETRIES`, `CONNECT_RETRY_DELAY`
+- timing: `ACK_TIMEOUT_MS`, `INTER_PACKET_DELAY`, `FRAME_DELAY`
+- connection retry: `CONNECT_RETRIES`, `CONNECT_RETRY_DELAY`
 
-## Etap 2.2: Backend API (pod Qt GUI)
+## Stage 2.2: Backend API (for the Qt GUI)
 
-Backend wystawia lokalne HTTP API i sam zarządza workerem replay.
+The backend exposes a local HTTP API and manages the replay worker itself.
 
-### 1) Instalacja i start backendu
+### 1) Install and start the backend
 
 ```bash
 scripts/trofeo_backend_service.sh install
@@ -239,51 +239,51 @@ scripts/trofeo_backend_service.sh status
 scripts/trofeo_backend_service.sh logs
 ```
 
-Uwaga:
-- `trofeo_backend_service.sh start` zatrzymuje starą usługę `trofeo-lcd.service`, żeby uniknąć `Resource busy`.
-- Dla `systemd --user` nie używaj `sudo`.
+Note:
+- `trofeo_backend_service.sh start` stops the old `trofeo-lcd.service` to avoid `Resource busy` conflicts.
+- Do not use `sudo` with `systemd --user`.
 
-### 2) Najważniejsze endpointy
+### 2) Key endpoints
 
 ```bash
-# status backendu + worker'a
+# backend and worker status
 curl -s http://127.0.0.1:18777/v1/status
 
-# start pętli replay
+# start the replay loop
 curl -s -X POST http://127.0.0.1:18777/v1/start
 
-# stop pętli replay
+# stop the replay loop
 curl -s -X POST http://127.0.0.1:18777/v1/stop
 
-# zmiana klatki (restart worker'a jeśli działa)
+# change frame index (restarts the worker if running)
 curl -s -X POST http://127.0.0.1:18777/v1/set-frame \
   -H 'Content-Type: application/json' \
   -d '{"frame_index": 10}'
 
-# wysyłka pojedynczego obrazu i powrót do pętli
+# send one image and return to the loop
 curl -s -X POST http://127.0.0.1:18777/v1/send-image \
   -H 'Content-Type: application/json' \
   -d '{"path":"reference_frame_trcc.jpg","raw_jpeg_passthrough":false,"resume_loop":false}'
 ```
 
-### 3) Konfiguracja backendu
+### 3) Backend configuration
 
-Plik: `.trofeo-backend.env`
+File: `.trofeo-backend.env`
 - `HOST`, `PORT`
 - `PCAP_FILE`, `FRAME_INDEX`
-- timingi/retry: `ACK_TIMEOUT_MS`, `INTER_PACKET_DELAY`, `FRAME_DELAY`, `CONNECT_RETRIES`, `CONNECT_RETRY_DELAY`
-- `THEMES_FILE` (domyślnie `.trofeo-themes.json`)
-- `PLAYLIST_FILE` (domyślnie `.trofeo-playlist.json`)
-- `AUTOSTART=1` uruchamia replay od razu po starcie backendu
+- timing/retry: `ACK_TIMEOUT_MS`, `INTER_PACKET_DELAY`, `FRAME_DELAY`, `CONNECT_RETRIES`, `CONNECT_RETRY_DELAY`
+- `THEMES_FILE` (default: `.trofeo-themes.json`)
+- `PLAYLIST_FILE` (default: `.trofeo-playlist.json`)
+- `AUTOSTART=1` starts replay immediately when the backend starts
 
-## Etap 2.3: Qt GUI Client
+## Stage 2.3: Qt GUI Client
 
-Minimalny panel Qt sterujący backendem API:
+Minimal Qt panel for controlling the backend API:
 - status runtime (`mode/running/pid/uptime/error`)
 - `start/stop/restart/scan`
-- zmiana `frame_index`
+- change `frame_index`
 - `send-image`
-- edycja podstawowego configu backendu (`pcap`, timingi)
+- edit basic backend config (`pcap`, timing)
 
 ### Start GUI
 
@@ -291,100 +291,100 @@ Minimalny panel Qt sterujący backendem API:
 scripts/run_trofeo_gui.sh
 ```
 
-Opcjonalnie inny URL backendu:
+Optionally use a different backend URL:
 
 ```bash
 scripts/run_trofeo_gui.sh http://127.0.0.1:18777
 ```
 
-Pliki:
+Files:
 - `trofeo_gui.py`
 - `scripts/run_trofeo_gui.sh`
 - `scripts/setup_gui_venv.sh`
 
-## Etap 2.4: Theme Manager
+## Stage 2.4: Theme Manager
 
-Backend i GUI mają teraz manager presetów (theme):
-- zapis presetów do pliku `.trofeo-themes.json`
+The backend and GUI include a theme preset manager:
+- save presets to `.trofeo-themes.json`
 - `add/update/remove`
-- `apply` wybranego theme jednym kliknięciem
+- one-click `apply` for a selected theme
 
-Nowe endpointy API:
+API endpoints:
 
 ```bash
-# lista theme
+# list themes
 curl -s http://127.0.0.1:18777/v1/themes
 
-# dodanie/aktualizacja theme
+# add or update a theme
 curl -s -X POST http://127.0.0.1:18777/v1/themes/add \
   -H 'Content-Type: application/json' \
   -d '{"name":"dark_ref","path":"reference_frame_trcc.jpg","raw_jpeg_passthrough":false}'
 
-# usunięcie theme
+# remove a theme
 curl -s -X POST http://127.0.0.1:18777/v1/themes/remove \
   -H 'Content-Type: application/json' \
   -d '{"name":"dark_ref"}'
 
-# apply theme (opcjonalnie wznowienie loop)
+# apply theme (optionally resume loop)
 curl -s -X POST http://127.0.0.1:18777/v1/themes/apply \
   -H 'Content-Type: application/json' \
   -d '{"name":"dark_ref","resume_loop":false}'
 
-# apply z większym timeoutem requestu API (opcjonalnie)
+# apply with a longer API request timeout (optional)
 curl -s -X POST http://127.0.0.1:18777/v1/themes/apply \
   -H 'Content-Type: application/json' \
   -d '{"name":"dark_ref","resume_loop":false,"timeout_s":90}'
 ```
 
-## Etap 2.5: Playlist / Scheduler
+## Stage 2.5: Playlist / Scheduler
 
-Backend i GUI obsługują playlistę theme (animacja przez sekwencyjne przełączanie presetów):
-- lista pozycji `{name, duration_s}`
-- `start/stop` playlisty
-- zapis do `.trofeo-playlist.json`
+The backend and GUI support a theme playlist, animated by sequentially switching presets:
+- list of entries `{name, duration_s}`
+- `start/stop` playlist
+- saved to `.trofeo-playlist.json`
 
-Endpointy API:
+API endpoints:
 
 ```bash
-# podgląd playlisty
+# playlist preview
 curl -s http://127.0.0.1:18777/v1/playlist
 
-# dodanie pozycji (theme musi istnieć)
+# add an entry (theme must exist)
 curl -s -X POST http://127.0.0.1:18777/v1/playlist/add \
   -H 'Content-Type: application/json' \
   -d '{"name":"dark_ref","duration_s":3.5}'
 
-# usunięcie pozycji po indeksie
+# remove an entry by index
 curl -s -X POST http://127.0.0.1:18777/v1/playlist/remove \
   -H 'Content-Type: application/json' \
   -d '{"index":0}'
 
-# start/stop schedulera
+# start/stop the scheduler
 curl -s -X POST http://127.0.0.1:18777/v1/playlist/start
 curl -s -X POST http://127.0.0.1:18777/v1/playlist/stop
 ```
 
-## Etap 2.6: Bundle Import / Export
+## Stage 2.6: Bundle Import / Export
 
-Bundle to snapshot konfiguracji `themes + playlist` do jednego pliku JSON.
+A bundle is a `themes + playlist` configuration snapshot stored in one JSON file.
 
-Endpointy API:
+API endpoints:
 
 ```bash
-# eksport bundle jako JSON w odpowiedzi
+# export bundle as JSON in the response
 curl -s http://127.0.0.1:18777/v1/bundle/export
 
-# zapis bundle do pliku
+# save bundle to a file
 curl -s -X POST http://127.0.0.1:18777/v1/bundle/save \
   -H 'Content-Type: application/json' \
   -d '{"path":".trofeo-bundle.json"}'
 
-# wczytanie bundle (replace)
+# load bundle (replace)
 curl -s -X POST http://127.0.0.1:18777/v1/bundle/load \
   -H 'Content-Type: application/json' \
   -d '{"path":".trofeo-bundle.json","merge":false}'
 
-# wczytanie bundle (merge)
+# load bundle (merge)
 curl -s -X POST http://127.0.0.1:18777/v1/bundle/load \
   -H 'Content-Type: application/json' \
   -d '{"path":".trofeo-bundle.json","merge":true}'
