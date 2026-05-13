@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from gauge_presets import merge_gauge_preset
+from theme_json_with_comments import parse_theme_json_text, theme_json_documentation_preamble
 
 
 THEME_SCHEMA_VERSION = 1
@@ -39,7 +40,6 @@ KNOWN_IMAGE_SOURCES = {"media_cover", "media_video_frame", "analog_clock"}
 KNOWN_CLOCK_STYLE = {"classic", "modern", "nordic"}
 KNOWN_STAT_DISPLAY = {"text", "progress", "gauge", "sparkline", "equalizer"}
 KNOWN_GAUGE_VALUE_LAYOUT = frozenset({"center", "below", "beside"})
-
 
 class ThemeValidationError(RuntimeError):
     pass
@@ -436,6 +436,7 @@ def _normalize_effects(raw: Any) -> dict[str, Any]:
         normalized_frame_durations.extend([default_duration] * (len(normalized_frame_paths) - len(normalized_frame_durations)))
     elif len(normalized_frame_durations) > len(normalized_frame_paths):
         normalized_frame_durations = normalized_frame_durations[: len(normalized_frame_paths)]
+
     motion_tracks_raw = data.get("motion_tracks", [])
     if motion_tracks_raw is None:
         motion_tracks_raw = []
@@ -476,6 +477,7 @@ def _normalize_effects(raw: Any) -> dict[str, Any]:
             "frame_paths": normalized_frame_paths,
             "frame_durations_ms": normalized_frame_durations,
         },
+        "slideshow": {"enabled": False},
         "motion_tracks": normalized_motion_tracks,
         "import_report": _expect_dict(data.get("import_report", {}), "effects.import_report") if data.get("import_report", {}) is not None else {},
     }
@@ -528,15 +530,25 @@ def normalize_theme_document(raw: dict[str, Any]) -> dict[str, Any]:
 
 def load_theme_document(path: str | Path) -> ThemeDocument:
     theme_path = Path(path)
-    raw = json.loads(theme_path.read_text(encoding="utf-8"))
+    raw = parse_theme_json_text(theme_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise _fail("theme", "root JSON value must be an object")
     return ThemeDocument(normalize_theme_document(raw))
 
 
-def save_theme_document(path: str | Path, theme: ThemeDocument | dict[str, Any]) -> Path:
+def save_theme_document(
+    path: str | Path,
+    theme: ThemeDocument | dict[str, Any],
+    *,
+    include_doc_header: bool = False,
+) -> Path:
     theme_path = Path(path)
     doc = theme if isinstance(theme, ThemeDocument) else ThemeDocument(normalize_theme_document(theme))
     theme_path.parent.mkdir(parents=True, exist_ok=True)
-    theme_path.write_text(doc.to_json(pretty=True), encoding="utf-8")
+    body = doc.to_json(pretty=True)
+    if include_doc_header:
+        body = theme_json_documentation_preamble() + body
+    theme_path.write_text(body, encoding="utf-8")
     return theme_path
 
 

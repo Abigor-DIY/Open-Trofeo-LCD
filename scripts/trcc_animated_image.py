@@ -38,15 +38,21 @@ def main() -> int:
 
     frame_paths = manifest.get("frame_paths", [])
     durations_ms = manifest.get("frame_durations_ms", [])
+    frame_roles = manifest.get("frame_roles", [])
     overlay_path_raw = str(manifest.get("overlay_path", "")).strip()
     overlay_path = Path(overlay_path_raw).expanduser() if overlay_path_raw else None
+    try:
+        overlay_min_interval_s = max(0.0, float(manifest.get("overlay_min_interval_s", 0.0)))
+    except Exception:
+        overlay_min_interval_s = 0.0
     loop_enabled = bool(manifest.get("loop", True))
     if not isinstance(frame_paths, list) or not frame_paths:
         print("Error: manifest has no frames", flush=True)
         return 1
     if not isinstance(durations_ms, list):
         durations_ms = []
-
+    if not isinstance(frame_roles, list):
+        frame_roles = []
     StandardLoggingConfigurator().configure(verbosity=0)
     app = TrccApp.init()
     app.init_platform(verbosity=0, renderer_factory=trcc_cli._make_cli_renderer)
@@ -54,6 +60,9 @@ def main() -> int:
     rc = connect_device(args.device)
     if rc != 0:
         return rc
+
+    # Brief settle after enumeration / first control transfers — reduces rare USBTimeout on first bulk write.
+    time.sleep(0.25)
 
     lcd = TrccApp.get().device(0)
     if lcd is None:
@@ -63,9 +72,22 @@ def main() -> int:
     loaded_frames = []
     for idx, raw in enumerate(frame_paths):
         frame_path = Path(str(raw)).expanduser()
+        try:
+            st = frame_path.stat()
+        except OSError as exc:
+            print(f"Error: frame {idx} path not accessible {frame_path}: {exc}", flush=True)
+            return 1
+        if st.st_size < 32:
+            print(f"Error: frame {idx} file empty or too small: {frame_path}", flush=True)
+            return 1
         result = lcd.load_image(str(frame_path))
         if not result.get("success"):
-            print(f"Error: failed to load frame {idx}: {result.get('error', 'unknown error')}", flush=True)
+            err = str(result.get("error", "unknown error"))
+            print(
+                f"Error: failed to load frame {idx}: {err}. If the file exists but LCD reports (0,0) resolution, "
+                f"unplug/replug USB or retry — the previous transfer may have timed out.",
+                flush=True,
+            )
             return 1
         image = result.get("image")
         if image is None:
@@ -79,12 +101,18 @@ def main() -> int:
                 duration_ms = 83
         loaded_frames.append((image, duration_ms, str(frame_path)))
 
+    if overlay_path is not None and overlay_min_interval_s <= 0.0:
+        try:
+            min_dur_ms = min(item[1] for item in loaded_frames)
+        except Exception:
+            min_dur_ms = 83
+        overlay_min_interval_s = max(0.08, (max(1, int(min_dur_ms)) / 1000.0) * 0.42)
+
     overlay_image = None
     overlay_mtime_ns = None
-    composited_frames = None
 
     def _load_overlay() -> bool:
-        nonlocal overlay_image, overlay_mtime_ns, composited_frames
+        nonlocal overlay_image, overlay_mtime_ns
         if overlay_path is None or not overlay_path.exists():
             return False
         stat = overlay_path.stat()
@@ -94,27 +122,17 @@ def main() -> int:
         if result.get("success"):
             overlay_image = result.get("image")
             overlay_mtime_ns = stat.st_mtime_ns
-            composited_frames = None
             return True
         return False
 
-    def _active_frames():
-        nonlocal composited_frames
+    def _compose_frame(image):
         if overlay_image is None:
-            return loaded_frames
-        if composited_frames is not None:
-            return composited_frames
-
+            return image
         renderer = ImageService._r()
-        built_frames = []
-        for image, duration_ms, frame_path in loaded_frames:
-            frame = renderer.copy_surface(image)
-            frame = renderer.convert_to_rgba(frame)
-            frame = renderer.composite(frame, overlay_image, (0, 0))
-            frame = renderer.convert_to_rgb(frame)
-            built_frames.append((frame, duration_ms, frame_path))
-        composited_frames = built_frames
-        return composited_frames
+        frame = renderer.copy_surface(image)
+        frame = renderer.convert_to_rgba(frame)
+        frame = renderer.composite(frame, overlay_image, (0, 0))
+        return renderer.convert_to_rgb(frame)
 
     _load_overlay()
 
@@ -122,33 +140,90 @@ def main() -> int:
     print(f"Animation loaded: {len(loaded_frames)} frames", flush=True)
 
     try:
-        next_frame_at = time.monotonic()
+        last_overlay_send_at = 0.0
+        send_ema_s = 0.0
+        slow_send_threshold_s = 0.8
+        overlay_send_guard_s = 0.12
+        next_frame_at = 0.0
+
+        def _send_image(image, label: str, frame_index: int) -> float:
+            nonlocal send_ema_s
+            started = time.monotonic()
+            lcd.send(image)
+            elapsed = time.monotonic() - started
+            send_ema_s = elapsed if send_ema_s <= 0.0 else (send_ema_s * 0.75) + (elapsed * 0.25)
+            if elapsed >= slow_send_threshold_s:
+                print(f"Warning: slow send {int(elapsed * 1000)}ms frame={frame_index} role={label}", flush=True)
+            return elapsed
+
+        def _wait_frame_gap(
+            *,
+            duration_s: float,
+            frame_index: int,
+            composed_frame,
+        ) -> None:
+            nonlocal last_overlay_send_at, next_frame_at
+
+            next_frame_at += duration_s
+            while True:
+                delay_s = next_frame_at - time.monotonic()
+                if delay_s <= 0:
+                    break
+                if overlay_path is not None and delay_s > 0.20:
+                    overlay_changed = _load_overlay()
+                    if overlay_changed:
+                        now = time.monotonic()
+                        effective_overlay_min_interval_s = overlay_min_interval_s
+                        enough_time_before_next_frame = delay_s > max(0.20, send_ema_s + overlay_send_guard_s)
+                        if now - last_overlay_send_at >= effective_overlay_min_interval_s and enough_time_before_next_frame:
+                            _send_image(_compose_frame(composed_frame), "overlay", frame_index)
+                            last_overlay_send_at = now
+                time.sleep(min(0.05, delay_s))
+            if next_frame_at < time.monotonic():
+                next_frame_at = time.monotonic()
+
         while True:
-            current_frames = _active_frames()
+            # Resync schedule each cycle so timing does not drift across loop wraps.
+            next_frame_at = time.monotonic()
             frame_index = 0
-            while frame_index < len(current_frames):
-                if _load_overlay():
-                    current_frames = _active_frames()
-                    frame_index = min(frame_index, max(0, len(current_frames) - 1))
-                frame, duration_ms, frame_path = current_frames[frame_index]
-                lcd.send(frame)
+            while frame_index < len(loaded_frames):
+                frame, duration_ms, frame_path = loaded_frames[frame_index]
+                role = str(frame_roles[frame_index]).strip().lower() if frame_index < len(frame_roles) else ""
+                duration_s = max(0.001, duration_ms / 1000.0)
+                _load_overlay()
+                _send_image(_compose_frame(frame), role or "frame", frame_index)
                 if args.verbose_frames:
                     print(f"Frame: {frame_path}", flush=True)
-                next_frame_at += max(0.001, duration_ms / 1000.0)
-                delay_s = next_frame_at - time.monotonic()
-                if delay_s > 0:
-                    time.sleep(delay_s)
-                else:
-                    next_frame_at = time.monotonic()
+                _wait_frame_gap(
+                    duration_s=duration_s,
+                    frame_index=frame_index,
+                    composed_frame=frame,
+                )
                 frame_index += 1
             if not loop_enabled:
-                break
+                # If we exit here, the TRCC process dies and the panel stops getting composited frames;
+                # live overlay (EQ, media, etc.) appears frozen on the last bitmap. Keep the worker alive
+                # and refresh the final frame + overlay on the same cadence as during playback.
+                last_idx = len(loaded_frames) - 1
+                hold_frame, hold_ms, hold_path = loaded_frames[last_idx]
+                hold_s = max(0.05, min(0.5, hold_ms / 1000.0))
+                if overlay_path is not None:
+                    hold_s = max(hold_s, min(0.35, overlay_min_interval_s + 0.02))
+                print(
+                    f"Animation sequence done (loop disabled). Holding last frame ({hold_path}) — quit with Ctrl+C.",
+                    flush=True,
+                )
+                while True:
+                    _load_overlay()
+                    _send_image(_compose_frame(hold_frame), "hold", last_idx)
+                    _wait_frame_gap(
+                        duration_s=hold_s,
+                        frame_index=last_idx,
+                        composed_frame=hold_frame,
+                    )
     except KeyboardInterrupt:
         print("Stopped.", flush=True)
         return 0
-
-    print("Animation finished.", flush=True)
-    return 0
 
 
 if __name__ == "__main__":

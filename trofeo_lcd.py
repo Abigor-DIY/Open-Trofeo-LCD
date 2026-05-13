@@ -1794,9 +1794,13 @@ def main():
             lcd.reset_device()
             configure_lcd()
         if args.recover_before_send:
-            lcd.recover_endpoints()
+            # In live loop/monitor mode we still want endpoint recovery, but the
+            # default 1s guard delay per frame destroys refresh cadence.
+            recover_delay = 0.0 if (args.loop or args.monitor) else RECOVERY_DELAY
+            lcd.recover_endpoints(delay=recover_delay)
         if args.drain_in_before_send:
-            drained = lcd.drain_in()
+            drain_timeout_ms = 5 if (args.loop or args.monitor) else 50
+            drained = lcd.drain_in(timeout_ms=drain_timeout_ms)
             if args.packet_debug:
                 print(f"  in-drain: {drained} packets")
 

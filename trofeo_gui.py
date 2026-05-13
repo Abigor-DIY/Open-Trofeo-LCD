@@ -28,9 +28,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from animation_limits import (
+    ANIMATION_FRAMES_EXTREME_WARN,
+    ANIMATION_FRAMES_SOFT_WARN,
+    ANIMATION_FRAMES_STRONG_WARN,
+    ANIMATION_LIST_THUMB_MAX_FRAMES,
+    ANIMATION_TIMELINE_THUMB_MAX_FRAMES,
+)
+from animation_studio import AnimationSequenceController, AnimationTimelineWidget
+
 try:
-    from PySide6.QtCore import QEasingCurve, QPoint, QRect, QSize, Qt, QTimer, Signal, QPropertyAnimation, QUrl
-    from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPen, QPixmap, QTransform
+    from PySide6.QtCore import QEasingCurve, QPoint, QRect, QSize, Qt, QTimer, Signal, QPropertyAnimation, QUrl, QEvent, QObject
+    from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut, QTransform
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -79,6 +88,7 @@ except ImportError:
     raise SystemExit(1)
 
 from gauge_presets import GAUGE_PRESETS, GAUGE_PRESET_LABELS, GAUGE_PRESET_ORDER, THEME_STYLE_PRESET
+from theme_json_with_comments import parse_theme_json_text, theme_json_documentation_preamble
 from theme_schema import KNOWN_STAT_DISPLAY, KNOWN_STAT_SOURCES, ThemeDocument, normalize_theme_document, save_theme_document
 from stats_sources import StatsProvider
 
@@ -823,70 +833,6 @@ class LayerListWidget(QListWidget):
     def dropEvent(self, event) -> None:  # type: ignore[override]
         super().dropEvent(event)
         self.rows_reordered.emit()
-
-
-class AnimationTimelineWidget(QWidget):
-    frame_selected = Signal(int)
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._durations: list[int] = []
-        self._current_index = 0
-        self.setMinimumHeight(72)
-
-    def set_timeline(self, durations: list[int], current_index: int) -> None:
-        self._durations = [max(1, int(item)) for item in durations]
-        self._current_index = max(0, min(int(current_index), len(self._durations) - 1)) if self._durations else 0
-        self.update()
-
-    def mousePressEvent(self, event) -> None:  # type: ignore[override]
-        if not self._durations:
-            return
-        total = sum(self._durations)
-        if total <= 0:
-            return
-        x = int(event.position().x())
-        usable_width = max(1, self.width() - 16)
-        cursor = 8
-        for idx, duration in enumerate(self._durations):
-            width = max(18, int(round(usable_width * duration / total)))
-            if cursor <= x <= cursor + width:
-                self.frame_selected.emit(idx)
-                break
-            cursor += width + 4
-
-    def paintEvent(self, event) -> None:  # type: ignore[override]
-        super().paintEvent(event)
-        painter = QPainter(self)
-        try:
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.fillRect(self.rect(), QColor("#151b24"))
-            if not self._durations:
-                painter.setPen(QColor("#7a8797"))
-                painter.drawText(self.rect().adjusted(12, 0, -12, 0), Qt.AlignVCenter | Qt.AlignLeft, "Timeline animacji pojawi się po imporcie klatek.")
-                return
-            total = sum(self._durations)
-            usable_width = max(1, self.width() - 16)
-            x = 8
-            for idx, duration in enumerate(self._durations):
-                width = max(18, int(round(usable_width * duration / total)))
-                rect = QRect(x, 14, width, 34)
-                is_current = idx == self._current_index
-                fill = QColor("#2d6df6" if is_current else "#253244")
-                border = QColor("#7dd3fc" if is_current else "#42516a")
-                painter.setPen(QPen(border, 1))
-                painter.setBrush(fill)
-                painter.drawRoundedRect(rect, 7, 7)
-                painter.setPen(QColor("#eef6ff" if is_current else "#c7d2e0"))
-                label = f"{idx + 1}"
-                if width >= 64:
-                    label = f"{idx + 1} · {duration} ms"
-                painter.drawText(rect.adjusted(8, 0, -8, 0), Qt.AlignCenter, label)
-                x += width + 4
-            painter.setPen(QColor("#8fa4bf"))
-            painter.drawText(QRect(10, 50, self.width() - 20, 18), Qt.AlignLeft | Qt.AlignVCenter, f"Klatki: {len(self._durations)}  |  Łączny czas: {sum(self._durations)} ms")
-        finally:
-            painter.end()
 
 
 class LayerRowWidget(QWidget):
@@ -1926,6 +1872,15 @@ class TrofeoGui(QMainWindow):
         self._history_redo: list[dict[str, Any]] = []
         self._history_suspended = False
         self._designer_drag_active = False
+        self._animation_syncing_from_timeline = False
+        self._animation_studio_built = False
+        self._animation_studio_shortcuts: list[QShortcut] = []
+        self._animation_export_in_flight = False
+        self._animation_import_in_flight = False
+        self._animation_duplicate_in_flight = False
+        self._animation_stabilize_in_flight = False
+        self._animation_worker_states: dict[str, str] = {}
+        self._animation_thumbnail_generation = 0
         self._image_thumbnail_cache: dict[tuple[str, int], QPixmap] = {}
         self._preview_request_in_flight = False
         self._preview_request_queued = False
@@ -2376,12 +2331,14 @@ class TrofeoGui(QMainWindow):
 
         self.nav_library_btn = QPushButton("🗂  Theme\nGallery")
         self.nav_designer_btn = QPushButton("✎  Theme\nDesigner")
+        self.nav_animation_studio_btn = QPushButton("🎞  Animation\nStudio")
         self.nav_system_btn = QPushButton("◉  System")
         self.nav_logs_btn = QPushButton("☰  Logs")
         self.nav_config_btn = QPushButton("⚙  Configuration")
         self._nav_button_meta = {
             self.nav_library_btn: ("🗂", "Theme Gallery"),
             self.nav_designer_btn: ("✎", "Theme Designer"),
+            self.nav_animation_studio_btn: ("🎞", "Animation Studio"),
             self.nav_system_btn: ("◉", "System"),
             self.nav_logs_btn: ("☰", "Logs"),
             self.nav_config_btn: ("⚙", "Configuration"),
@@ -2389,6 +2346,7 @@ class TrofeoGui(QMainWindow):
         self._shell_nav_buttons = [
             self.nav_library_btn,
             self.nav_designer_btn,
+            self.nav_animation_studio_btn,
             self.nav_system_btn,
             self.nav_logs_btn,
             self.nav_config_btn,
@@ -2463,7 +2421,7 @@ class TrofeoGui(QMainWindow):
         for label, code in UI_LANGUAGES.items():
             self.header_language_combo.addItem(label, code)
         self.header_language_combo.setMinimumHeight(34)
-        self.header_donate_btn = QPushButton("Donate / Support")
+        self.header_donate_btn = QPushButton("Donate")
         self.header_donate_btn.setObjectName("primaryButton")
         self.header_donate_btn.setMinimumHeight(34)
         self.header_donate_btn.clicked.connect(lambda: self._open_external_link(PROJECT_SPONSOR_URL, "strony wsparcia"))
@@ -3202,20 +3160,26 @@ class TrofeoGui(QMainWindow):
         designer_workspace_layout.setSpacing(10)
         studio_sections_tabs.addTab(library_tab, "Theme Gallery")
         studio_sections_tabs.addTab(designer_workspace_tab, "Designer")
+        self.animation_studio_tab = QWidget()
+        self.animation_studio_layout = QVBoxLayout(self.animation_studio_tab)
+        self.animation_studio_layout.setContentsMargins(10, 10, 10, 10)
+        self.animation_studio_layout.setSpacing(10)
+        studio_sections_tabs.addTab(self.animation_studio_tab, "Animation Studio")
         self.nav_library_btn.clicked.connect(lambda: self._go_library())
         self.nav_designer_btn.clicked.connect(lambda: self._go_designer())
+        self.nav_animation_studio_btn.clicked.connect(lambda: self._go_animation_studio())
         self.sidebar_toggle_btn.clicked.connect(self.toggle_sidebar_collapsed)
 
         studio_toolbar_box = QGroupBox("")
         studio_toolbar_box.setObjectName("designerToolbarBox")
         studio_toolbar_box.setFlat(True)
         studio_toolbar_layout = QHBoxLayout(studio_toolbar_box)
-        self.studio_toolbar_load_btn = QPushButton("📂 Otwórz motyw")
-        self.studio_toolbar_save_btn = QPushButton("💾 Zapisz motyw")
-        self.studio_toolbar_preview_btn = QPushButton("Podgląd")
-        self.studio_toolbar_apply_btn = QPushButton("▶ Zastosuj motyw")
-        self.studio_toolbar_reload_btn = QPushButton("↻ JSON -> Designer")
-        self.studio_toolbar_export_btn = QPushButton("⇄ Designer -> JSON")
+        self.studio_toolbar_load_btn = QPushButton("📂 Load theme")
+        self.studio_toolbar_save_btn = QPushButton("💾 Save theme")
+        self.studio_toolbar_preview_btn = QPushButton("Preview")
+        self.studio_toolbar_apply_btn = QPushButton("▶ Apply theme")
+        self.studio_toolbar_reload_btn = QPushButton("↻ JSON → Designer")
+        self.studio_toolbar_export_btn = QPushButton("⇄ Designer → JSON")
         for btn in (
             self.studio_toolbar_load_btn,
             self.studio_toolbar_save_btn,
@@ -3228,9 +3192,10 @@ class TrofeoGui(QMainWindow):
             btn.setMaximumWidth(210)
         self.studio_toolbar_preview_btn.setObjectName("secondaryAccentButton")
         self.studio_toolbar_apply_btn.setObjectName("primaryButton")
-        self.studio_toolbar_load_btn.setText("Wczytaj motyw")
-        self.studio_toolbar_save_btn.setText("Zapisz motyw")
-        self.studio_toolbar_apply_btn.setText("Zastosuj motyw")
+        self.studio_toolbar_load_btn.setText("Load theme")
+        self.studio_toolbar_save_btn.setText("Save theme")
+        self.studio_toolbar_apply_btn.setText("Apply theme")
+        self.studio_toolbar_preview_btn.setText("Preview")
         self.studio_toolbar_load_btn.clicked.connect(self.load_theme_doc)
         self.studio_toolbar_save_btn.clicked.connect(self.save_current_theme_to_library)
         self.studio_toolbar_preview_btn.clicked.connect(self.preview_theme_doc)
@@ -3414,19 +3379,20 @@ class TrofeoGui(QMainWindow):
         studio_left_tabs.addTab(designer_tab, "Designer")
         studio_left_tabs.addTab(json_tab, "JSON")
 
-        theme_doc_box = QGroupBox("Motyw")
-        theme_doc_grid = QGridLayout(theme_doc_box)
+        self.theme_doc_box = QGroupBox("Theme")
+        theme_doc_grid = QGridLayout(self.theme_doc_box)
         theme_doc_grid.setColumnStretch(1, 1)
         self.theme_doc_path_edit = QLineEdit(str(Path("themes/default_monitor.json")))
-        self.theme_doc_browse_btn = QPushButton("Wybierz motyw")
-        self.theme_doc_use_selected_btn = QPushButton("Z aktywnego motywu")
-        self.theme_doc_load_btn = QPushButton("Wczytaj")
-        self.theme_doc_save_btn = QPushButton("Zapisz")
-        self.theme_doc_apply_btn = QPushButton("Zastosuj")
+        self.theme_doc_browse_btn = QPushButton("Browse theme…")
+        self.theme_doc_use_selected_btn = QPushButton("From active theme")
+        self.theme_doc_load_btn = QPushButton("Load")
+        self.theme_doc_save_btn = QPushButton("Save")
+        self.theme_doc_save_as_btn = QPushButton("Save As")
+        self.theme_doc_apply_btn = QPushButton("Apply")
         self.theme_doc_apply_btn.setObjectName("primaryButton")
-        self.theme_doc_stop_before_apply_chk = QCheckBox("Zatrzymaj runtime przed apply")
+        self.theme_doc_stop_before_apply_chk = QCheckBox("Stop runtime before apply")
         self.theme_doc_stop_before_apply_chk.setChecked(True)
-        self.theme_doc_resume_chk = QCheckBox("Wznów loop po apply")
+        self.theme_doc_resume_chk = QCheckBox("Resume loop after apply")
         self.theme_doc_resume_chk.setChecked(False)
         self.theme_schema_label = QLabel("-")
         self.theme_doc_editor = QTextEdit()
@@ -3437,8 +3403,17 @@ class TrofeoGui(QMainWindow):
         self.theme_doc_use_selected_btn.clicked.connect(self.use_selected_theme_doc)
         self.theme_doc_load_btn.clicked.connect(self.load_theme_doc)
         self.theme_doc_save_btn.clicked.connect(self.save_theme_doc)
+        self.theme_doc_save_as_btn.clicked.connect(lambda: self.save_theme_doc_as(from_animation_studio=False))
         self.theme_doc_apply_btn.clicked.connect(self.apply_theme_doc)
-        theme_doc_grid.addWidget(QLabel("Plik motywu:"), 0, 0)
+        self.theme_doc_open_external_btn = QPushButton("Open JSON file…")
+        self.theme_doc_open_external_btn.setObjectName("secondaryAccentButton")
+        self.theme_doc_insert_guide_btn = QPushButton("Insert field guide")
+        self.theme_doc_open_external_btn.clicked.connect(
+            lambda: self.open_current_theme_json_externally(from_animation_studio=False)
+        )
+        self.theme_doc_insert_guide_btn.clicked.connect(self.insert_theme_json_field_guide_in_editor)
+        self.theme_doc_path_caption = QLabel("Theme file:")
+        theme_doc_grid.addWidget(self.theme_doc_path_caption, 0, 0)
         theme_doc_grid.addWidget(self.theme_doc_path_edit, 0, 1, 1, 3)
         theme_doc_grid.addWidget(self.theme_doc_browse_btn, 0, 4)
         theme_doc_grid.addWidget(self.theme_doc_use_selected_btn, 0, 5)
@@ -3446,12 +3421,18 @@ class TrofeoGui(QMainWindow):
         theme_doc_grid.addWidget(self.theme_doc_resume_chk, 1, 3)
         theme_doc_grid.addWidget(self.theme_doc_load_btn, 1, 4)
         theme_doc_grid.addWidget(self.theme_doc_save_btn, 1, 5)
+        self.theme_doc_manual_json_label = QLabel("Manual JSON:")
+        theme_doc_grid.addWidget(self.theme_doc_manual_json_label, 2, 0)
+        theme_doc_grid.addWidget(self.theme_doc_open_external_btn, 2, 1, 1, 2)
+        theme_doc_grid.addWidget(self.theme_doc_insert_guide_btn, 2, 3)
+        theme_doc_grid.addWidget(self.theme_doc_save_as_btn, 2, 4)
         theme_doc_grid.addWidget(self.theme_doc_apply_btn, 2, 5)
-        theme_doc_grid.addWidget(QLabel("Źródła danych:"), 2, 0)
-        theme_doc_grid.addWidget(self.theme_schema_label, 2, 1, 1, 4)
-        theme_doc_grid.addWidget(self.theme_doc_editor, 3, 0, 1, 6)
-        json_tab_layout.addWidget(theme_doc_box, 1)
-        theme_doc_box.hide()
+        self.theme_doc_sources_caption = QLabel("Declared stats:")
+        theme_doc_grid.addWidget(self.theme_doc_sources_caption, 3, 0)
+        theme_doc_grid.addWidget(self.theme_schema_label, 3, 1, 1, 4)
+        theme_doc_grid.addWidget(self.theme_doc_editor, 4, 0, 1, 6)
+        json_tab_layout.addWidget(self.theme_doc_box, 1)
+        self.theme_doc_box.hide()
 
         designer_box = QGroupBox("")
         designer_box.setObjectName("designerWorkspaceBox")
@@ -3551,28 +3532,28 @@ class TrofeoGui(QMainWindow):
 
         self.designer_path_edit = QLineEdit()
         self.designer_fit_combo = QComboBox(); self.designer_fit_combo.addItems(["contain", "cover", "stretch"])
-        self.designer_visible_chk = QCheckBox("Widoczny"); self.designer_locked_chk = QCheckBox("Zablokowany")
+        self.designer_visible_chk = QCheckBox("Visible"); self.designer_locked_chk = QCheckBox("Locked")
 
         # Inicjalizacja brakujących widżetów paska narzędzi i opcji
         self.designer_mode_combo = QComboBox(); self.designer_mode_combo.addItems(["Simple", "Advanced"])
         self.designer_auto_preview_chk = QCheckBox("Auto-preview"); self.designer_auto_preview_chk.setChecked(True)
         self.designer_snap_chk = QCheckBox("Snap"); self.designer_snap_chk.setChecked(True)
         self.designer_snap_spin = QSpinBox(); self.designer_snap_spin.setRange(1, 128); self.designer_snap_spin.setValue(8)
-        self.designer_undo_btn = QPushButton("Cofnij")
-        self.designer_redo_btn = QPushButton("Ponów")
-        self.designer_animation_mode_btn = QPushButton("Animacja"); self.designer_animation_mode_btn.setCheckable(True)
-        self.designer_assets_toggle_btn = QPushButton("Multimedia"); self.designer_assets_toggle_btn.setCheckable(True)
-        self.designer_details_toggle_btn = QPushButton("Pokaż dół"); self.designer_details_toggle_btn.setCheckable(True)
+        self.designer_undo_btn = QPushButton("Undo")
+        self.designer_redo_btn = QPushButton("Redo")
+        self.designer_animation_mode_btn = QPushButton("Animation"); self.designer_animation_mode_btn.setCheckable(True)
+        self.designer_assets_toggle_btn = QPushButton("Media"); self.designer_assets_toggle_btn.setCheckable(True)
+        self.designer_details_toggle_btn = QPushButton("Show bottom"); self.designer_details_toggle_btn.setCheckable(True)
 
         # Inicjalizacja widżetów animacji (ruchu)
-        self.motion_enabled_chk = QCheckBox("Animuj element")
+        self.motion_enabled_chk = QCheckBox("Animate element")
         self.motion_start_spin = QSpinBox(); self.motion_start_spin.setRange(0, 99999)
         self.motion_end_spin = QSpinBox(); self.motion_end_spin.setRange(0, 99999)
         self.motion_target_x_spin = QSpinBox(); self.motion_target_x_spin.setRange(-5000, 5000)
         self.motion_target_y_spin = QSpinBox(); self.motion_target_y_spin.setRange(-5000, 5000)
         self.motion_target_opacity_spin = QDoubleSpinBox(); self.motion_target_opacity_spin.setRange(0.0, 1.0); self.motion_target_opacity_spin.setSingleStep(0.05)
-        self.motion_capture_current_btn = QPushButton("Ustaw koniec z bieżącej")
-        self.motion_remove_btn = QPushButton("Usuń ruch")
+        self.motion_capture_current_btn = QPushButton("Set end from current")
+        self.motion_remove_btn = QPushButton("Remove motion")
 
         # Widżety Tła / Presetów / Logów
         self.bg_kind_combo = QComboBox(); self.bg_kind_combo.addItems(["generated", "image", "color"])
@@ -3581,43 +3562,86 @@ class TrofeoGui(QMainWindow):
         self.bg_accent_color_edit = QLineEdit(); self.bg_accent_color_btn = QPushButton("🎨")
         self.bg_texture_alpha_spin = QDoubleSpinBox(); self.bg_texture_alpha_spin.setRange(0.0, 1.0); self.bg_texture_alpha_spin.setSingleStep(0.05)
         self.bg_path_edit = QLineEdit(); self.bg_path_browse_btn = QPushButton("...")
-        self.bg_prepare_btn = QPushButton("Importuj tło")
+        self.bg_prepare_btn = QPushButton("Import background")
         self.bg_fit_combo = QComboBox(); self.bg_fit_combo.addItems(["cover", "contain", "stretch"])
         self.bg_opacity_spin = QDoubleSpinBox(); self.bg_opacity_spin.setRange(0.0, 1.0); self.bg_opacity_spin.setSingleStep(0.05)
-        self.bg_clear_btn = QPushButton("Wyczyść"); self.bg_cover_btn = QPushButton("Cover"); self.bg_contain_btn = QPushButton("Contain")
+        self.bg_clear_btn = QPushButton("Clear"); self.bg_cover_btn = QPushButton("Cover"); self.bg_contain_btn = QPushButton("Contain")
         self.bg_preset_ocean_btn = QPushButton("Ocean"); self.bg_preset_amber_btn = QPushButton("Amber")
         self.bg_preset_mono_btn = QPushButton("Mono"); self.bg_preset_neon_btn = QPushButton("Neon")
-        self.bg_show_grid_chk = QCheckBox("Siatka"); self.bg_show_safe_chk = QCheckBox("Safe Area")
+        self.bg_show_grid_chk = QCheckBox("Grid"); self.bg_show_safe_chk = QCheckBox("Safe Area")
         self.panel_fill_edit = QLineEdit(); self.panel_fill_btn = QPushButton("🎨")
         self.panel_radius_spin = QSpinBox(); self.panel_radius_spin.setRange(0, 500)
         self.panel_opacity_spin = QDoubleSpinBox(); self.panel_opacity_spin.setRange(0.0, 1.0); self.panel_opacity_spin.setSingleStep(0.05)
-        self.background_preview_label = QLabel("Podgląd tła")
+        self.background_preview_label = QLabel("Background preview")
         
         # Inicjalizacja widżetów animacji tła
-        self.bg_animation_enabled_chk = QCheckBox("Animacja aktywna")
-        self.bg_animation_use_bg_chk = QCheckBox("Użyj jako tła")
+        self.bg_animation_enabled_chk = QCheckBox("Animation enabled")
+        self.bg_animation_use_bg_chk = QCheckBox("Use as background")
         self.bg_animation_fps_spin = QDoubleSpinBox(); self.bg_animation_fps_spin.setRange(1.0, 60.0); self.bg_animation_fps_spin.setValue(12.0)
         self.bg_animation_frame_spin = QSpinBox(); self.bg_animation_frame_spin.setRange(0, 99999)
         self.bg_animation_duration_spin = QSpinBox(); self.bg_animation_duration_spin.setRange(1, 60000); self.bg_animation_duration_spin.setValue(83)
         self.bg_animation_prev_btn = QPushButton("◀")
         self.bg_animation_next_btn = QPushButton("▶")
-        self.bg_animation_clear_btn = QPushButton("Wyczyść animację")
+        self.bg_animation_clear_btn = QPushButton("Clear animation")
         self.bg_animation_timeline = AnimationTimelineWidget()
-        self.bg_animation_remove_btn = QPushButton("Usuń")
-        self.bg_animation_duplicate_btn = QPushButton("Duplikuj")
+        self.bg_animation_remove_btn = QPushButton("Remove")
+        self.bg_animation_duplicate_btn = QPushButton("Duplicate")
+        self.animation_duplicate_repeat_spin = QSpinBox()
+        self.animation_duplicate_repeat_spin.setRange(1, 99)
+        self.animation_duplicate_repeat_spin.setValue(1)
+        self.animation_duplicate_repeat_spin.setMaximumWidth(72)
+        self.bg_animation_hold_repeat_btn = QPushButton("Hold ×N")
+        self.bg_animation_reverse_btn = QPushButton("Reverse")
+        self.bg_animation_pingpong_btn = QPushButton("Ping-pong")
+        self.bg_animation_normalize_duration_btn = QPushButton("Normalize")
+        self.animation_stabilize_btn = QPushButton("Stabilize")
+        self.animation_stabilize_mode_combo = QComboBox()
+        self.animation_stabilize_mode_combo.addItem("Safe Translation", "safe_translation")
+        self.animation_stabilize_mode_combo.addItem("Auto Safe", "auto_safe")
+        self.animation_stabilize_mode_combo.addItem("Affine", "affine")
+        self.animation_stabilize_mode_combo.addItem("Euclidean", "euclidean")
+        self.animation_stabilize_mode_combo.addItem("Translation", "translation")
+        self.animation_select_range_btn = QPushButton("Range")
+        self.animation_invert_selection_btn = QPushButton("Invert")
+        self.animation_clear_selection_btn = QPushButton("Clear Sel")
+        self.animation_loop_from_selection_btn = QPushButton("Loop Sel")
+        self.animation_trim_selection_btn = QPushButton("Trim Sel")
+        self.bg_animation_repeat_all_btn = QPushButton("Duplicate sequence ×N")
+        self.animation_timeline_zoom_combo = QComboBox()
+        self.animation_timeline_zoom_combo.addItems(["75%", "100%", "150%", "200%", "300%"])
+        self.animation_timeline_zoom_combo.setCurrentText("100%")
+        self.animation_timeline_home_btn = QPushButton("Start")
+        self.animation_timeline_end_btn = QPushButton("End")
+        self.animation_loop_in_btn = QPushButton("Set In")
+        self.animation_loop_out_btn = QPushButton("Set Out")
+        self.animation_loop_clear_btn = QPushButton("Clear Loop")
+        self.animation_loop_label = QLabel("Loop: full")
+        self.animation_onion_skin_chk = QCheckBox("Onion skin")
+        self.animation_onion_opacity_spin = QDoubleSpinBox()
+        self.animation_onion_opacity_spin.setRange(0.05, 0.85)
+        self.animation_onion_opacity_spin.setSingleStep(0.05)
+        self.animation_onion_opacity_spin.setValue(0.28)
+        self.animation_onion_opacity_spin.setMaximumWidth(84)
         self.bg_animation_up_btn = QPushButton("▲")
         self.bg_animation_down_btn = QPushButton("▼")
-        self.bg_animation_play_btn = QPushButton("▶ Odtwórz")
-        self.bg_animation_count_label = QLabel("0 klatek")
+        self.bg_animation_play_btn = QPushButton("▶ Play")
+        self.bg_animation_count_label = QLabel("0 frames")
         self.bg_animation_list = LayerListWidget()
-        self.bg_animation_add_btn = QPushButton("Dodaj")
-        self.bg_animation_blank_btn = QPushButton("Pusta")
-        self.bg_animation_export_btn = QPushButton("Eksportuj")
-        self.bg_animation_import_btn = QPushButton("Importuj")
+        self.bg_animation_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.bg_animation_add_btn = QPushButton("Add")
+        self.bg_animation_blank_btn = QPushButton("Blank")
+        self.bg_animation_export_btn = QPushButton("Export")
+        self.animation_export_loop_btn = QPushButton("Export Loop")
+        self.animation_export_selection_btn = QPushButton("Export Sel")
+        self.bg_animation_import_btn = QPushButton("Import")
+        self.animation_bulk_duration_spin = QSpinBox()
+        self.animation_bulk_duration_spin.setRange(1, 60000)
+        self.animation_bulk_duration_spin.setValue(83)
+        self.animation_bulk_apply_duration_btn = QPushButton("Apply duration to selection")
         self.layout_preset_name_edit = QLineEdit(); self.layout_preset_combo = QComboBox()
-        self.layout_preset_save_btn = QPushButton("Zapisz preset"); self.layout_preset_load_btn = QPushButton("Wczytaj preset")
-        self.layout_preset_delete_btn = QPushButton("Usuń preset")
-        self.designer_toolbar_feedback_label = QLabel("Projektant gotowy.")
+        self.layout_preset_save_btn = QPushButton("Save preset"); self.layout_preset_load_btn = QPushButton("Load preset")
+        self.layout_preset_delete_btn = QPushButton("Delete preset")
+        self.designer_toolbar_feedback_label = QLabel("Designer ready.")
         self.designer_toolbar_feedback_label.setObjectName("previewHintLabel")
         self.designer_toolbar_feedback_label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         self.designer_toolbar_feedback_label.setMinimumWidth(0)
@@ -3657,22 +3681,35 @@ class TrofeoGui(QMainWindow):
         toolbar_layout.setContentsMargins(10, 8, 10, 8)
         toolbar_layout.setSpacing(8)
 
-        self.designer_reload_btn = AnimatedToolbarButton("Wczytaj motyw")
+        self.designer_reload_btn = AnimatedToolbarButton("Load theme")
         self.designer_reload_btn.setObjectName("secondaryAccentButton")
-        self.designer_write_btn = AnimatedToolbarButton("Zapisz motyw")
+        self.designer_write_btn = AnimatedToolbarButton("Save theme")
         self.designer_write_btn.setObjectName("secondaryAccentButton")
-        self.designer_animation_mode_btn = AnimatedToolbarButton("Animacja")
+        self.designer_save_as_btn = AnimatedToolbarButton("Save As")
+        self.designer_save_as_btn.setObjectName("secondaryAccentButton")
+        self.designer_open_json_btn = AnimatedToolbarButton("Open JSON…")
+        self.designer_open_json_btn.setObjectName("secondaryAccentButton")
+        self.designer_animation_mode_btn = AnimatedToolbarButton("Animation")
         self.designer_animation_mode_btn.setCheckable(True)
         self.designer_animation_mode_btn.setObjectName("modeToggleButton")
-        self.designer_assets_toggle_btn = AnimatedToolbarButton("Multimedia")
+        self.designer_assets_toggle_btn = AnimatedToolbarButton("Media")
         self.designer_assets_toggle_btn.setCheckable(True)
         self.designer_assets_toggle_btn.setObjectName("modeToggleButton")
-        self.designer_preview_btn = AnimatedToolbarButton("Podgląd")
+        self.designer_preview_btn = AnimatedToolbarButton("Preview")
         self.designer_preview_btn.setObjectName("secondaryAccentButton")
-        self.designer_apply_btn = AnimatedToolbarButton("Zastosuj motyw")
+        self.designer_apply_btn = AnimatedToolbarButton("Apply theme")
         self.designer_apply_btn.setObjectName("primaryButton")
 
-        for btn in [self.designer_reload_btn, self.designer_write_btn, self.designer_animation_mode_btn, self.designer_assets_toggle_btn, self.designer_preview_btn, self.designer_apply_btn]:
+        for btn in [
+            self.designer_reload_btn,
+            self.designer_write_btn,
+            self.designer_save_as_btn,
+            self.designer_open_json_btn,
+            self.designer_animation_mode_btn,
+            self.designer_assets_toggle_btn,
+            self.designer_preview_btn,
+            self.designer_apply_btn,
+        ]:
             btn.setMinimumHeight(36)
             btn.setMaximumHeight(40)
             btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
@@ -3683,6 +3720,8 @@ class TrofeoGui(QMainWindow):
 
         toolbar_layout.addWidget(self.designer_reload_btn)
         toolbar_layout.addWidget(self.designer_write_btn)
+        toolbar_layout.addWidget(self.designer_save_as_btn)
+        toolbar_layout.addWidget(self.designer_open_json_btn)
         toolbar_layout.addWidget(self.designer_animation_mode_btn)
         toolbar_layout.addWidget(self.designer_assets_toggle_btn)
         toolbar_layout.addStretch(1)
@@ -3696,7 +3735,8 @@ class TrofeoGui(QMainWindow):
         theme_gauge_layout = QHBoxLayout(theme_gauge_bar)
         theme_gauge_layout.setContentsMargins(0, 2, 0, 4)
         theme_gauge_layout.setSpacing(8)
-        theme_gauge_layout.addWidget(QLabel("Domyślny preset gauge (meta.gauge_style):"))
+        self.designer_theme_gauge_bar_label = QLabel("Default gauge preset (meta.gauge_style):")
+        theme_gauge_layout.addWidget(self.designer_theme_gauge_bar_label)
         theme_gauge_layout.addWidget(self.designer_theme_gauge_style_combo, 1)
         studio_layout.addWidget(theme_gauge_bar)
 
@@ -3715,9 +3755,9 @@ class TrofeoGui(QMainWindow):
         preview_tools_row = QHBoxLayout()
         preview_tools_row.setContentsMargins(10, 10, 10, 0)
         preview_tools_row.setSpacing(6)
-        preview_tools_label = QLabel("Mouse:")
-        preview_tools_label.setObjectName("selectionSummaryLabel")
-        preview_tools_row.addWidget(preview_tools_label)
+        self.preview_tools_label = QLabel("Mouse:")
+        self.preview_tools_label.setObjectName("selectionSummaryLabel")
+        preview_tools_row.addWidget(self.preview_tools_label)
         self.designer_tool_auto_btn = AnimatedToolbarButton("Auto")
         self.designer_tool_select_btn = AnimatedToolbarButton("Select")
         self.designer_tool_move_btn = AnimatedToolbarButton("Move")
@@ -3877,6 +3917,10 @@ class TrofeoGui(QMainWindow):
         # PODPIĘCIE SYGNAŁÓW
         self.designer_reload_btn.clicked.connect(self._trigger_designer_load_theme)
         self.designer_write_btn.clicked.connect(self._trigger_designer_save_theme)
+        self.designer_save_as_btn.clicked.connect(lambda: self.save_theme_doc_as(from_animation_studio=False))
+        self.designer_open_json_btn.clicked.connect(
+            lambda: self.open_current_theme_json_externally(from_animation_studio=False)
+        )
         self.designer_preview_btn.clicked.connect(self._trigger_designer_preview)
         self.designer_apply_btn.clicked.connect(self._trigger_designer_apply)
         self.designer_undo_btn.clicked.connect(self.undo_designer_change)
@@ -3957,24 +4001,49 @@ class TrofeoGui(QMainWindow):
         ]:
             try: getattr(widget, signal).connect(self.on_designer_field_changed)
             except: pass
-        self.bg_animation_timeline.frame_selected.connect(self.select_animation_frame)
+        self.bg_animation_timeline.selection_changed.connect(self._on_animation_timeline_selection_changed)
         self.layout_preset_save_btn.clicked.connect(self.save_layout_preset)
         self.layout_preset_load_btn.clicked.connect(self.load_layout_preset)
         self.layout_preset_delete_btn.clicked.connect(self.delete_layout_preset)
         self.bg_animation_import_btn.clicked.connect(self.import_background_animation)
-        self.bg_animation_add_btn.clicked.connect(self.import_background_animation)
+        self.bg_animation_add_btn.clicked.connect(self.append_background_animation_frames)
         self.bg_animation_blank_btn.clicked.connect(self.insert_blank_animation_frame)
-        self.bg_animation_duplicate_btn.clicked.connect(self.duplicate_selected_animation_frame)
+        self.bg_animation_duplicate_btn.clicked.connect(self.duplicate_selected_animation_frames_bulk)
+        self.bg_animation_hold_repeat_btn.clicked.connect(self.hold_selected_animation_frames_timing)
+        self.bg_animation_reverse_btn.clicked.connect(self.reverse_selected_animation_frames)
+        self.bg_animation_pingpong_btn.clicked.connect(self.pingpong_selected_animation_frames)
+        self.bg_animation_normalize_duration_btn.clicked.connect(self.normalize_selected_animation_frame_durations)
+        self.animation_stabilize_btn.clicked.connect(self.stabilize_animation_frames)
+        self.bg_animation_repeat_all_btn.clicked.connect(self.duplicate_full_animation_sequence_bulk)
+        self.animation_timeline_zoom_combo.currentTextChanged.connect(self.set_animation_timeline_zoom)
+        self.animation_timeline_home_btn.clicked.connect(self.scroll_animation_timeline_to_start)
+        self.animation_timeline_end_btn.clicked.connect(self.scroll_animation_timeline_to_end)
+        self.animation_loop_in_btn.clicked.connect(self.set_animation_loop_in)
+        self.animation_loop_out_btn.clicked.connect(self.set_animation_loop_out)
+        self.animation_loop_clear_btn.clicked.connect(self.clear_animation_loop_range)
+        self.animation_onion_skin_chk.toggled.connect(lambda _checked: self._refresh_animation_studio_preview())
+        self.animation_onion_opacity_spin.valueChanged.connect(lambda _value: self._refresh_animation_studio_preview())
+        self.animation_select_range_btn.clicked.connect(self.select_animation_range_between_edges)
+        self.animation_invert_selection_btn.clicked.connect(self.invert_animation_frame_selection)
+        self.animation_clear_selection_btn.clicked.connect(self.clear_animation_frame_selection)
+        self.animation_loop_from_selection_btn.clicked.connect(self.set_animation_loop_from_selection)
+        self.animation_trim_selection_btn.clicked.connect(self.trim_animation_to_selection)
         self.bg_animation_remove_btn.clicked.connect(self.remove_selected_animation_frames)
         self.bg_animation_clear_btn.clicked.connect(self.clear_background_animation)
         self.bg_animation_up_btn.clicked.connect(lambda: self.move_selected_animation_frames(-1))
         self.bg_animation_down_btn.clicked.connect(lambda: self.move_selected_animation_frames(1))
         self.bg_animation_export_btn.clicked.connect(self.export_animation_sequence)
+        self.animation_export_loop_btn.clicked.connect(self.export_animation_loop_range)
+        self.animation_export_selection_btn.clicked.connect(self.export_animation_selection)
         self.bg_animation_play_btn.clicked.connect(self.toggle_animation_preview_playback)
         self.bg_animation_prev_btn.clicked.connect(lambda: self.select_animation_frame(max(0, self.bg_animation_list.currentRow() - 1)))
         self.bg_animation_next_btn.clicked.connect(lambda: self.select_animation_frame(min(self.bg_animation_list.count() - 1, self.bg_animation_list.currentRow() + 1)))
-        self.bg_animation_list.currentRowChanged.connect(self.select_animation_frame)
+        self.bg_animation_list.itemSelectionChanged.connect(self._on_bg_animation_list_selection_sync)
+        self.bg_animation_list.currentRowChanged.connect(self._on_animation_current_row_changed)
+        self.bg_animation_list.installEventFilter(self)
         self.bg_animation_list.rows_reordered.connect(self.on_animation_frames_reordered)
+        self.animation_bulk_apply_duration_btn.clicked.connect(self.apply_bulk_animation_duration)
+        self._build_animation_studio_page()
         for widget, signal in [
             (self.bg_kind_combo, "currentTextChanged"), (self.bg_base_color_edit, "textChanged"),
             (self.bg_accent_color_edit, "textChanged"), (self.bg_texture_alpha_spin, "valueChanged"),
@@ -4015,7 +4084,11 @@ class TrofeoGui(QMainWindow):
     def copy_filtered_logs(self) -> None:
         text = self._filtered_log_text()
         if not text:
-            QMessageBox.information(self, "Logi", "Brak logów do skopiowania.")
+            QMessageBox.information(
+                self,
+                self._tr("Logs", "Logi"),
+                self._tr("No log lines to copy.", "Brak logów do skopiowania."),
+            )
             return
         QApplication.clipboard().setText(text)
         self._refresh_log_view(force=True)
@@ -4026,7 +4099,11 @@ class TrofeoGui(QMainWindow):
             return
         selected = self.log_view.textCursor().selectedText().replace("\u2029", "\n").strip()
         if not selected:
-            QMessageBox.information(self, "Logi", "Brak zaznaczonego fragmentu logów.")
+            QMessageBox.information(
+                self,
+                self._tr("Logs", "Logi"),
+                self._tr("No log selection to copy.", "Brak zaznaczonego fragmentu logów."),
+            )
             return
         QApplication.clipboard().setText(selected)
         self._refresh_log_view(force=True)
@@ -4057,15 +4134,25 @@ class TrofeoGui(QMainWindow):
     def _open_external_link(self, url: str, label: str) -> None:
         target = QUrl(url)
         if not target.isValid():
-            QMessageBox.warning(self, "Niepoprawny link", f"Nie udało się przygotować adresu do {label}:\n{url}")
+            QMessageBox.warning(
+                self,
+                self._tr("Invalid link", "Niepoprawny link"),
+                self._tr(
+                    "Could not prepare the URL for {label}:\n{url}",
+                    "Nie udało się przygotować adresu do {label}:\n{url}",
+                ).format(label=label, url=url),
+            )
             return
         if QDesktopServices.openUrl(target):
             self.append_log(f"[link] Otwarto {label}: {url}")
             return
         QMessageBox.warning(
             self,
-            "Nie udało się otworzyć linku",
-            f"System nie otworzył {label}.\nSkopiuj adres ręcznie:\n{url}",
+            self._tr("Could not open link", "Nie udało się otworzyć linku"),
+            self._tr(
+                "The system did not open {label}.\nCopy the address manually:\n{url}",
+                "System nie otworzył {label}.\nSkopiuj adres ręcznie:\n{url}",
+            ).format(label=label, url=url),
         )
 
     def _refresh_log_view(self, *, force: bool = False) -> None:
@@ -4605,16 +4692,25 @@ class TrofeoGui(QMainWindow):
 
     def _setup_designer_layers_panel(self, parent_layout: QVBoxLayout) -> None:
         """Konfiguruje lewy panel z listą warstw."""
-        box = QGroupBox("Layers & components")
+        box = QGroupBox("")
+        box.setObjectName("designerElementsBox")
         box.setFlat(True)
         box.setStyleSheet(
-            "QGroupBox { margin-top: 6px; padding-top: 2px; padding-bottom: 2px; font-size: 11px; }"
-            "QGroupBox::title { subcontrol-origin: margin; left: 6px; padding: 0 3px; }"
+            "QGroupBox#designerElementsBox { margin-top: 0px; padding: 6px; font-size: 11px; }"
+            "QGroupBox#designerElementsBox::title { height: 0px; padding: 0px; margin: 0px; }"
         )
         self.designer_elements_box = box
+        self.designer_elements_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.designer_elements_box.setMaximumHeight(16777215)
         layout = QVBoxLayout(box)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(2)
+        layout.setContentsMargins(6, 4, 6, 6)
+        layout.setSpacing(3)
+
+        self.designer_elements_title_label = QLabel("Layers & components")
+        self.designer_elements_title_label.setObjectName("sectionTinyTitle")
+        self.designer_elements_title_label.setMaximumHeight(18)
+        self.designer_elements_title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout.addWidget(self.designer_elements_title_label)
 
         search_row = QHBoxLayout()
         search_row.setSpacing(3)
@@ -4641,6 +4737,7 @@ class TrofeoGui(QMainWindow):
         self.designer_selection_label.setObjectName("selectionSummaryLabel")
         self.designer_selection_label.setWordWrap(False)
         self.designer_selection_label.setMaximumHeight(16)
+        self.designer_selection_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.designer_selection_label.setStyleSheet("font-size: 10px; margin: 0; padding: 0; color: #9fb0c6;")
         self.designer_selection_label.setToolTip("")
         layout.addWidget(self.designer_selection_label)
@@ -4652,6 +4749,7 @@ class TrofeoGui(QMainWindow):
         quick_container_layout = QVBoxLayout(self.designer_quick_add_container)
         quick_container_layout.setContentsMargins(0, 0, 0, 0)
         quick_container_layout.setSpacing(6)
+        self.designer_quick_add_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
         self.quick_add_group_basics = QGroupBox("Basics")
         self.quick_add_group_basics.setFlat(True)
@@ -4727,11 +4825,46 @@ class TrofeoGui(QMainWindow):
         self.quick_add_volume_btn.clicked.connect(self.add_volume_widget)
         self.quick_add_equalizer_btn.clicked.connect(self.add_graphic_equalizer_widget)
         self.designer_quick_add_menu = QMenu(self.designer_quick_add_toggle_btn)
+        self.designer_quick_add_menu.setObjectName("designerQuickAddMenu")
+        self.designer_quick_add_menu.setStyleSheet(
+            """
+            QMenu#designerQuickAddMenu {
+                background: #0f141b;
+                border: 1px solid #3b82f6;
+                border-radius: 10px;
+                padding: 6px;
+                color: #f8fafc;
+            }
+            QMenu#designerQuickAddMenu::item {
+                padding: 7px 14px 7px 14px;
+                border-radius: 7px;
+                min-width: 190px;
+            }
+            QMenu#designerQuickAddMenu::item:selected {
+                background: #2563eb;
+                color: #ffffff;
+            }
+            QMenu#designerQuickAddMenu::item:pressed {
+                background: #1d4ed8;
+            }
+            QMenu#designerQuickAddMenu::separator {
+                height: 1px;
+                background: #263242;
+                margin: 6px 4px;
+            }
+            QMenu#designerQuickAddMenu::item:disabled {
+                color: #60a5fa;
+                background: transparent;
+                font-weight: 800;
+            }
+            """
+        )
         self._populate_designer_quick_add_menu()
         self._refresh_designer_quick_add_groups()
         self.designer_quick_add_toggle_btn.setMenu(self.designer_quick_add_menu)
         
         self.designer_element_list.setMinimumHeight(140)
+        self.designer_element_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.designer_element_list.setSpacing(3)
         self.designer_element_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.designer_element_list.setDragDropMode(QAbstractItemView.InternalMove)
@@ -4818,7 +4951,7 @@ class TrofeoGui(QMainWindow):
         move_layout.addLayout(move_actions_row)
         move_box.setMaximumHeight(178)
         layout.addWidget(move_box)
-        parent_layout.addWidget(box, 2)
+        parent_layout.addWidget(box, 1)
 
     def _setup_inspector_tabs(self, container_layout: QVBoxLayout) -> None:
         """Konfiguruje prawy panel właściwości z zakładkami."""
@@ -5116,7 +5249,7 @@ class TrofeoGui(QMainWindow):
         )
         self.inspector_image_layout.addRow(self.row_image_actions, self.designer_image_actions_row)
         self.row_image_preview = make_label("Podgląd")
-        self.designer_image_preview_label = QLabel("Podgląd obrazu")
+        self.designer_image_preview_label = QLabel("Image preview")
         self.designer_image_preview_label.setAlignment(Qt.AlignCenter)
         self.designer_image_preview_label.setMinimumHeight(104)
         self.designer_image_preview_label.setObjectName("selectionSummaryLabel")
@@ -5131,13 +5264,19 @@ class TrofeoGui(QMainWindow):
             self.bg_prepare_btn,
             stretch_first=True,
         )
-        self.inspector_media_layout.addRow(make_label("Tryb tła"), self.bg_kind_combo)
-        self.inspector_media_layout.addRow(make_label("Plik / import"), self.media_background_path_row)
-        self.inspector_media_layout.addRow(make_label("Dopasowanie"), self.bg_fit_combo)
-        self.inspector_media_layout.addRow(make_label("Przezroczystość"), self.bg_opacity_spin)
-        self.inspector_media_layout.addRow(make_label("Obrót"), self.bg_rotation_spin)
+        self.row_media_bg_mode = make_label("Background mode")
+        self.inspector_media_layout.addRow(self.row_media_bg_mode, self.bg_kind_combo)
+        self.row_media_bg_path = make_label("File / import")
+        self.inspector_media_layout.addRow(self.row_media_bg_path, self.media_background_path_row)
+        self.row_media_bg_fit = make_label("Fit")
+        self.inspector_media_layout.addRow(self.row_media_bg_fit, self.bg_fit_combo)
+        self.row_media_bg_opacity = make_label("Opacity")
+        self.inspector_media_layout.addRow(self.row_media_bg_opacity, self.bg_opacity_spin)
+        self.row_media_bg_rotation = make_label("Rotation")
+        self.inspector_media_layout.addRow(self.row_media_bg_rotation, self.bg_rotation_spin)
         media_colors_row = wrap_row(self.bg_base_color_edit, self.bg_base_color_btn, self.bg_accent_color_edit, self.bg_accent_color_btn)
-        self.inspector_media_layout.addRow(make_label("Kolory"), media_colors_row)
+        self.row_media_bg_colors = make_label("Colors")
+        self.inspector_media_layout.addRow(self.row_media_bg_colors, media_colors_row)
         media_presets_row = wrap_row(
             self.bg_cover_btn,
             self.bg_contain_btn,
@@ -5146,46 +5285,26 @@ class TrofeoGui(QMainWindow):
             self.bg_preset_mono_btn,
             self.bg_preset_neon_btn,
         )
-        self.inspector_media_layout.addRow(make_label("Presety"), media_presets_row)
-        self.inspector_media_layout.addRow(make_label("Tekstura"), self.bg_texture_alpha_spin)
-        self.inspector_media_layout.addRow(make_label("Podgląd tła"), self.background_preview_label)
+        self.row_media_bg_presets = make_label("Presets")
+        self.inspector_media_layout.addRow(self.row_media_bg_presets, media_presets_row)
+        self.row_media_bg_texture = make_label("Texture")
+        self.inspector_media_layout.addRow(self.row_media_bg_texture, self.bg_texture_alpha_spin)
+        self.row_media_bg_preview = make_label("Background preview")
+        self.inspector_media_layout.addRow(self.row_media_bg_preview, self.background_preview_label)
 
-        self.bg_animation_list.setMinimumHeight(120)
-        animation_flags_row = wrap_row(self.bg_animation_enabled_chk, self.bg_animation_use_bg_chk)
-        animation_speed_row = wrap_row(
-            QLabel("FPS"),
-            self.bg_animation_fps_spin,
-            QLabel("Klatka"),
-            self.bg_animation_frame_spin,
-            QLabel("Czas klatki (ms)"),
-            self.bg_animation_duration_spin,
+        self.inspector_animation_details_hint = QLabel(
+            "Use Animation Studio for the timeline, multi-frame timing, and a large preview. "
+            "After editing frames, switch to Theme Designer to place stats and widgets like on a static theme."
         )
-        animation_nav_row = wrap_row(
-            self.bg_animation_prev_btn,
-            self.bg_animation_next_btn,
-            self.bg_animation_play_btn,
-            self.bg_animation_count_label,
-        )
-        animation_import_row = wrap_row(
-            self.bg_animation_import_btn,
-            self.bg_animation_add_btn,
-            self.bg_animation_blank_btn,
-            self.bg_animation_export_btn,
-        )
-        animation_edit_row = wrap_row(
-            self.bg_animation_duplicate_btn,
-            self.bg_animation_remove_btn,
-            self.bg_animation_up_btn,
-            self.bg_animation_down_btn,
-            self.bg_animation_clear_btn,
-        )
-        self.inspector_animation_layout.addRow(make_label("Aktywność"), animation_flags_row)
-        self.inspector_animation_layout.addRow(make_label("FPS / klatka / czas"), animation_speed_row)
-        self.inspector_animation_layout.addRow(make_label("Sterowanie"), animation_nav_row)
-        self.inspector_animation_layout.addRow(make_label("Import / eksport"), animation_import_row)
-        self.inspector_animation_layout.addRow(make_label("Edycja"), animation_edit_row)
-        self.inspector_animation_layout.addRow(make_label("Oś czasu"), self.bg_animation_timeline)
-        self.inspector_animation_layout.addRow(make_label("Klatki"), self.bg_animation_list)
+        self.inspector_animation_details_hint.setWordWrap(True)
+        self.inspector_animation_details_hint.setObjectName("selectionSummaryLabel")
+        self.row_animation_overview = make_label("Animation")
+        self.inspector_animation_layout.addRow(self.row_animation_overview, self.inspector_animation_details_hint)
+        self.open_animation_studio_btn = QPushButton("Open Animation Studio")
+        self.open_animation_studio_btn.setObjectName("secondaryAccentButton")
+        self.open_animation_studio_btn.clicked.connect(self._go_animation_studio)
+        self.row_animation_editor = make_label("Editor")
+        self.inspector_animation_layout.addRow(self.row_animation_editor, self.open_animation_studio_btn)
 
         self.inspector_tabs.addTab(self.inspector_general, "General")
         self.inspector_tabs.addTab(self.inspector_content, "Content")
@@ -5264,6 +5383,7 @@ class TrofeoGui(QMainWindow):
             self.bg_animation_blank_btn,
             self.bg_animation_export_btn,
             self.bg_animation_duplicate_btn,
+            self.bg_animation_repeat_all_btn,
             self.bg_animation_remove_btn,
             self.bg_animation_up_btn,
             self.bg_animation_down_btn,
@@ -5416,6 +5536,14 @@ class TrofeoGui(QMainWindow):
                 padding: 5px 10px;
                 color: #7cf59a;
                 font-weight: 800;
+            }}
+            QLabel#sectionTinyTitle {{
+                color: {primary_color};
+                font-size: {small_font}px;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: 0.4px;
+                padding: 0px 0px 2px 2px;
             }}
             QGroupBox {{
                 border: 1px solid {border_main};
@@ -5896,9 +6024,9 @@ class TrofeoGui(QMainWindow):
             self.designer_elements_box.setMinimumWidth(max(340, int((380 if compact else 430) * scale)))
             self.designer_elements_box.setMaximumWidth(max(560, int((600 if compact else 660) * scale)))
         if hasattr(self, "designer_component_search"):
-            self.designer_component_search.setMaximumHeight(30 if short else 32)
+            self.designer_component_search.setMaximumHeight(26 if short else 28)
         if hasattr(self, "designer_quick_add_toggle_btn"):
-            self.designer_quick_add_toggle_btn.setMaximumHeight(30 if short else 32)
+            self.designer_quick_add_toggle_btn.setMaximumHeight(26 if short else 28)
         if hasattr(self, "props_box"):
             self.props_box.setMinimumWidth(max(270, int((300 if compact else 360) * scale)))
         if getattr(self, "studio_splitter", None) is not None:
@@ -6121,8 +6249,132 @@ class TrofeoGui(QMainWindow):
         self._refresh_designer_quick_add_groups()
         self.filter_designer_element_list()
 
+    def _refresh_inspector_form_labels(self, tr) -> None:
+        """Inspector / media / motion row captions and related buttons (EN default, PL via tr)."""
+        for attr, en, pl in (
+            ("row_general_id", "Element ID", "ID elementu"),
+            ("row_general_visible", "Visibility", "Widoczność"),
+            ("row_general_locked", "Locked", "Zablokowany"),
+            ("row_general_z", "Layer (Z)", "Warstwa"),
+            ("row_music_tools", "Music tools", "Narzędzia muzyczne"),
+            ("row_music_equalizer_bars", "EQ bars", "Słupki EQ"),
+            ("row_music_equalizer_gap", "Bar gap", "Odstęp słupków"),
+            ("row_music_equalizer_mirror", "Mirror mode", "Tryb lustrzany"),
+            ("row_content_text", "Text", "Tekst"),
+            ("row_content_label", "Label", "Etykieta"),
+            ("row_content_source", "Data source", "Źródło"),
+            ("row_content_format", "Value format", "Format wartości"),
+            ("row_content_stat_display", "Display mode", "Tryb wyświetlania"),
+            ("row_content_stat_range", "Range", "Zakres"),
+            ("row_content_stat_show_value", "Show value text", "Tekst wartości"),
+            ("row_appearance_font", "Font", "Czcionka"),
+            ("row_appearance_font_style", "Style", "Styl"),
+            ("row_appearance_align", "Alignment", "Wyrównanie"),
+            ("row_appearance_color", "Color", "Kolor"),
+            ("row_appearance_label_color", "Label color", "Kolor etykiety"),
+            ("row_appearance_value_color", "Value color", "Kolor wartości"),
+            ("row_appearance_track_color", "Track / chart background", "Kolor tła gauge / paska / wykresu"),
+            ("row_appearance_fill_color", "Line / fill color", "Kolor linii / wypełnienia / wartości"),
+            ("row_sparkline_points", "History points", "Punkty historii"),
+            ("row_sparkline_fill_opacity", "Fill opacity", "Przezrocz. wypełnienia"),
+            ("row_sparkline_show_points", "Endpoint marker", "Punkt końcowy"),
+            ("row_appearance_stroke_width", "Line / gauge stroke (0 = auto)", "Grubość linii / gauge (0 = auto)"),
+            ("row_gauge_ring", "Ring diameter", "Średnica pierścienia"),
+            ("row_gauge_value_layout", "Value layout", "Układ wartości"),
+            ("row_gauge_preset", "Color preset", "Preset kolorów"),
+            ("row_gauge_grad_low", "Arc: low color", "Łuk: kolor niski"),
+            ("row_gauge_grad_mid", "Arc: mid color", "Łuk: środek"),
+            ("row_gauge_grad_high", "Arc: high color", "Łuk: wysoki"),
+            ("row_gauge_smooth", "Needle smoothing", "Wygładzanie igły"),
+            ("row_gauge_match_value", "Value color matches arc", "Kolor wartości jak łuk"),
+            ("row_gauge_inner_alpha", "Inner transparency", "Przezrocz. środka"),
+            ("row_panel_fill", "Panel fill", "Wypełnienie panelu"),
+            ("row_panel_opacity", "Panel opacity", "Przezroczystość panelu"),
+            ("row_panel_radius", "Corner radius", "Promień narożników"),
+            ("row_geometry_x", "X", "X"),
+            ("row_geometry_y", "Y", "Y"),
+            ("row_geometry_w", "Width", "Szerokość"),
+            ("row_geometry_h", "Height", "Wysokość"),
+            ("row_motion_enabled", "Motion", "Ruch"),
+            ("row_motion_range", "Frame range", "Zakres klatek"),
+            ("row_motion_target_x", "End X", "Koniec X"),
+            ("row_motion_target_y", "End Y", "Koniec Y"),
+            ("row_motion_target_opacity", "End opacity", "Końcowa przezr."),
+            ("row_motion_actions", "Motion actions", "Akcje ruchu"),
+            ("row_image_path", "Image file", "Plik obrazu"),
+            ("row_image_fit", "Fit", "Dopasowanie"),
+            ("row_image_opacity", "Opacity", "Przezroczystość"),
+            ("row_image_rotation", "Rotation", "Obrót"),
+            ("row_image_import", "Import", "Import"),
+            ("row_image_actions", "Quick actions", "Szybkie akcje"),
+            ("row_image_preview", "Preview", "Podgląd"),
+            ("row_media_bg_mode", "Background mode", "Tryb tła"),
+            ("row_media_bg_path", "File / import", "Plik / import"),
+            ("row_media_bg_fit", "Fit", "Dopasowanie"),
+            ("row_media_bg_opacity", "Opacity", "Przezroczystość"),
+            ("row_media_bg_rotation", "Rotation", "Obrót"),
+            ("row_media_bg_colors", "Colors", "Kolory"),
+            ("row_media_bg_presets", "Presets", "Presety"),
+            ("row_media_bg_texture", "Texture", "Tekstura"),
+            ("row_media_bg_preview", "Background preview", "Podgląd tła"),
+            ("row_animation_overview", "Animation", "Animacja"),
+        ):
+            w = getattr(self, attr, None)
+            if isinstance(w, QLabel):
+                w.setText(tr(en, pl))
+        if hasattr(self, "inspector_animation_details_hint"):
+            self.inspector_animation_details_hint.setText(
+                tr(
+                    "Use Animation Studio for the timeline, multi-frame timing, and a large preview. "
+                    "After editing frames, switch to Theme Designer to place stats and widgets like on a static theme.",
+                    "W Studio animacji masz oś czasu, zbiorcze czasy i duży podgląd. "
+                    "Po edycji klatek wróć do Projektanta, by ułożyć statystyki i widgety jak na statycznym motywie.",
+                )
+            )
+        if hasattr(self, "open_animation_studio_btn"):
+            self.open_animation_studio_btn.setText(tr("Open Animation Studio", "Otwórz Studio animacji"))
+        if hasattr(self, "motion_enabled_chk"):
+            self.motion_enabled_chk.setText(tr("Animate element", "Animuj element"))
+        if hasattr(self, "motion_capture_current_btn"):
+            self.motion_capture_current_btn.setText(tr("Set end from current", "Ustaw koniec z bieżącej"))
+        if hasattr(self, "motion_remove_btn"):
+            self.motion_remove_btn.setText(tr("Remove motion", "Usuń ruch"))
+        if hasattr(self, "designer_path_browse_btn"):
+            self.designer_path_browse_btn.setText(tr("Browse…", "Wybierz…"))
+        if hasattr(self, "designer_path_prepare_btn"):
+            self.designer_path_prepare_btn.setText(tr("Prepare", "Przygotuj"))
+        if hasattr(self, "designer_image_fullscreen_btn"):
+            self.designer_image_fullscreen_btn.setText(tr("Fullscreen", "Ustaw fullscreen"))
+        if hasattr(self, "designer_image_left_half_btn"):
+            self.designer_image_left_half_btn.setText(tr("Left half", "Lewa połowa"))
+        if hasattr(self, "designer_image_right_half_btn"):
+            self.designer_image_right_half_btn.setText(tr("Right half", "Prawa połowa"))
+        if hasattr(self, "designer_image_reset_btn"):
+            self.designer_image_reset_btn.setText(tr("Reset frame", "Reset kadru"))
+        if hasattr(self, "designer_import_image_btn"):
+            self.designer_import_image_btn.setText(tr("Import image into theme", "Importuj obraz do motywu"))
+        if hasattr(self, "designer_image_preview_label"):
+            pm = self.designer_image_preview_label.pixmap()
+            if pm is None or pm.isNull():
+                self.designer_image_preview_label.setText(tr("Image preview", "Podgląd obrazu"))
+        ph_g = tr("[R,G,B,A] — optional, empty = from preset", "[R,G,B,A] — opcjonalnie, puste = z presetu")
+        ph_m = tr("[R,G,B,A] — optional", "[R,G,B,A] — opcjonalnie")
+        if hasattr(self, "designer_gauge_low_edit"):
+            self.designer_gauge_low_edit.setPlaceholderText(ph_g)
+        if hasattr(self, "designer_gauge_mid_edit"):
+            self.designer_gauge_mid_edit.setPlaceholderText(ph_m)
+        if hasattr(self, "designer_gauge_high_edit"):
+            self.designer_gauge_high_edit.setPlaceholderText(ph_m)
+        if hasattr(self, "preview_tools_label"):
+            self.preview_tools_label.setText(tr("Mouse:", "Mysz:"))
+        return self._tr("Background preview", "Podgląd tła")
+
+    def _empty_image_preview_caption(self) -> str:
+        return self._tr("Image preview", "Podgląd obrazu")
+
     def _refresh_extended_ui_labels(self) -> None:
         tr = self._tr
+        self._refresh_inspector_form_labels(tr)
         if hasattr(self, "endpoint_box"):
             self.endpoint_box.setTitle(tr("Backend", "Backend"))
         if hasattr(self, "control_box"):
@@ -6217,7 +6469,9 @@ class TrofeoGui(QMainWindow):
                 )
             )
         if hasattr(self, "designer_elements_box"):
-            self.designer_elements_box.setTitle(tr("Layers & components", "Warstwy i komponenty"))
+            self.designer_elements_box.setTitle("")
+        if hasattr(self, "designer_elements_title_label"):
+            self.designer_elements_title_label.setText(tr("Layers & components", "Warstwy i komponenty"))
         if hasattr(self, "quick_add_group_basics"):
             self.quick_add_group_basics.setTitle(tr("Basics", "Podstawowe"))
         if hasattr(self, "quick_add_group_music"):
@@ -6341,6 +6595,385 @@ class TrofeoGui(QMainWindow):
             self.log_search_label.setText(tr("Search:", "Szukaj:"))
         if hasattr(self, "preview_guides_chk"):
             self.preview_guides_chk.setText(tr("Show layer bounds", "Pokaż ramki warstw"))
+        if hasattr(self, "theme_doc_manual_json_label"):
+            self.theme_doc_manual_json_label.setText(tr("Manual JSON:", "JSON ręczny:"))
+        if hasattr(self, "theme_doc_open_external_btn"):
+            self.theme_doc_open_external_btn.setText(tr("Open JSON file…", "Otwórz plik JSON…"))
+            self.theme_doc_open_external_btn.setToolTip(
+                tr(
+                    "Writes the theme with an English field guide and opens it in your default app. "
+                    "After saving in the editor, use Load theme. // and /* */ comments are ignored when loading.",
+                    "Zapisuje motyw z angielskim opisem pól i otwiera go w domyślnej aplikacji. "
+                    "Po zapisie w edytorze użyj „Wczytaj motyw”. Komentarze // oraz /* */ są pomijane przy wczytywaniu.",
+                )
+            )
+        if hasattr(self, "theme_doc_insert_guide_btn"):
+            self.theme_doc_insert_guide_btn.setText(tr("Insert field guide", "Wstaw opis pól"))
+            self.theme_doc_insert_guide_btn.setToolTip(
+                tr(
+                    "Prepends the guide to the JSON tab (persist with Save / Load flow as usual).",
+                    "Wstawia opis na początku zakładki JSON (zapis jak przy zwykłym Zapisz / Wczytaj).",
+                )
+            )
+        if hasattr(self, "designer_open_json_btn"):
+            self.designer_open_json_btn.setText(tr("Open JSON…", "Otwórz JSON…"))
+            self.designer_open_json_btn.setToolTip(
+                tr(
+                    "Save the theme file with a field guide and open it externally, then use Load theme.",
+                    "Zapisuje plik motywu z opisem pól i otwiera go na zewnątrz, potem użyj „Wczytaj motyw”.",
+                )
+            )
+        if hasattr(self, "designer_save_as_btn"):
+            self.designer_save_as_btn.setText(tr("Save As…", "Zapisz jako…"))
+            self.designer_save_as_btn.setToolTip(
+                tr("Save the current theme as a new editable file.", "Zapisz bieżący motyw jako nowy plik do edycji.")
+            )
+        if hasattr(self, "theme_doc_save_as_btn"):
+            self.theme_doc_save_as_btn.setText(tr("Save As", "Zapisz jako"))
+        if hasattr(self, "animation_studio_open_json_btn"):
+            self.animation_studio_open_json_btn.setText(tr("Open JSON…", "Otwórz JSON…"))
+            self.animation_studio_open_json_btn.setToolTip(
+                tr(
+                    "Same theme file; background animation is under effects.animation.",
+                    "Ten sam plik motywu; animacja tła jest w effects.animation.",
+                )
+            )
+        if hasattr(self, "animation_studio_save_as_btn"):
+            self.animation_studio_save_as_btn.setText(tr("Save As…", "Zapisz jako…"))
+            self.animation_studio_save_as_btn.setToolTip(
+                tr(
+                    "Create a new theme file from the current animation edit.",
+                    "Utwórz nowy plik motywu z bieżącej edycji animacji.",
+                )
+            )
+        if hasattr(self, "animation_studio_back_btn"):
+            self.animation_studio_back_btn.setText(tr("← Theme Designer", "← Projektant motywów"))
+        if hasattr(self, "animation_studio_quick_export_btn"):
+            self.animation_studio_quick_export_btn.setText(tr("Export", "Eksportuj"))
+            self.animation_studio_quick_export_btn.setToolTip(
+                tr("Export the full animation sequence to ZIP.", "Eksportuj całą sekwencję animacji do ZIP.")
+            )
+        if hasattr(self, "animation_studio_title_label"):
+            self.animation_studio_title_label.setText(tr("Animation Studio", "Studio animacji"))
+        if hasattr(self, "animation_studio_subtitle_label"):
+            self.animation_studio_subtitle_label.setText(
+                tr(
+                    "Create and manage frame-based animations for Trofeo LCD.",
+                    "Twórz i zarządzaj animacjami klatkowymi dla Trofeo LCD.",
+                )
+            )
+        if hasattr(self, "animation_worker_status_label"):
+            self._refresh_animation_worker_status()
+        if hasattr(self, "animation_preview_title_label"):
+            self.animation_preview_title_label.setText(tr("Preview", "Podgląd"))
+        if hasattr(self, "animation_auto_composite_chk"):
+            self.animation_auto_composite_chk.setText(tr("Auto composite", "Auto kompozycja"))
+            self.animation_auto_composite_chk.setToolTip(
+                tr(
+                    "Render the full theme preview whenever the selected frame changes.",
+                    "Renderuj pełny podgląd motywu przy każdej zmianie wybranej klatki.",
+                )
+            )
+        if hasattr(self, "animation_refresh_composite_btn"):
+            self.animation_refresh_composite_btn.setText(tr("Refresh composite", "Odśwież kompozycję"))
+            self.animation_refresh_composite_btn.setToolTip(
+                tr("Render the full theme with the current animation frame.", "Wyrenderuj pełny motyw z bieżącą klatką animacji.")
+            )
+        if hasattr(self, "animation_onion_skin_chk"):
+            self.animation_onion_skin_chk.setText(tr("Onion skin", "Onion skin"))
+            self.animation_onion_skin_chk.setToolTip(
+                tr(
+                    "Overlay previous and next animation frames over the current frame.",
+                    "Nałóż poprzednią i następną klatkę animacji na bieżącą klatkę.",
+                )
+            )
+        if hasattr(self, "bg_animation_export_btn") and not getattr(self, "_animation_export_in_flight", False):
+            self.bg_animation_export_btn.setText(tr("Export", "Eksportuj"))
+            self.bg_animation_export_btn.setToolTip(
+                tr(
+                    "Render animation frames to a ZIP archive in a background worker.",
+                    "Renderuj klatki animacji do archiwum ZIP w tle.",
+                )
+            )
+            if hasattr(self, "animation_export_loop_btn"):
+                self.animation_export_loop_btn.setText(tr("Export Loop", "Eksport pętli"))
+                self.animation_export_loop_btn.setToolTip(
+                    tr(
+                        "Export only the active animation loop range to ZIP.",
+                        "Eksportuj do ZIP tylko aktywny zakres pętli animacji.",
+                    )
+                )
+            if hasattr(self, "animation_export_selection_btn"):
+                self.animation_export_selection_btn.setText(tr("Export Sel", "Eksport zazn."))
+                self.animation_export_selection_btn.setToolTip(
+                    tr(
+                        "Export only selected animation frames to ZIP.",
+                        "Eksportuj do ZIP tylko zaznaczone klatki animacji.",
+                    )
+                )
+        if not getattr(self, "_animation_import_in_flight", False):
+            if hasattr(self, "bg_animation_import_btn"):
+                self.bg_animation_import_btn.setText(tr("Import", "Importuj"))
+                self.bg_animation_import_btn.setToolTip(
+                    tr(
+                        "Replace the current sequence with selected frames or a TTCR container. Files are prepared in the background.",
+                        "Zastąp bieżącą sekwencję wybranymi klatkami lub kontenerem TTCR. Pliki są przygotowywane w tle.",
+                    )
+                )
+            if hasattr(self, "bg_animation_add_btn"):
+                self.bg_animation_add_btn.setText(tr("Add", "Dodaj"))
+                self.bg_animation_add_btn.setToolTip(
+                    tr(
+                        "Append selected frames to the current sequence. Files are prepared in the background.",
+                        "Dopisz wybrane klatki do bieżącej sekwencji. Pliki są przygotowywane w tle.",
+                    )
+                )
+        if hasattr(self, "bg_animation_duplicate_btn"):
+            self.bg_animation_duplicate_btn.setText(tr("Duplicate asset", "Duplikuj asset"))
+            self.bg_animation_duplicate_btn.setToolTip(
+                tr("Create real copied frame files.", "Utwórz fizyczne kopie plików klatek.")
+            )
+        if hasattr(self, "bg_animation_hold_repeat_btn"):
+            self.bg_animation_hold_repeat_btn.setText(tr("Hold ×N", "Hold ×N"))
+            self.bg_animation_hold_repeat_btn.setToolTip(
+                tr(
+                    "Extend selected frame durations without copying files.",
+                    "Wydłuż czas zaznaczonych klatek bez kopiowania plików.",
+                )
+            )
+        if hasattr(self, "animation_bulk_apply_duration_btn"):
+            self.animation_bulk_apply_duration_btn.setText(tr("Retime selection", "Ustaw czas zaznaczenia"))
+            self.animation_bulk_apply_duration_btn.setToolTip(
+                tr(
+                    "Set the duration for selected frames only.",
+                    "Ustaw czas tylko dla zaznaczonych klatek.",
+                )
+            )
+        if hasattr(self, "animation_stabilize_btn") and not getattr(self, "_animation_stabilize_in_flight", False):
+            self.animation_stabilize_btn.setText(tr("Stabilize", "Stabilizuj"))
+            self.animation_stabilize_btn.setToolTip(
+                tr(
+                    "Align selected frames to the first selected frame using OpenCV ECC. If no range is selected, align the full sequence.",
+                    "Wyrównaj zaznaczone klatki do pierwszej zaznaczonej przez OpenCV ECC. Bez zaznaczenia wyrównuje całą sekwencję.",
+                )
+            )
+        combo = getattr(self, "animation_stabilize_mode_combo", None)
+        if combo is not None:
+            cur_data = combo.currentData()
+            combo.blockSignals(True)
+            labels = [
+                tr("Safe Translation", "Safe Translation"),
+                tr("Auto Safe", "Auto Safe"),
+                tr("Affine", "Affine"),
+                tr("Euclidean", "Euclidean"),
+                tr("Translation", "Translation"),
+            ]
+            for idx, label in enumerate(labels):
+                if idx < combo.count():
+                    combo.setItemText(idx, label)
+            match = combo.findData(cur_data)
+            if match >= 0:
+                combo.setCurrentIndex(match)
+            combo.blockSignals(False)
+            combo.setToolTip(
+                tr(
+                    "Stabilization model. Safe modes reject aggressive warps and avoid visible frame deformation.",
+                    "Model stabilizacji. Tryby Safe odrzucają agresywne transformacje i unikają widocznej deformacji klatek.",
+                )
+            )
+        if hasattr(self, "bg_animation_normalize_duration_btn"):
+            self.bg_animation_normalize_duration_btn.setText(tr("Normalize", "Wyrównaj"))
+            self.bg_animation_normalize_duration_btn.setToolTip(
+                tr(
+                    "Set all selected frames, or the whole sequence if nothing is selected, to this duration.",
+                    "Ustaw ten czas dla zaznaczonych klatek albo całej sekwencji, gdy nic nie zaznaczono.",
+                )
+            )
+        if hasattr(self, "bg_animation_reverse_btn"):
+            self.bg_animation_reverse_btn.setText(tr("Reverse", "Odwróć"))
+            self.bg_animation_reverse_btn.setToolTip(
+                tr(
+                    "Reverse selected frames, or the whole sequence if nothing is selected.",
+                    "Odwróć zaznaczone klatki albo całą sekwencję, gdy nic nie zaznaczono.",
+                )
+            )
+        if hasattr(self, "bg_animation_pingpong_btn"):
+            self.bg_animation_pingpong_btn.setText(tr("Ping-pong", "Ping-pong"))
+            self.bg_animation_pingpong_btn.setToolTip(
+                tr(
+                    "Append a mirrored tail using frame references, without copying files.",
+                    "Dodaj lustrzany ogon z referencji klatek, bez kopiowania plików.",
+                )
+            )
+        if hasattr(self, "animation_select_range_btn"):
+            self.animation_select_range_btn.setText(tr("Range", "Zakres"))
+            self.animation_select_range_btn.setToolTip(
+                tr(
+                    "Select every frame between the first and last selected frame. Shortcut: R.",
+                    "Zaznacz wszystkie klatki między pierwszą i ostatnią zaznaczoną. Skrót: R.",
+                )
+            )
+        if hasattr(self, "animation_invert_selection_btn"):
+            self.animation_invert_selection_btn.setText(tr("Invert", "Odwróć zazn."))
+            self.animation_invert_selection_btn.setToolTip(
+                tr("Invert frame selection. Shortcut: Ctrl+I.", "Odwróć zaznaczenie klatek. Skrót: Ctrl+I.")
+            )
+        if hasattr(self, "animation_clear_selection_btn"):
+            self.animation_clear_selection_btn.setText(tr("Clear Sel", "Wyczyść zazn."))
+            self.animation_clear_selection_btn.setToolTip(
+                tr("Clear frame selection. Shortcut: Esc.", "Wyczyść zaznaczenie klatek. Skrót: Esc.")
+            )
+        if hasattr(self, "animation_timeline_home_btn"):
+            self.animation_timeline_home_btn.setText(tr("Start", "Start"))
+            self.animation_timeline_home_btn.setToolTip(
+                tr("Scroll timeline to the first frame. Shortcut: Home.", "Przewiń oś czasu do pierwszej klatki. Skrót: Home.")
+            )
+        if hasattr(self, "animation_timeline_end_btn"):
+            self.animation_timeline_end_btn.setText(tr("End", "Koniec"))
+            self.animation_timeline_end_btn.setToolTip(
+                tr("Scroll timeline to the last frame. Shortcut: End.", "Przewiń oś czasu do ostatniej klatki. Skrót: End.")
+            )
+        if hasattr(self, "animation_loop_from_selection_btn"):
+            self.animation_loop_from_selection_btn.setText(tr("Loop Sel", "Pętla z zazn."))
+            self.animation_loop_from_selection_btn.setToolTip(
+                tr(
+                    "Set preview loop from selected frame range. Shortcut: Ctrl+R.",
+                    "Ustaw pętlę podglądu z zaznaczonego zakresu. Skrót: Ctrl+R.",
+                )
+            )
+        if hasattr(self, "animation_trim_selection_btn"):
+            self.animation_trim_selection_btn.setText(tr("Trim Sel", "Przytnij zazn."))
+            self.animation_trim_selection_btn.setToolTip(
+                tr(
+                    "Keep only selected frames in the sequence. Asset files are not deleted. Shortcut: Ctrl+T.",
+                    "Zostaw w sekwencji tylko zaznaczone klatki. Pliki assetów nie są usuwane. Skrót: Ctrl+T.",
+                )
+            )
+        if hasattr(self, "animation_timeline_label"):
+            self.animation_timeline_label.setText(tr("Timeline", "Oś czasu"))
+            self.animation_timeline_label.setToolTip(
+                tr(
+                    "Shortcuts: Space play/pause, I/O loop in/out, Ctrl+L clear loop, Delete remove, Ctrl+A select all, R range, Ctrl+I invert, Esc clear, Ctrl+R loop selection, Ctrl+T trim, +/- zoom.",
+                    "Skróty: Spacja play/pause, I/O loop in/out, Ctrl+L czyść pętlę, Delete usuń, Ctrl+A zaznacz wszystko, R zakres, Ctrl+I odwróć, Esc wyczyść, Ctrl+R pętla z zazn., Ctrl+T przytnij, +/- zoom.",
+                )
+            )
+        if hasattr(self, "animation_timeline_hint_label"):
+            self.animation_timeline_hint_label.setText(
+                tr(
+                    "Click a frame to select it. Drag to select a range. Use Set In / Set Out to mark a loop.",
+                    "Kliknij klatkę, aby ją wybrać. Przeciągnij, aby zaznaczyć zakres. Użyj In / Out do pętli.",
+                )
+            )
+        if hasattr(self, "animation_loop_in_btn"):
+            self.animation_loop_in_btn.setText(tr("Set In", "Ustaw In"))
+            self.animation_loop_in_btn.setToolTip(
+                tr("Set loop start to the current frame.", "Ustaw początek pętli na bieżącej klatce.")
+            )
+        if hasattr(self, "animation_loop_out_btn"):
+            self.animation_loop_out_btn.setText(tr("Set Out", "Ustaw Out"))
+            self.animation_loop_out_btn.setToolTip(
+                tr("Set loop end to the current frame.", "Ustaw koniec pętli na bieżącej klatce.")
+            )
+        if hasattr(self, "animation_loop_clear_btn"):
+            self.animation_loop_clear_btn.setText(tr("Clear Loop", "Wyczyść pętlę"))
+            self.animation_loop_clear_btn.setToolTip(
+                tr("Preview the full animation sequence again.", "Podglądaj ponownie całą sekwencję animacji.")
+            )
+        if hasattr(self, "bg_animation_repeat_all_btn"):
+            self.bg_animation_repeat_all_btn.setText(tr("Duplicate sequence ×N", "Duplikuj sekwencję ×N"))
+        if hasattr(self, "theme_doc_box"):
+            self.theme_doc_box.setTitle(tr("Theme", "Motyw"))
+        if hasattr(self, "theme_doc_path_caption"):
+            self.theme_doc_path_caption.setText(tr("Theme file:", "Plik motywu:"))
+        if hasattr(self, "theme_doc_sources_caption"):
+            self.theme_doc_sources_caption.setText(tr("Declared stats:", "Źródła danych:"))
+        if hasattr(self, "theme_doc_browse_btn"):
+            self.theme_doc_browse_btn.setText(tr("Browse theme…", "Wybierz motyw…"))
+        if hasattr(self, "theme_doc_use_selected_btn"):
+            self.theme_doc_use_selected_btn.setText(tr("From active theme", "Z aktywnego motywu"))
+        if hasattr(self, "theme_doc_load_btn"):
+            self.theme_doc_load_btn.setText(tr("Load", "Wczytaj"))
+        if hasattr(self, "theme_doc_save_btn"):
+            self.theme_doc_save_btn.setText(tr("Save", "Zapisz"))
+        if hasattr(self, "theme_doc_save_as_btn"):
+            self.theme_doc_save_as_btn.setText(tr("Save As", "Zapisz jako"))
+        if hasattr(self, "theme_doc_apply_btn"):
+            self.theme_doc_apply_btn.setText(tr("Apply", "Zastosuj"))
+        if hasattr(self, "theme_doc_stop_before_apply_chk"):
+            self.theme_doc_stop_before_apply_chk.setText(tr("Stop runtime before apply", "Zatrzymaj runtime przed apply"))
+        if hasattr(self, "theme_doc_resume_chk"):
+            self.theme_doc_resume_chk.setText(tr("Resume loop after apply", "Wznów loop po apply"))
+        if hasattr(self, "studio_toolbar_load_btn"):
+            self.studio_toolbar_load_btn.setText(tr("Load theme", "Wczytaj motyw"))
+        if hasattr(self, "studio_toolbar_save_btn"):
+            self.studio_toolbar_save_btn.setText(tr("Save theme", "Zapisz motyw"))
+        if hasattr(self, "studio_toolbar_preview_btn"):
+            self.studio_toolbar_preview_btn.setText(tr("Preview", "Podgląd"))
+        if hasattr(self, "studio_toolbar_apply_btn"):
+            self.studio_toolbar_apply_btn.setText(tr("Apply theme", "Zastosuj motyw"))
+        if hasattr(self, "studio_toolbar_reload_btn"):
+            self.studio_toolbar_reload_btn.setText(tr("JSON → Designer", "JSON → Projektant"))
+        if hasattr(self, "studio_toolbar_export_btn"):
+            self.studio_toolbar_export_btn.setText(tr("Designer → JSON", "Projektant → JSON"))
+        if hasattr(self, "studio_left_tabs"):
+            self.studio_left_tabs.setTabText(0, tr("Designer", "Projektant"))
+            self.studio_left_tabs.setTabText(1, tr("JSON", "JSON"))
+        if hasattr(self, "designer_theme_gauge_bar_label"):
+            self.designer_theme_gauge_bar_label.setText(
+                tr("Default gauge preset (meta.gauge_style):", "Domyślny preset gauge (meta.gauge_style):")
+            )
+        if hasattr(self, "designer_reload_btn"):
+            self.designer_reload_btn.setText(tr("Load theme", "Wczytaj motyw"))
+        if hasattr(self, "designer_write_btn"):
+            self.designer_write_btn.setText(tr("Save theme", "Zapisz motyw"))
+        if hasattr(self, "designer_save_as_btn"):
+            self.designer_save_as_btn.setText(tr("Save As", "Zapisz jako"))
+        if hasattr(self, "designer_animation_mode_btn"):
+            self.designer_animation_mode_btn.setText(tr("Animation", "Animacja"))
+        if hasattr(self, "designer_assets_toggle_btn"):
+            self.designer_assets_toggle_btn.setText(tr("Media", "Multimedia"))
+        if hasattr(self, "designer_preview_btn"):
+            self.designer_preview_btn.setText(tr("Preview", "Podgląd"))
+        if hasattr(self, "designer_apply_btn"):
+            self.designer_apply_btn.setText(tr("Apply theme", "Zastosuj motyw"))
+        if hasattr(self, "bg_animation_enabled_chk"):
+            self.bg_animation_enabled_chk.setText(tr("Animation enabled", "Animacja aktywna"))
+        if hasattr(self, "bg_animation_use_bg_chk"):
+            self.bg_animation_use_bg_chk.setText(tr("Use as background", "Użyj jako tła"))
+        if hasattr(self, "animation_studio_fps_label"):
+            self.animation_studio_fps_label.setText(tr("FPS", "FPS"))
+        if hasattr(self, "animation_studio_frame_index_label"):
+            self.animation_studio_frame_index_label.setText(tr("Frame", "Klatka"))
+        if hasattr(self, "animation_studio_duration_label"):
+            self.animation_studio_duration_label.setText(tr("Duration (ms)", "Czas (ms)"))
+        if hasattr(self, "animation_studio_bulk_duration_label"):
+            self.animation_studio_bulk_duration_label.setText(tr("Bulk duration (ms)", "Zbiorczy czas (ms)"))
+        if hasattr(self, "animation_onion_skin_opacity_label"):
+            self.animation_onion_skin_opacity_label.setText(tr("Opacity", "Przezrocz."))
+        combo = getattr(self, "animation_preview_scale_combo", None)
+        if combo is not None and combo.count() >= 4:
+            cur = combo.currentIndex()
+            combo.blockSignals(True)
+            combo.setItemText(0, tr("Fit width", "Dopasuj szerokość"))
+            combo.setItemText(1, "100%")
+            combo.setItemText(2, "150%")
+            combo.setItemText(3, "200%")
+            combo.setCurrentIndex(cur)
+            combo.blockSignals(False)
+        if hasattr(self, "animation_duplicate_repeat_spin"):
+            self.animation_duplicate_repeat_spin.setToolTip(
+                tr(
+                    "Duplicate the selected frames this many times (copies files).",
+                    "Tyle razy zduplikuj zaznaczone klatki (kopiuje pliki).",
+                )
+            )
+        if hasattr(self, "designer_theme_gauge_style_combo") and self.designer_theme_gauge_style_combo.count() > 0:
+            self.designer_theme_gauge_style_combo.setItemText(
+                0,
+                tr("(default from theme name)", "(domyślny z nazwy motywu)"),
+            )
+        if hasattr(self, "bg_animation_play_btn"):
+            self._update_animation_preview_timer()
         self._populate_designer_quick_add_menu()
         self._update_image_tools_availability()
         # Avoid calling _apply_designer_aux_visibility here: _refresh_localized_texts already runs
@@ -6366,7 +6999,7 @@ class TrofeoGui(QMainWindow):
         if hasattr(self, "header_language_label"):
             self.header_language_label.setText(self._tr("Language", "Język"))
         if hasattr(self, "header_donate_btn"):
-            self.header_donate_btn.setText(self._tr("Donate / Support", "Donate / Wspomóż"))
+            self.header_donate_btn.setText(self._tr("Donate", "Donate"))
             self.header_donate_btn.setToolTip(self._tr("Open GitHub Sponsors for Open Trofeo LCD", "Otwórz GitHub Sponsors dla Open Trofeo LCD"))
         if hasattr(self, "header_ready_label"):
             current = self.header_ready_label.text().strip().lower()
@@ -6383,6 +7016,7 @@ class TrofeoGui(QMainWindow):
         self._nav_button_meta = {
             self.nav_library_btn: ("🗂", self._tr("Theme Gallery", "Galeria motywów")),
             self.nav_designer_btn: ("✎", self._tr("Theme Designer", "Projektant motywów")),
+            self.nav_animation_studio_btn: ("🎞", self._tr("Animation Studio", "Studio animacji")),
             self.nav_system_btn: ("◉", self._tr("System", "System")),
             self.nav_logs_btn: ("☰", self._tr("Logs", "Logi")),
             self.nav_config_btn: ("⚙", self._tr("Configuration", "Konfiguracja")),
@@ -6395,6 +7029,7 @@ class TrofeoGui(QMainWindow):
         if hasattr(self, "studio_sections_tabs"):
             self.studio_sections_tabs.setTabText(0, self._tr("Theme Gallery", "Galeria motywów"))
             self.studio_sections_tabs.setTabText(1, self._tr("Designer", "Projektant"))
+            self.studio_sections_tabs.setTabText(2, self._tr("Animation Studio", "Studio animacji"))
         if hasattr(self, "appearance_box"):
             self.appearance_box.setTitle(self._tr("App Appearance", "Wygląd Aplikacji"))
         if hasattr(self, "paths_box"):
@@ -6569,22 +7204,39 @@ class TrofeoGui(QMainWindow):
                 # after their backing Qt object has already been deleted.
                 return
 
-        _safe_set_tooltip("designer_apply_btn", "Renderuje motyw i wysyła go na LCD.")
-        _safe_set_tooltip("studio_toolbar_apply_btn", "Renderuje motyw i wysyła go na LCD.")
+        _safe_set_tooltip(
+            "designer_apply_btn",
+            self._tr("Renders the theme and sends it to the LCD.", "Renderuje motyw i wysyła go na LCD."),
+        )
+        _safe_set_tooltip(
+            "studio_toolbar_apply_btn",
+            self._tr("Renders the theme and sends it to the LCD.", "Renderuje motyw i wysyła go na LCD."),
+        )
         _safe_set_tooltip(
             "designer_import_image_btn",
-            "Importuje obraz, przygotowuje go pod LCD i dodaje jako warstwę Image.",
+            self._tr(
+                "Imports an image, prepares it for the LCD, and adds it as an Image layer.",
+                "Importuje obraz, przygotowuje go pod LCD i dodaje jako warstwę Image.",
+            ),
         )
         _safe_set_tooltip(
             "bg_prepare_btn",
-            "Importuje i przygotowuje obraz tła w katalogu assetów motywu.",
+            self._tr(
+                "Imports and prepares a background image into the theme asset folder.",
+                "Importuje i przygotowuje obraz tła w katalogu assetów motywu.",
+            ),
         )
         QMessageBox.information(
             self,
-            "Pierwsze kroki",
-            "1. Biblioteka Motywów: zacznij od szablonu albo galerii motywów.\n"
-            "2. Designer: klikaj i przeciągaj elementy bezpośrednio na preview.\n"
-            "3. Importuj tło / obraz: assety zapisują się automatycznie do katalogu bieżącego motywu.",
+            self._tr("Getting started", "Pierwsze kroki"),
+            self._tr(
+                "1. Theme Gallery: start from a template or browse themes.\n"
+                "2. Designer: click and drag elements directly on the preview.\n"
+                "3. Import background / image: assets are saved into the current theme folder.",
+                "1. Biblioteka Motywów: zacznij od szablonu albo galerii motywów.\n"
+                "2. Designer: klikaj i przeciągaj elementy bezpośrednio na preview.\n"
+                "3. Importuj tło / obraz: assety zapisują się automatycznie do katalogu bieżącego motywu.",
+            ),
         )
         self._save_ui_state(onboarding_done=True)
 
@@ -6641,10 +7293,302 @@ class TrofeoGui(QMainWindow):
             self._set_shell_nav_active(getattr(self, "nav_system_btn", None))
             return
         if current == 1 and hasattr(self, "studio_sections_tabs"):
-            if self.studio_sections_tabs.currentIndex() == 0:
+            idx = self.studio_sections_tabs.currentIndex()
+            if idx == 0:
                 self._set_shell_nav_active(getattr(self, "nav_library_btn", None))
-            else:
+            elif idx == 1:
                 self._set_shell_nav_active(getattr(self, "nav_designer_btn", None))
+            else:
+                self._set_shell_nav_active(getattr(self, "nav_animation_studio_btn", None))
+
+    def _go_animation_studio(self) -> None:
+        if hasattr(self, "main_tabs"):
+            self.main_tabs.setCurrentIndex(1)
+        if hasattr(self, "studio_sections_tabs"):
+            self.studio_sections_tabs.setCurrentIndex(2)
+        self._sync_shell_navigation()
+        self._update_animation_performance_hint()
+        self._refresh_animation_studio_preview()
+        self._update_animation_preview_timer()
+
+    def _build_animation_studio_page(self) -> None:
+        if self._animation_studio_built or not hasattr(self, "animation_studio_layout"):
+            return
+        self._animation_studio_built = True
+        lay = self.animation_studio_layout
+
+        def make_card(title: str) -> tuple[QGroupBox, QVBoxLayout]:
+            box = QGroupBox(title)
+            box.setObjectName("designerToolbarBox")
+            box.setFlat(False)
+            layout = QVBoxLayout(box)
+            layout.setContentsMargins(8, 6, 8, 8)
+            layout.setSpacing(5)
+            return box, layout
+
+        def make_button_grid(buttons: list[QWidget], columns: int = 2) -> QGridLayout:
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setHorizontalSpacing(6)
+            grid.setVerticalSpacing(5)
+            for idx, button in enumerate(buttons):
+                if isinstance(button, (QPushButton, QComboBox, QSpinBox, QDoubleSpinBox)):
+                    button.setMinimumHeight(26)
+                    button.setMaximumHeight(30)
+                grid.addWidget(button, idx // columns, idx % columns)
+            return grid
+
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
+        self.animation_studio_title_label = QLabel("Animation Studio")
+        self.animation_studio_title_label.setObjectName("sectionTitle")
+        self.animation_studio_subtitle_label = QLabel("Create and manage frame-based animations for Trofeo LCD.")
+        self.animation_studio_subtitle_label.setObjectName("previewHintLabel")
+        title_col.addWidget(self.animation_studio_title_label)
+        title_col.addWidget(self.animation_studio_subtitle_label)
+        header.addLayout(title_col, 1)
+        self.animation_studio_back_btn = QPushButton("← Theme Designer")
+        self.animation_studio_back_btn.setObjectName("secondaryAccentButton")
+        self.animation_studio_back_btn.clicked.connect(self._go_designer)
+        header.addWidget(self.animation_studio_back_btn)
+        self.animation_studio_open_json_btn = QPushButton("Open JSON…")
+        self.animation_studio_open_json_btn.setObjectName("secondaryAccentButton")
+        self.animation_studio_open_json_btn.clicked.connect(
+            lambda: self.open_current_theme_json_externally(from_animation_studio=True)
+        )
+        header.addWidget(self.animation_studio_open_json_btn)
+        self.animation_studio_save_as_btn = QPushButton("Save As…")
+        self.animation_studio_save_as_btn.setObjectName("secondaryAccentButton")
+        self.animation_studio_save_as_btn.clicked.connect(lambda: self.save_theme_doc_as(from_animation_studio=True))
+        header.addWidget(self.animation_studio_save_as_btn)
+        self.animation_studio_quick_export_btn = QPushButton("Export")
+        self.animation_studio_quick_export_btn.setObjectName("secondaryAccentButton")
+        self.animation_studio_quick_export_btn.clicked.connect(self.export_animation_sequence)
+        header.addWidget(self.animation_studio_quick_export_btn)
+        lay.addLayout(header)
+
+        meta_row = QHBoxLayout()
+        self.animation_performance_hint_label = QLabel("")
+        self.animation_performance_hint_label.setWordWrap(True)
+        self.animation_performance_hint_label.setObjectName("previewHintLabel")
+        meta_row.addWidget(self.animation_performance_hint_label, 1)
+        self.animation_worker_status_label = QLabel("")
+        self.animation_worker_status_label.setObjectName("previewHintLabel")
+        self.animation_worker_status_label.setMinimumWidth(180)
+        self.animation_worker_status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        meta_row.addWidget(self.animation_worker_status_label)
+        lay.addLayout(meta_row)
+
+        preview_row = QHBoxLayout()
+        preview_row.setSpacing(8)
+        self.animation_preview_title_label = QLabel("Preview")
+        preview_row.addWidget(self.animation_preview_title_label)
+        self.animation_preview_scale_combo = QComboBox()
+        self.animation_preview_scale_combo.setObjectName("animationPreviewScaleCombo")
+        for text, data in (
+            ("Fit width", "fit_width"),
+            ("100%", "100"),
+            ("150%", "150"),
+            ("200%", "200"),
+        ):
+            self.animation_preview_scale_combo.addItem(text, data)
+        self.animation_preview_scale_combo.currentIndexChanged.connect(lambda _idx: self._refresh_animation_studio_preview())
+        preview_row.addWidget(self.animation_preview_scale_combo)
+        self.animation_auto_composite_chk = QCheckBox("Auto composite")
+        self.animation_auto_composite_chk.setChecked(False)
+        self.animation_auto_composite_chk.toggled.connect(lambda _checked: self._refresh_animation_studio_preview(force_composite=True))
+        self.animation_refresh_composite_btn = QPushButton("Refresh composite")
+        self.animation_refresh_composite_btn.setObjectName("secondaryAccentButton")
+        self.animation_refresh_composite_btn.clicked.connect(lambda: self._refresh_animation_studio_preview(force_composite=True))
+        preview_row.addWidget(self.animation_auto_composite_chk)
+        preview_row.addWidget(self.animation_refresh_composite_btn)
+        preview_row.addSpacing(12)
+        preview_row.addWidget(self.animation_onion_skin_chk)
+        self.animation_onion_skin_opacity_label = QLabel("Opacity")
+        preview_row.addWidget(self.animation_onion_skin_opacity_label)
+        preview_row.addWidget(self.animation_onion_opacity_spin)
+        preview_row.addStretch(1)
+        lay.addLayout(preview_row)
+
+        preview_splitter = QSplitter(Qt.Horizontal)
+        preview_splitter.setChildrenCollapsible(False)
+        preview_splitter.setMinimumHeight(205)
+        preview_splitter.setMaximumHeight(300)
+        self.animation_frame_preview_label = QLabel("Frame preview")
+        self.animation_frame_preview_label.setAlignment(Qt.AlignCenter)
+        self.animation_frame_preview_label.setMinimumHeight(185)
+        self.animation_frame_preview_label.setMaximumHeight(280)
+        self.animation_frame_preview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.animation_frame_preview_label.setObjectName("selectionSummaryLabel")
+
+        device_box, device_lay = make_card("Device Preview (Trofeo LCD)")
+        device_box.setMaximumHeight(300)
+        self.animation_composite_preview_label = QLabel("Composite preview")
+        self.animation_composite_preview_label.setAlignment(Qt.AlignCenter)
+        self.animation_composite_preview_label.setMinimumHeight(112)
+        self.animation_composite_preview_label.setMaximumHeight(150)
+        self.animation_composite_preview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.animation_composite_preview_label.setObjectName("selectionSummaryLabel")
+        self.animation_device_info_label = QLabel(
+            "Aspect: 480 x 128 (3.75 : 1)  •  Format: RGB888\n"
+            "Estimated memory: -  •  Transfer over USB"
+        )
+        self.animation_device_info_label.setWordWrap(True)
+        self.animation_device_info_label.setObjectName("previewHintLabel")
+        device_lay.addWidget(self.animation_composite_preview_label)
+        device_lay.addWidget(self.animation_device_info_label)
+        preview_splitter.addWidget(self.animation_frame_preview_label)
+        preview_splitter.addWidget(device_box)
+        preview_splitter.setStretchFactor(0, 2)
+        preview_splitter.setStretchFactor(1, 1)
+        self.animation_studio_preview_label = self.animation_frame_preview_label
+        lay.addWidget(preview_splitter, 1)
+
+        controls_grid = QGridLayout()
+        controls_grid.setHorizontalSpacing(10)
+        controls_grid.setVerticalSpacing(10)
+
+        playback_box, playback_lay = make_card("Playback")
+        play_buttons = QHBoxLayout()
+        play_buttons.setSpacing(6)
+        play_buttons.addWidget(self.bg_animation_prev_btn)
+        play_buttons.addWidget(self.bg_animation_play_btn)
+        play_buttons.addWidget(self.bg_animation_next_btn)
+        play_buttons.addWidget(self.bg_animation_count_label)
+        playback_lay.addLayout(play_buttons)
+        flags_row = QHBoxLayout()
+        flags_row.setSpacing(8)
+        flags_row.addWidget(self.bg_animation_enabled_chk)
+        flags_row.addWidget(self.bg_animation_use_bg_chk)
+        flags_row.addStretch(1)
+        playback_lay.addLayout(flags_row)
+        self.animation_studio_fps_label = QLabel("FPS")
+        self.animation_studio_frame_index_label = QLabel("Frame")
+        self.animation_studio_duration_label = QLabel("Duration (ms)")
+        timing_form = QGridLayout()
+        timing_form.setHorizontalSpacing(6)
+        timing_form.setVerticalSpacing(4)
+        timing_form.addWidget(self.animation_studio_fps_label, 0, 0)
+        timing_form.addWidget(self.bg_animation_fps_spin, 0, 1)
+        timing_form.addWidget(self.animation_studio_frame_index_label, 1, 0)
+        timing_form.addWidget(self.bg_animation_frame_spin, 1, 1)
+        timing_form.addWidget(self.animation_studio_duration_label, 2, 0)
+        timing_form.addWidget(self.bg_animation_duration_spin, 2, 1)
+        playback_lay.addLayout(timing_form)
+
+        timing_box, timing_lay = make_card("Timing")
+        self.animation_studio_bulk_duration_label = QLabel("Bulk duration (ms)")
+        duration_row = QGridLayout()
+        duration_row.setContentsMargins(0, 0, 0, 0)
+        duration_row.setHorizontalSpacing(6)
+        duration_row.addWidget(self.animation_studio_bulk_duration_label, 0, 0)
+        duration_row.addWidget(self.animation_bulk_duration_spin, 0, 1)
+        duration_row.addWidget(QLabel("×"), 0, 2)
+        duration_row.addWidget(self.animation_duplicate_repeat_spin, 0, 3)
+        duration_row.setColumnStretch(4, 1)
+        timing_lay.addLayout(duration_row)
+        timing_lay.addLayout(
+            make_button_grid(
+                [
+                    self.animation_bulk_apply_duration_btn,
+                    self.bg_animation_normalize_duration_btn,
+                    self.bg_animation_reverse_btn,
+                    self.bg_animation_pingpong_btn,
+                    self.animation_stabilize_btn,
+                    self.animation_stabilize_mode_combo,
+                    self.bg_animation_hold_repeat_btn,
+                    self.bg_animation_duplicate_btn,
+                    self.bg_animation_repeat_all_btn,
+                ],
+                columns=3,
+            )
+        )
+
+        loop_box, loop_lay = make_card("Loop")
+        loop_lay.addWidget(self.animation_loop_label)
+        loop_lay.addLayout(
+            make_button_grid(
+                [
+                    self.animation_loop_in_btn,
+                    self.animation_loop_out_btn,
+                    self.animation_loop_clear_btn,
+                    self.animation_loop_from_selection_btn,
+                    self.animation_select_range_btn,
+                    self.animation_trim_selection_btn,
+                    self.animation_invert_selection_btn,
+                    self.animation_clear_selection_btn,
+                ],
+                columns=2,
+            )
+        )
+
+        tools_box, tools_lay = make_card("Frame Tools")
+        tools_lay.addLayout(
+            make_button_grid(
+                [
+                    self.bg_animation_import_btn,
+                    self.bg_animation_add_btn,
+                    self.bg_animation_blank_btn,
+                    self.bg_animation_remove_btn,
+                    self.bg_animation_up_btn,
+                    self.bg_animation_down_btn,
+                    self.bg_animation_export_btn,
+                    self.animation_export_loop_btn,
+                    self.animation_export_selection_btn,
+                    self.bg_animation_clear_btn,
+                ],
+                columns=3,
+            )
+        )
+
+        controls_grid.addWidget(playback_box, 0, 0)
+        controls_grid.addWidget(timing_box, 0, 1)
+        controls_grid.addWidget(loop_box, 0, 2)
+        controls_grid.addWidget(tools_box, 0, 3)
+        controls_grid.setColumnStretch(0, 1)
+        controls_grid.setColumnStretch(1, 1)
+        controls_grid.setColumnStretch(2, 1)
+        controls_grid.setColumnStretch(3, 1)
+        lay.addLayout(controls_grid)
+
+        timeline_header = QHBoxLayout()
+        self.animation_timeline_label = QLabel("Timeline")
+        self.animation_timeline_label.setToolTip(
+            "Shortcuts: Space play/pause, I/O loop in/out, Ctrl+L clear loop, Delete remove, Ctrl+A select all, R range, Ctrl+I invert, Esc clear, +/- zoom."
+        )
+        self.animation_timeline_hint_label = QLabel("Click a frame to select it. Drag to select a range. Use Set In / Set Out to mark a loop.")
+        self.animation_timeline_hint_label.setObjectName("previewHintLabel")
+        timeline_header.addWidget(self.animation_timeline_label)
+        timeline_header.addWidget(self.animation_timeline_hint_label, 1)
+        timeline_header.addWidget(QLabel("Zoom"))
+        timeline_header.addWidget(self.animation_timeline_zoom_combo)
+        timeline_header.addWidget(self.animation_timeline_home_btn)
+        timeline_header.addWidget(self.animation_timeline_end_btn)
+        lay.addLayout(timeline_header)
+
+        self.bg_animation_timeline_scroll = QScrollArea()
+        self.bg_animation_timeline_scroll.setWidgetResizable(False)
+        self.bg_animation_timeline_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.bg_animation_timeline_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.bg_animation_timeline_scroll.setFrameShape(QFrame.NoFrame)
+        self.bg_animation_timeline_scroll.setMinimumHeight(148)
+        self.bg_animation_timeline_scroll.setWidget(self.bg_animation_timeline)
+        self.bg_animation_timeline.installEventFilter(self)
+        self.bg_animation_timeline_scroll.viewport().installEventFilter(self)
+        lay.addWidget(self.bg_animation_timeline_scroll)
+        self.bg_animation_list.setVisible(False)
+        self.bg_animation_list.setParent(self.animation_studio_tab)
+        self._register_animation_studio_shortcuts()
+        tr = self._tr
+        self.animation_studio_open_json_btn.setText(tr("Open JSON…", "Otwórz JSON…"))
+        self.animation_studio_open_json_btn.setToolTip(
+            tr(
+                "Same theme file; background animation is under effects.animation.",
+                "Ten sam plik motywu; animacja tła jest w effects.animation.",
+            )
+        )
 
     def _go_library(self) -> None:
         if hasattr(self, "main_tabs"):
@@ -6674,6 +7618,594 @@ class TrofeoGui(QMainWindow):
         if hasattr(self, "main_tabs"):
             self.main_tabs.setCurrentIndex(2)
         self._sync_shell_navigation()
+
+    def _on_animation_timeline_selection_changed(self, indices: list[int]) -> None:
+        if not indices or not hasattr(self, "bg_animation_list"):
+            return
+        self._animation_syncing_from_timeline = True
+        self._designer_updating = True
+        try:
+            self.bg_animation_list.clearSelection()
+            for i in indices:
+                it = self.bg_animation_list.item(i)
+                if it is not None:
+                    it.setSelected(True)
+            self.bg_animation_list.setCurrentRow(indices[-1])
+        finally:
+            self._designer_updating = False
+        if hasattr(self, "bg_animation_timeline"):
+            self.bg_animation_timeline.set_playhead(indices[-1])
+        self._set_current_animation_frame(indices[-1], persist=True, render_preview=True)
+        self._animation_syncing_from_timeline = False
+
+    def _on_bg_animation_list_selection_sync(self) -> None:
+        if self._designer_updating:
+            return
+        rows = sorted({i.row() for i in self.bg_animation_list.selectedIndexes()})
+        if hasattr(self, "bg_animation_timeline"):
+            self.bg_animation_timeline.set_selection(rows, emit_signal=False)
+        self._refresh_animation_studio_preview()
+        self._update_animation_performance_hint()
+
+    def _on_animation_current_row_changed(self, row: int) -> None:
+        if self._designer_updating or self._animation_syncing_from_timeline:
+            return
+        if row < 0:
+            return
+        self.select_animation_frame(row)
+
+    def _register_animation_studio_shortcuts(self) -> None:
+        if not hasattr(self, "animation_studio_tab") or self._animation_studio_shortcuts:
+            return
+
+        def add_shortcut(sequence: str, callback) -> None:
+            shortcut = QShortcut(QKeySequence(sequence), self.animation_studio_tab)
+            shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(callback)
+            self._animation_studio_shortcuts.append(shortcut)
+
+        add_shortcut("Space", lambda: self._run_animation_shortcut(self.toggle_animation_preview_playback, allow_text_inputs=False))
+        add_shortcut("I", lambda: self._run_animation_shortcut(self.set_animation_loop_in, allow_text_inputs=False))
+        add_shortcut("O", lambda: self._run_animation_shortcut(self.set_animation_loop_out, allow_text_inputs=False))
+        add_shortcut("Ctrl+L", lambda: self._run_animation_shortcut(self.clear_animation_loop_range, allow_text_inputs=False))
+        add_shortcut("Delete", lambda: self._run_animation_shortcut(self.remove_selected_animation_frames, allow_text_inputs=False))
+        add_shortcut("Ctrl+A", lambda: self._run_animation_shortcut(self.select_all_animation_frames, allow_text_inputs=False))
+        add_shortcut("R", lambda: self._run_animation_shortcut(self.select_animation_range_between_edges, allow_text_inputs=False))
+        add_shortcut("Ctrl+I", lambda: self._run_animation_shortcut(self.invert_animation_frame_selection, allow_text_inputs=False))
+        add_shortcut("Esc", lambda: self._run_animation_shortcut(self.clear_animation_frame_selection, allow_text_inputs=False))
+        add_shortcut("Ctrl+R", lambda: self._run_animation_shortcut(self.set_animation_loop_from_selection, allow_text_inputs=False))
+        add_shortcut("Ctrl+T", lambda: self._run_animation_shortcut(self.trim_animation_to_selection, allow_text_inputs=False))
+        add_shortcut("+", lambda: self._run_animation_shortcut(self.zoom_animation_timeline_in, allow_text_inputs=False))
+        add_shortcut("=", lambda: self._run_animation_shortcut(self.zoom_animation_timeline_in, allow_text_inputs=False))
+        add_shortcut("-", lambda: self._run_animation_shortcut(self.zoom_animation_timeline_out, allow_text_inputs=False))
+        add_shortcut("Home", lambda: self._run_animation_shortcut(self.scroll_animation_timeline_to_start, allow_text_inputs=False))
+        add_shortcut("End", lambda: self._run_animation_shortcut(self.scroll_animation_timeline_to_end, allow_text_inputs=False))
+
+    def _run_animation_shortcut(self, callback, *, allow_text_inputs: bool = True) -> None:
+        if not self._animation_studio_active():
+            return
+        if not allow_text_inputs and self._focus_is_text_input():
+            return
+        callback()
+
+    def _animation_studio_active(self) -> bool:
+        return (
+            hasattr(self, "main_tabs")
+            and hasattr(self, "studio_sections_tabs")
+            and self.main_tabs.currentIndex() == 1
+            and self.studio_sections_tabs.currentIndex() == 2
+        )
+
+    def _focus_is_text_input(self) -> bool:
+        focus = QApplication.focusWidget()
+        return isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox))
+
+    def _animation_preview_scaled_pixmap(self, pixmap: QPixmap, label: QLabel) -> QPixmap:
+        mode = "fit_width"
+        combo = getattr(self, "animation_preview_scale_combo", None)
+        if combo is not None:
+            data = combo.currentData()
+            if isinstance(data, str) and data:
+                mode = data
+            else:
+                text = combo.currentText()
+                if text == "100%":
+                    mode = "100"
+                elif text == "150%":
+                    mode = "150"
+                elif text == "200%":
+                    mode = "200"
+                elif "%" not in text:
+                    mode = "fit_width"
+        tw = max(280, label.width() - 8)
+        th = max(220, label.height() - 8)
+        if mode == "fit_width":
+            return pixmap.scaled(tw, th, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        if mode == "100":
+            return pixmap
+        if mode == "150":
+            return pixmap.scaled(int(pixmap.width() * 1.5), int(pixmap.height() * 1.5), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        return pixmap.scaled(int(pixmap.width() * 2.0), int(pixmap.height() * 2.0), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+    def _set_animation_preview_pixmap(self, label: QLabel, pixmap: QPixmap, empty_text: str) -> None:
+        if pixmap.isNull():
+            label.setPixmap(QPixmap())
+            label.setText(empty_text)
+            return
+        label.setPixmap(self._animation_preview_scaled_pixmap(pixmap, label))
+        label.setText("")
+
+    def _animation_onion_skin_pixmap(self, current_path: str) -> QPixmap:
+        animation = self._current_animation_effect()
+        frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
+        if len(frame_paths) < 2:
+            return QPixmap(str(self._resolve_theme_asset_path(current_path)))
+        try:
+            current = int(animation.get("current_frame", 0))
+        except Exception:
+            current = 0
+        current = min(max(0, current), len(frame_paths) - 1)
+        base = QPixmap(str(self._resolve_theme_asset_path(str(frame_paths[current]))))
+        if base.isNull():
+            return base
+        opacity = 0.28
+        if hasattr(self, "animation_onion_opacity_spin"):
+            opacity = max(0.05, min(float(self.animation_onion_opacity_spin.value()), 0.85))
+        result = QPixmap(base)
+        painter = QPainter(result)
+        try:
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            neighbors = [
+                (current - 1, QColor("#f97316"), self._tr("PREV", "POPRZ")),
+                (current + 1, QColor("#38bdf8"), self._tr("NEXT", "NAST")),
+            ]
+            for index, color, label in neighbors:
+                if index < 0 or index >= len(frame_paths):
+                    continue
+                pix = QPixmap(str(self._resolve_theme_asset_path(str(frame_paths[index]))))
+                if pix.isNull():
+                    continue
+                if pix.size() != result.size():
+                    pix = pix.scaled(result.size(), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                painter.setOpacity(opacity)
+                painter.drawPixmap(0, 0, pix)
+                painter.setOpacity(min(0.8, opacity + 0.25))
+                painter.setPen(QPen(color, max(2, result.width() // 480)))
+                inset = max(4, result.width() // 240)
+                painter.drawRect(result.rect().adjusted(inset, inset, -inset, -inset))
+                painter.drawText(result.rect().adjusted(12, 10, -12, -10), Qt.AlignTop | Qt.AlignLeft, label)
+        finally:
+            painter.end()
+        return result
+
+    def _render_animation_composite_pixmap(self) -> QPixmap:
+        if render_theme_document is None or self.theme_doc_model is None:
+            return QPixmap()
+        try:
+            document = normalize_theme_document(deepcopy(self.theme_doc_model))
+            image = render_theme_document(ThemeDocument(document), base_dir=self._theme_base_dir())
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            pixmap = QPixmap()
+            pixmap.loadFromData(buffer.getvalue(), "PNG")
+            try:
+                rotation = int(document.get("canvas", {}).get("rotation", 0)) % 360
+            except Exception:
+                rotation = 0
+            if rotation:
+                pixmap = pixmap.transformed(QTransform().rotate((-rotation) % 360), Qt.SmoothTransformation)
+            return pixmap
+        except Exception as exc:
+            self.append_log(f"[animation-composite-preview] ERROR: {exc}")
+            return QPixmap()
+
+    def _refresh_animation_studio_preview(self, *, force_composite: bool = False) -> None:
+        if not hasattr(self, "animation_frame_preview_label"):
+            return
+        animation = self._current_animation_effect()
+        if bool(animation.get("use_as_background", True)):
+            path = self._current_animation_preview_path()
+        else:
+            path = self.bg_path_edit.text().strip()
+        frame_label = self.animation_frame_preview_label
+        if not path.strip():
+            frame_label.setPixmap(QPixmap())
+            frame_label.setText(self._tr("Add frames to preview them here.", "Dodaj klatki, aby zobaczyć podgląd."))
+        else:
+            resolved = self._resolve_theme_asset_path(path)
+            if bool(getattr(self, "animation_onion_skin_chk", None) and self.animation_onion_skin_chk.isChecked()):
+                pix = self._animation_onion_skin_pixmap(path)
+            else:
+                pix = QPixmap(str(resolved))
+            self._set_animation_preview_pixmap(
+                frame_label,
+                pix,
+                self._tr("Could not load frame image.", "Nie udało się wczytać klatki."),
+            )
+
+        composite_label = getattr(self, "animation_composite_preview_label", None)
+        if composite_label is None:
+            return
+        auto_composite = bool(getattr(self, "animation_auto_composite_chk", None) and self.animation_auto_composite_chk.isChecked())
+        if not force_composite and not auto_composite:
+            if composite_label.pixmap() is None or composite_label.pixmap().isNull():
+                composite_label.setText(self._tr("Refresh composite to render the full theme.", "Odśwież kompozycję, aby wyrenderować pełny motyw."))
+            return
+        pixmap = self._render_animation_composite_pixmap()
+        self._set_animation_preview_pixmap(
+            composite_label,
+            pixmap,
+            self._tr("Could not render composite preview.", "Nie udało się wyrenderować kompozycji."),
+        )
+
+    def _format_animation_frame_count(self, n: int) -> str:
+        if self._current_ui_language() == "pl":
+            if n == 1:
+                return "1 klatka"
+            rem10 = n % 10
+            rem100 = n % 100
+            if 2 <= rem10 <= 4 and not (12 <= rem100 <= 14):
+                return f"{n} klatki"
+            return f"{n} klatek"
+        return f"{n} frame" if n == 1 else f"{n} frames"
+
+    def _update_animation_performance_hint(self) -> None:
+        if not hasattr(self, "animation_performance_hint_label"):
+            return
+        if self.theme_doc_model is None:
+            self.animation_performance_hint_label.setText("")
+            if hasattr(self, "animation_device_info_label"):
+                self.animation_device_info_label.setText("")
+            return
+        effects = self.theme_doc_model.get("effects", {})
+        animation = effects.get("animation", {}) if isinstance(effects, dict) else {}
+        if not isinstance(animation, dict) or not bool(animation.get("enabled")):
+            self.animation_performance_hint_label.setText("")
+            if hasattr(self, "animation_device_info_label"):
+                self.animation_device_info_label.setText(
+                    self._tr(
+                        "Aspect: 480 x 128 (3.75 : 1)  •  Format: RGB888\nEstimated memory: -  •  Transfer over USB",
+                        "Format: 480 x 128 (3.75 : 1)  •  RGB888\nSzacowana pamięć: -  •  Transfer przez USB",
+                    )
+                )
+            return
+        fp = animation.get("frame_paths", [])
+        if not isinstance(fp, list) or len(fp) <= 1:
+            self.animation_performance_hint_label.setText("")
+            if hasattr(self, "animation_device_info_label"):
+                self.animation_device_info_label.setText(
+                    self._tr(
+                        "Aspect: 480 x 128 (3.75 : 1)  •  Format: RGB888\nEstimated memory: -  •  Transfer over USB",
+                        "Format: 480 x 128 (3.75 : 1)  •  RGB888\nSzacowana pamięć: -  •  Transfer przez USB",
+                    )
+                )
+            return
+        n = len(fp)
+        estimated_bytes = n * 480 * 128 * 3
+        estimated_mb = estimated_bytes / (1024 * 1024)
+        if hasattr(self, "animation_device_info_label"):
+            self.animation_device_info_label.setText(
+                self._tr(
+                    f"Aspect: 480 x 128 (3.75 : 1)  •  Format: RGB888\nEstimated memory: ~{estimated_mb:.1f} MB  •  Transfer over USB",
+                    f"Format: 480 x 128 (3.75 : 1)  •  RGB888\nSzacowana pamięć: ~{estimated_mb:.1f} MB  •  Transfer przez USB",
+                )
+            )
+        parts: list[str] = []
+        if n >= ANIMATION_FRAMES_SOFT_WARN:
+            parts.append(
+                self._tr(
+                    f"{n} frames: high count for TRCC (each bitmap is kept in memory and sent over USB).",
+                    f"{n} klatek: dużo dla TRCC (każda bitmapa w pamięci i przez USB).",
+                )
+            )
+        if n >= ANIMATION_FRAMES_EXTREME_WARN:
+            parts.append(
+                self._tr(
+                    f"Strongly consider ≤{ANIMATION_FRAMES_STRONG_WARN} frames for reliable playback.",
+                    f"Rozważ ≤{ANIMATION_FRAMES_STRONG_WARN} klatek dla stabilnego odtwarzania.",
+                )
+            )
+        has_eq = False
+        has_media = False
+        for s in self.theme_doc_model.get("stats", []):
+            if not isinstance(s, dict) or not bool(s.get("visible", True)):
+                continue
+            if str(s.get("display", "")).strip().lower() == "equalizer":
+                has_eq = True
+            src = str(s.get("source", "")).strip()
+            if src.startswith("media_"):
+                has_media = True
+        for im in self.theme_doc_model.get("images", []):
+            if not isinstance(im, dict) or not bool(im.get("visible", True)):
+                continue
+            if str(im.get("source", "")).strip() in {"media_cover", "media_video_frame"}:
+                has_media = True
+        if has_eq or has_media:
+            parts.append(
+                self._tr(
+                    "Animated background + live EQ/media refreshes the USB overlay often. If motion stutters on the LCD, "
+                    "lower FPS, raise ms per frame, or simplify overlay widgets.",
+                    "Tło animowane + na żywo EQ/media często odświeża nakładkę USB. Jeśli obraz się tnie, zmniejsz FPS, "
+                    "zwiększ ms na klatkę lub uprość widżety na nakładce.",
+                )
+            )
+        self.animation_performance_hint_label.setText("\n".join(parts) if parts else "")
+
+    def _set_animation_worker_state(self, key: str, label: str | None) -> None:
+        if label:
+            self._animation_worker_states[key] = label
+        else:
+            self._animation_worker_states.pop(key, None)
+        self._refresh_animation_worker_status()
+
+    def _refresh_animation_worker_status(self) -> None:
+        if not hasattr(self, "animation_worker_status_label"):
+            return
+        active = list(self._animation_worker_states.values())
+        if not active:
+            self.animation_worker_status_label.setText(self._tr("Workers: idle", "Zadania: bezczynne"))
+            self.animation_worker_status_label.setToolTip("")
+            return
+        text = self._tr("Working: ", "Praca: ") + ", ".join(active[:2])
+        if len(active) > 2:
+            text += f" +{len(active) - 2}"
+        self.animation_worker_status_label.setText(text)
+        self.animation_worker_status_label.setToolTip("\n".join(active))
+
+    def _selected_animation_rows(self, *, fallback_current: bool = True, fallback_all: bool = False) -> list[int]:
+        controller = self._animation_controller()
+        seq = controller.normalize() if controller is not None else None
+        count = seq.frame_count if seq is not None else 0
+        rows = sorted({i.row() for i in self.bg_animation_list.selectedIndexes() if 0 <= i.row() < count})
+        if not rows and fallback_current:
+            row = self.bg_animation_list.currentRow()
+            if 0 <= row < count:
+                rows = [row]
+        if not rows and fallback_all and count:
+            rows = list(range(count))
+        return rows
+
+    def _current_animation_loop_range(self) -> tuple[int, int] | None:
+        controller = self._animation_controller()
+        if controller is None:
+            return None
+        seq = controller.normalize()
+        if seq.loop_start is None or seq.loop_end is None:
+            return None
+        return seq.loop_start, seq.loop_end
+
+    def set_animation_timeline_zoom(self, text: str) -> None:
+        try:
+            zoom = max(0.6, float(str(text).strip().rstrip("%")) / 100.0)
+        except Exception:
+            zoom = 1.0
+        if hasattr(self, "bg_animation_timeline"):
+            self.bg_animation_timeline.set_zoom(zoom)
+        self._scroll_animation_timeline_to_playhead()
+
+    def scroll_animation_timeline_to_start(self) -> None:
+        scroll = getattr(self, "bg_animation_timeline_scroll", None)
+        if scroll is None:
+            return
+        scroll.horizontalScrollBar().setValue(scroll.horizontalScrollBar().minimum())
+        if hasattr(self, "bg_animation_list") and self.bg_animation_list.count() > 0:
+            self.select_animation_frame(0)
+
+    def scroll_animation_timeline_to_end(self) -> None:
+        scroll = getattr(self, "bg_animation_timeline_scroll", None)
+        if scroll is None:
+            return
+        scroll.horizontalScrollBar().setValue(scroll.horizontalScrollBar().maximum())
+        if hasattr(self, "bg_animation_list") and self.bg_animation_list.count() > 0:
+            self.select_animation_frame(self.bg_animation_list.count() - 1)
+
+    def _animation_timeline_zoom_values(self) -> list[str]:
+        if not hasattr(self, "animation_timeline_zoom_combo"):
+            return []
+        return [self.animation_timeline_zoom_combo.itemText(i) for i in range(self.animation_timeline_zoom_combo.count())]
+
+    def zoom_animation_timeline_in(self) -> None:
+        values = self._animation_timeline_zoom_values()
+        if not values:
+            return
+        current = self.animation_timeline_zoom_combo.currentIndex()
+        self.animation_timeline_zoom_combo.setCurrentIndex(min(len(values) - 1, current + 1))
+
+    def zoom_animation_timeline_out(self) -> None:
+        values = self._animation_timeline_zoom_values()
+        if not values:
+            return
+        current = self.animation_timeline_zoom_combo.currentIndex()
+        self.animation_timeline_zoom_combo.setCurrentIndex(max(0, current - 1))
+
+    def select_all_animation_frames(self) -> None:
+        if not hasattr(self, "bg_animation_list") or self.bg_animation_list.count() <= 0:
+            return
+        self._set_animation_frame_selection(list(range(self.bg_animation_list.count())))
+
+    def select_animation_range_between_edges(self) -> None:
+        if not hasattr(self, "bg_animation_list") or self.bg_animation_list.count() <= 0:
+            return
+        rows = sorted({i.row() for i in self.bg_animation_list.selectedIndexes()})
+        if len(rows) < 2:
+            current = self.bg_animation_list.currentRow()
+            if current < 0:
+                return
+            rows = [current]
+        if len(rows) == 1:
+            self._set_animation_frame_selection(rows)
+            return
+        self._set_animation_frame_selection(list(range(rows[0], rows[-1] + 1)))
+
+    def invert_animation_frame_selection(self) -> None:
+        if not hasattr(self, "bg_animation_list") or self.bg_animation_list.count() <= 0:
+            return
+        selected = {i.row() for i in self.bg_animation_list.selectedIndexes()}
+        inverted = [row for row in range(self.bg_animation_list.count()) if row not in selected]
+        self._set_animation_frame_selection(inverted)
+
+    def clear_animation_frame_selection(self) -> None:
+        self._set_animation_frame_selection([])
+
+    def set_animation_loop_from_selection(self) -> None:
+        controller = self._animation_controller()
+        if controller is None or not hasattr(self, "bg_animation_list"):
+            return
+        rows = sorted({i.row() for i in self.bg_animation_list.selectedIndexes()})
+        if not rows:
+            row = self.bg_animation_list.currentRow()
+            if row >= 0:
+                rows = [row]
+        if not rows:
+            return
+        self.push_designer_history()
+        seq = controller.set_loop_range(rows[0], rows[-1])
+        self.write_designer_to_json()
+        self._refresh_animation_controls()
+        self._refresh_animation_frame_list()
+        loop_start = seq.loop_start if seq.loop_start is not None else rows[0]
+        loop_end = seq.loop_end if seq.loop_end is not None else rows[-1]
+        self.preview_info_label.setText(
+            self._tr(
+                f"Preview loop set from selection: {loop_start + 1}-{loop_end + 1}.",
+                f"Pętla podglądu ustawiona z zaznaczenia: {loop_start + 1}-{loop_end + 1}.",
+            )
+        )
+        self.schedule_preview_theme_doc()
+
+    def trim_animation_to_selection(self) -> None:
+        controller = self._animation_controller()
+        if controller is None or not hasattr(self, "bg_animation_list"):
+            return
+        seq = controller.normalize()
+        if not seq.frame_paths:
+            return
+        rows = sorted({i.row() for i in self.bg_animation_list.selectedIndexes()})
+        if not rows:
+            return
+        if len(rows) == seq.frame_count:
+            self.preview_info_label.setText(
+                self._tr("Trim skipped: all frames are selected.", "Przycinanie pominięte: zaznaczono wszystkie klatki.")
+            )
+            return
+        self.push_designer_history()
+        result = controller.keep_indices(rows)
+        self.write_designer_to_json()
+        self._refresh_animation_controls()
+        self._sync_designer_preview_policy()
+        self._refresh_animation_frame_list(preserve_selection=False)
+        self._set_animation_frame_selection(list(range(result.frame_count)))
+        self.preview_info_label.setText(
+            self._tr(
+                f"Trimmed sequence to {result.frame_count} selected frame(s). Asset files were not deleted.",
+                f"Przycięto sekwencję do {result.frame_count} zaznaczonych klat. Pliki assetów nie zostały usunięte.",
+            )
+        )
+        self.schedule_preview_theme_doc()
+
+    def _set_animation_frame_selection(self, rows: list[int]) -> None:
+        if not hasattr(self, "bg_animation_list"):
+            return
+        valid = sorted({int(row) for row in rows if 0 <= int(row) < self.bg_animation_list.count()})
+        self._designer_updating = True
+        try:
+            self.bg_animation_list.clearSelection()
+            for row in valid:
+                item = self.bg_animation_list.item(row)
+                if item is not None:
+                    item.setSelected(True)
+            if valid:
+                self.bg_animation_list.setCurrentRow(valid[-1])
+        finally:
+            self._designer_updating = False
+        if hasattr(self, "bg_animation_timeline"):
+            self.bg_animation_timeline.set_selection(valid, emit_signal=False)
+        self._refresh_animation_studio_preview()
+        self._update_animation_performance_hint()
+
+    def select_last_animation_frame(self) -> None:
+        if not hasattr(self, "bg_animation_list") or self.bg_animation_list.count() <= 0:
+            return
+        self.select_animation_frame(self.bg_animation_list.count() - 1)
+
+    def set_animation_loop_in(self) -> None:
+        self._set_animation_loop_edge("in")
+
+    def set_animation_loop_out(self) -> None:
+        self._set_animation_loop_edge("out")
+
+    def _set_animation_loop_edge(self, edge: str) -> None:
+        controller = self._animation_controller()
+        if controller is None:
+            return
+        seq = controller.normalize()
+        if not seq.frame_paths:
+            return
+        current = seq.current_frame
+        start = seq.loop_start if seq.loop_start is not None else 0
+        end = seq.loop_end if seq.loop_end is not None else seq.frame_count - 1
+        if edge == "in":
+            start = current
+        else:
+            end = current
+        self.push_designer_history()
+        seq = controller.set_loop_range(start, end)
+        self.write_designer_to_json()
+        self._refresh_animation_controls()
+        self._refresh_animation_frame_list()
+        loop_start = seq.loop_start if seq.loop_start is not None else 0
+        loop_end = seq.loop_end if seq.loop_end is not None else max(0, seq.frame_count - 1)
+        self.preview_info_label.setText(
+            self._tr(
+                f"Preview loop set to frames {loop_start + 1}-{loop_end + 1}.",
+                f"Pętla podglądu ustawiona na klatki {loop_start + 1}-{loop_end + 1}.",
+            )
+        )
+        self.schedule_preview_theme_doc()
+
+    def clear_animation_loop_range(self) -> None:
+        controller = self._animation_controller()
+        if controller is None:
+            return
+        seq = controller.normalize()
+        if seq.loop_start is None and seq.loop_end is None:
+            return
+        self.push_designer_history()
+        controller.clear_loop_range()
+        self.write_designer_to_json()
+        self._refresh_animation_controls()
+        self._refresh_animation_frame_list()
+        self.preview_info_label.setText(self._tr("Preview loop cleared.", "Wyczyszczono pętlę podglądu."))
+        self.schedule_preview_theme_doc()
+
+    def apply_bulk_animation_duration(self) -> None:
+        if self.theme_doc_model is None:
+            return
+        rows = self._selected_animation_rows(fallback_current=False)
+        if not rows:
+            QMessageBox.information(
+                self,
+                self._tr("Animation", "Animacja"),
+                self._tr(
+                    "Select one or more frames in the list (Ctrl/Shift+click).",
+                    "Zaznacz jedną lub więcej klatek na liście (Ctrl/Shift+klik).",
+                ),
+            )
+            return
+        controller = self._animation_controller()
+        if controller is None:
+            return
+        seq = controller.normalize()
+        if not seq.frame_paths:
+            return
+        ms = max(1, int(self.animation_bulk_duration_spin.value()))
+        self.push_designer_history()
+        controller.apply_duration(rows, ms)
+        self.write_designer_to_json()
+        self._refresh_animation_controls()
+        self._sync_designer_preview_policy()
+        self._refresh_animation_frame_list()
+        self.schedule_preview_theme_doc()
 
     def _theme_base_dir(self) -> Path:
         raw = self.theme_doc_path_edit.text().strip()
@@ -6764,6 +8296,12 @@ class TrofeoGui(QMainWindow):
             return
         label.setText("")
         label.setPixmap(pixmap.scaled(label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _empty_background_preview_caption(self) -> str:
+        return self._tr(
+            "No background preview. Select an image, animation frame, or generated background.",
+            "Brak podglądu tła. Wybierz obraz, klatkę animacji albo tło generowane.",
+        )
 
     def _current_media_dynamic_path(self, source: str = "media_cover") -> str:
         if not shutil.which("playerctl"):
@@ -6878,7 +8416,14 @@ class TrofeoGui(QMainWindow):
 
     def _run_theme_image_import(self, source_path: Path, *, asset_kind: str, button_text: str) -> Path | None:
         if not self._image_tools_available():
-            QMessageBox.warning(self, "Brak Pillow", "Moduł przygotowania obrazów nie jest dostępny.")
+            QMessageBox.warning(
+                self,
+                self._tr("Pillow not installed", "Brak Pillow"),
+                self._tr(
+                    "Image preparation is not available in this environment.",
+                    "Moduł przygotowania obrazów nie jest dostępny.",
+                ),
+            )
             return None
         out_path = self._suggest_theme_asset_output(source_path, asset_kind)
         dlg = ImagePrepDialog(
@@ -6909,22 +8454,38 @@ class TrofeoGui(QMainWindow):
         shutil.copy2(source_path, candidate)
         return candidate
 
-    def _current_animation_effect(self) -> dict[str, object]:
+    @classmethod
+    def _copy_animation_frame_asset_for_worker(
+        cls,
+        source_path: Path,
+        *,
+        target_dir: Path,
+        theme_stem: str,
+        base_dir: Path,
+        prefix: str,
+    ) -> str:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        stem = f"{theme_stem}_{prefix}_{source_path.stem}"
+        suffix = source_path.suffix.lower() or ".jpg"
+        candidate = target_dir / f"{stem}{suffix}"
+        idx = 2
+        while candidate.exists():
+            candidate = target_dir / f"{stem}_{idx}{suffix}"
+            idx += 1
+        shutil.copy2(source_path, candidate)
+        return cls._display_path_for_base(candidate, base_dir)
+
+    def _animation_controller(self) -> AnimationSequenceController | None:
         if self.theme_doc_model is None:
+            return None
+        return AnimationSequenceController(self.theme_doc_model)
+
+    def _current_animation_effect(self) -> dict[str, object]:
+        controller = self._animation_controller()
+        if controller is None:
             return {}
-        effects = self.theme_doc_model.setdefault("effects", {})
-        animation = effects.setdefault("animation", {})
-        if not isinstance(animation, dict):
-            animation = {}
-            effects["animation"] = animation
-        animation.setdefault("enabled", False)
-        animation.setdefault("use_as_background", True)
-        animation.setdefault("fps", 12.0)
-        animation.setdefault("current_frame", 0)
-        animation.setdefault("loop", True)
-        animation.setdefault("frame_paths", [])
-        animation.setdefault("frame_durations_ms", [])
-        return animation
+        controller.normalize()
+        return controller.animation()
 
     def _refresh_animation_controls(self) -> None:
         animation = self._current_animation_effect()
@@ -6947,7 +8508,7 @@ class TrofeoGui(QMainWindow):
             self.bg_animation_frame_spin.setMaximum(max(0, count - 1))
             self.bg_animation_frame_spin.setValue(current_frame)
             self.bg_animation_duration_spin.setValue(frame_durations[current_frame] if count and current_frame < len(frame_durations) else default_duration)
-            self.bg_animation_count_label.setText(f"{count} klatek")
+            self.bg_animation_count_label.setText(self._format_animation_frame_count(count))
         finally:
             self._designer_updating = False
         has_frames = count > 0
@@ -6972,22 +8533,50 @@ class TrofeoGui(QMainWindow):
         return raw
 
     def _collect_animation_frame_paths(self, sources: list[Path]) -> list[str]:
+        return self._collect_animation_frame_paths_for_worker(
+            sources,
+            target_dir=self._theme_assets_dir() / "animation_frames",
+            theme_stem=Path(self.theme_doc_path_edit.text() or "theme").stem,
+            base_dir=self._theme_base_dir(),
+        )
+
+    @staticmethod
+    def _display_path_for_base(path: Path, base_dir: Path) -> str:
+        try:
+            return str(path.resolve().relative_to(base_dir.resolve()))
+        except Exception:
+            return str(path.resolve())
+
+    @classmethod
+    def _collect_animation_frame_paths_for_worker(
+        cls,
+        sources: list[Path],
+        *,
+        target_dir: Path,
+        theme_stem: str,
+        base_dir: Path,
+    ) -> list[str]:
         copied_paths: list[str] = []
+        target_dir.mkdir(parents=True, exist_ok=True)
         if len(sources) == 1 and sources[0].suffix.lower() == ".zt":
             if extract_ttcr_zt_frames is None:
                 return []
-            target_dir = self._theme_assets_dir() / "animation_frames"
-            target_dir.mkdir(parents=True, exist_ok=True)
-            theme_stem = Path(self.theme_doc_path_edit.text() or "theme").stem
             frames = extract_ttcr_zt_frames(sources[0], target_dir, f"{theme_stem}_anim")
             for frame in frames:
-                copied_paths.append(self._theme_display_path(frame))
+                copied_paths.append(cls._display_path_for_base(frame, base_dir))
             return copied_paths
         for source in sources:
             if not source.exists():
                 continue
-            copied = self._copy_animation_frame_asset(source, prefix="anim")
-            copied_paths.append(self._theme_display_path(copied))
+            stem = f"{theme_stem}_anim_{source.stem}"
+            suffix = source.suffix.lower() or ".jpg"
+            candidate = target_dir / f"{stem}{suffix}"
+            idx = 2
+            while candidate.exists():
+                candidate = target_dir / f"{stem}_{idx}{suffix}"
+                idx += 1
+            shutil.copy2(source, candidate)
+            copied_paths.append(cls._display_path_for_base(candidate, base_dir))
         return copied_paths
 
     def _render_current_animation_frame_image(self) -> "Image.Image | None":
@@ -7012,13 +8601,17 @@ class TrofeoGui(QMainWindow):
         return out_path
 
     def _set_current_animation_frame(self, index: int, *, persist: bool, render_preview: bool = True) -> None:
-        animation = self._current_animation_effect()
-        frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
+        controller = self._animation_controller()
+        if controller is None:
+            self._refresh_animation_controls()
+            return
+        seq = controller.set_current_frame(index)
+        animation = controller.animation()
+        frame_paths = seq.frame_paths
         if not frame_paths:
             self._refresh_animation_controls()
             return
-        clamped = min(max(0, int(index)), len(frame_paths) - 1)
-        animation["current_frame"] = clamped
+        clamped = seq.current_frame
         self._designer_updating = True
         try:
             self.bg_animation_frame_spin.setValue(clamped)
@@ -7029,7 +8622,7 @@ class TrofeoGui(QMainWindow):
         self._set_image_preview_label(
             self.background_preview_label,
             self._current_animation_preview_path() if bool(animation.get("use_as_background", True)) else self.bg_path_edit.text(),
-            empty_text="Podgląd tła",
+            empty_text=self._empty_background_preview_caption(),
         )
         if persist:
             self.write_designer_to_json()
@@ -7042,39 +8635,302 @@ class TrofeoGui(QMainWindow):
             self.preview_theme_doc()
         elif hasattr(self, "preview_info_label") and bool(animation.get("enabled", False)):
             self.preview_info_label.setText(
-                f"Wybrano klatkę {clamped + 1}/{len(frame_paths)}. W trybie zwykłym pełny render uruchamiasz ręcznie."
+                self._tr(
+                    f"Selected frame {clamped + 1}/{len(frame_paths)}. In normal mode run full render manually.",
+                    f"Wybrano klatkę {clamped + 1}/{len(frame_paths)}. W trybie zwykłym pełny render uruchamiasz ręcznie.",
+                )
+            )
+        self._refresh_animation_studio_preview()
+        if hasattr(self, "bg_animation_timeline"):
+            self.bg_animation_timeline.set_playhead(clamped)
+        self._scroll_animation_timeline_to_playhead()
+
+    def _set_current_animation_frame_lightweight(self, index: int) -> None:
+        controller = self._animation_controller()
+        if controller is None:
+            return
+        seq = controller.set_current_frame(index)
+        animation = controller.animation()
+        if not seq.frame_paths:
+            return
+        clamped = seq.current_frame
+        self._designer_updating = True
+        try:
+            if hasattr(self, "bg_animation_frame_spin"):
+                self.bg_animation_frame_spin.setValue(clamped)
+            if hasattr(self, "bg_animation_duration_spin") and clamped < len(seq.frame_durations_ms):
+                self.bg_animation_duration_spin.setValue(seq.frame_durations_ms[clamped])
+            if hasattr(self, "bg_animation_list"):
+                self.bg_animation_list.blockSignals(True)
+                self.bg_animation_list.setCurrentRow(clamped)
+                self.bg_animation_list.blockSignals(False)
+        finally:
+            self._designer_updating = False
+        self._set_image_preview_label(
+            self.background_preview_label,
+            self._current_animation_preview_path() if bool(animation.get("use_as_background", True)) else self.bg_path_edit.text(),
+            empty_text=self._empty_background_preview_caption(),
+        )
+        self._refresh_animation_studio_preview()
+        if hasattr(self, "bg_animation_timeline"):
+            self.bg_animation_timeline.set_playhead(clamped)
+        self._scroll_animation_timeline_to_playhead()
+
+    def _scroll_animation_timeline_to_playhead(self) -> None:
+        scroll = getattr(self, "bg_animation_timeline_scroll", None)
+        tw = getattr(self, "bg_animation_timeline", None)
+        if scroll is None or tw is None:
+            return
+        cx = tw.playhead_center_x()
+        if cx is None:
+            return
+        vp = max(1, scroll.viewport().width())
+        hb = scroll.horizontalScrollBar()
+        target = max(0, int(cx - vp // 2))
+        target = min(hb.maximum(), target)
+        hb.setValue(target)
+        if hb.maximum() == 0 and tw.width() > vp:
+            QTimer.singleShot(0, lambda: self._scroll_animation_timeline_to_playhead())
+
+    def _maybe_warn_animation_frame_count(self, count: int) -> None:
+        if count < ANIMATION_FRAMES_SOFT_WARN:
+            return
+        title = self._tr("Animation", "Animacja")
+        if count >= ANIMATION_FRAMES_EXTREME_WARN:
+            QMessageBox.warning(
+                self,
+                title,
+                self._tr(
+                    f"You have {count} frames. The LCD driver keeps each bitmap in memory and sends full frames over USB — "
+                    f"counts above ~{ANIMATION_FRAMES_STRONG_WARN} often cause stutter, long applies, or device errors. "
+                    f"Consider fewer frames, lower resolution, or merging holds.",
+                    f"Masz {count} klatek. Sterownik LCD trzyma każdą bitmapę w pamięci i wysyła pełne klatki po USB — "
+                    f"powyżej ~{ANIMATION_FRAMES_STRONG_WARN} często są przycięcia, długie „Zastosuj” lub błędy urządzenia. "
+                    f"Rozważ mniej klatek, niższą rozdzielczość lub dłuższe ujęcia statyczne.",
+                ),
+            )
+        elif count >= ANIMATION_FRAMES_STRONG_WARN:
+            QMessageBox.information(
+                self,
+                title,
+                self._tr(
+                    f"{count} frames is heavy for many LCD setups. If playback stutters, reduce frame count or slow timing.",
+                    f"{count} klatek to dużo dla wielu konfiguracji LCD. Jeśli odtwarzanie się przycina, zmniejsz liczbę klatek lub wydłuż czasy.",
+                ),
             )
 
-    def _refresh_animation_frame_list(self) -> None:
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # type: ignore[override]
+        from PySide6.QtGui import QKeyEvent
+
+        if event.type() == QEvent.Type.Wheel and (
+            watched is getattr(self, "bg_animation_timeline", None)
+            or watched is getattr(getattr(self, "bg_animation_timeline_scroll", None), "viewport", lambda: None)()
+        ):
+            wheel = event
+            if wheel.modifiers() & Qt.ControlModifier:
+                delta = wheel.angleDelta().y() or wheel.angleDelta().x()
+                if delta > 0:
+                    self.zoom_animation_timeline_in()
+                elif delta < 0:
+                    self.zoom_animation_timeline_out()
+                return True
+            scroll = getattr(self, "bg_animation_timeline_scroll", None)
+            if scroll is not None:
+                delta = wheel.angleDelta().x() or wheel.angleDelta().y()
+                if delta:
+                    hb = scroll.horizontalScrollBar()
+                    hb.setValue(max(hb.minimum(), min(hb.maximum(), hb.value() - int(delta))))
+                    return True
+
+        if watched is getattr(self, "bg_animation_list", None) and event.type() == QEvent.Type.KeyPress:
+            ke = event  # type: QKeyEvent
+            if ke.key() == Qt.Key.Key_Left:
+                row = self.bg_animation_list.currentRow()
+                self.select_animation_frame(max(0, row - 1))
+                return True
+            if ke.key() == Qt.Key.Key_Right:
+                row = self.bg_animation_list.currentRow()
+                self.select_animation_frame(min(self.bg_animation_list.count() - 1, row + 1))
+                return True
+        return super().eventFilter(watched, event)
+
+    def _refresh_animation_frame_list(self, *, preserve_selection: bool = True) -> None:
         if not hasattr(self, "bg_animation_list"):
             return
         animation = self._current_animation_effect()
         frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
         frame_durations = animation.get("frame_durations_ms", []) if isinstance(animation.get("frame_durations_ms", []), list) else []
         current = min(max(0, int(animation.get("current_frame", 0))), max(0, len(frame_paths) - 1))
+        prev_sel: set[int] = set()
+        if preserve_selection:
+            prev_sel = {idx.row() for idx in self.bg_animation_list.selectedIndexes()}
         self.bg_animation_list.blockSignals(True)
         self.bg_animation_list.clear()
+        thumbnail_jobs: list[dict[str, Any]] = []
+        thumbnail_job_keys: set[tuple[str, int]] = set()
         for idx, raw in enumerate(frame_paths):
             resolved = self._resolve_theme_asset_path(str(raw))
             duration_ms = frame_durations[idx] if idx < len(frame_durations) else max(1, int(round(1000.0 / max(1.0, float(animation.get("fps", 12.0))))))
             item = QListWidgetItem(f"{idx + 1:03d}  {Path(str(raw)).name}  ·  {duration_ms} ms")
             item.setData(Qt.UserRole, str(raw))
             if resolved.exists():
-                pixmap = QPixmap(str(resolved))
-                if not pixmap.isNull():
-                    item.setIcon(QIcon(pixmap.scaled(96, 54, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                cache_key = self._animation_thumbnail_cache_key(resolved)
+                cached = self._image_thumbnail_cache.get(cache_key)
+                if len(frame_paths) <= ANIMATION_LIST_THUMB_MAX_FRAMES and cached is not None and not cached.isNull():
+                    item.setIcon(QIcon(cached))
+                if cached is None or cached.isNull():
+                    should_build_for_list = len(frame_paths) <= ANIMATION_LIST_THUMB_MAX_FRAMES
+                    should_build_for_timeline = len(frame_paths) <= ANIMATION_TIMELINE_THUMB_MAX_FRAMES
+                    if (should_build_for_list or should_build_for_timeline) and cache_key not in thumbnail_job_keys:
+                        thumbnail_job_keys.add(cache_key)
+                        thumbnail_jobs.append(
+                            {
+                                "row": idx,
+                                "raw": str(raw),
+                                "path": str(resolved),
+                                "mtime": cache_key[1],
+                            }
+                        )
             item.setToolTip(str(resolved))
             self.bg_animation_list.addItem(item)
         if frame_paths:
+            valid_sel = {r for r in prev_sel if preserve_selection and 0 <= r < len(frame_paths)}
+            if valid_sel:
+                for r in sorted(valid_sel):
+                    it = self.bg_animation_list.item(r)
+                    if it is not None:
+                        it.setSelected(True)
             self.bg_animation_list.setCurrentRow(current)
         self.bg_animation_list.blockSignals(False)
         if hasattr(self, "bg_animation_timeline"):
-            self.bg_animation_timeline.set_timeline(frame_durations[: len(frame_paths)], current)
+            sel_list = sorted({i.row() for i in self.bg_animation_list.selectedIndexes()})
+            if not sel_list and frame_paths:
+                sel_list = [current]
+            timeline_thumbnails: dict[int, QPixmap] = {}
+            for idx, raw in enumerate(frame_paths):
+                resolved = self._resolve_theme_asset_path(str(raw))
+                cache_key = self._animation_thumbnail_cache_key(resolved)
+                cached = self._image_thumbnail_cache.get(cache_key)
+                if cached is not None and not cached.isNull():
+                    timeline_thumbnails[idx] = cached
+                elif (
+                    resolved.exists()
+                    and len(frame_paths) <= ANIMATION_TIMELINE_THUMB_MAX_FRAMES
+                    and cache_key not in thumbnail_job_keys
+                ):
+                    thumbnail_job_keys.add(cache_key)
+                    thumbnail_jobs.append(
+                        {
+                            "row": idx,
+                            "raw": str(raw),
+                            "path": str(resolved),
+                            "mtime": cache_key[1],
+                        }
+                    )
+            self.bg_animation_timeline.set_timeline(
+                frame_durations[: len(frame_paths)],
+                current,
+                selection=sel_list,
+                playhead=current,
+                loop_range=self._current_animation_loop_range(),
+                thumbnails=timeline_thumbnails,
+            )
+        self._scroll_animation_timeline_to_playhead()
         has_selection = self.bg_animation_list.currentRow() >= 0
+        duplicate_busy = bool(getattr(self, "_animation_duplicate_in_flight", False))
+        stabilize_busy = bool(getattr(self, "_animation_stabilize_in_flight", False))
         self.bg_animation_remove_btn.setEnabled(has_selection)
-        self.bg_animation_duplicate_btn.setEnabled(has_selection)
+        self.bg_animation_duplicate_btn.setEnabled(has_selection and not duplicate_busy)
+        if hasattr(self, "bg_animation_hold_repeat_btn"):
+            self.bg_animation_hold_repeat_btn.setEnabled(has_selection)
+        has_frames = bool(frame_paths)
+        export_busy = bool(getattr(self, "_animation_export_in_flight", False))
+        if hasattr(self, "bg_animation_export_btn"):
+            self.bg_animation_export_btn.setEnabled(has_frames and not export_busy)
+        if hasattr(self, "animation_export_loop_btn"):
+            self.animation_export_loop_btn.setEnabled(
+                has_frames and self._current_animation_loop_range() is not None and not export_busy
+            )
+        if hasattr(self, "animation_export_selection_btn"):
+            self.animation_export_selection_btn.setEnabled(has_selection and not export_busy)
+        can_montage = len(frame_paths) > 1
+        if hasattr(self, "bg_animation_reverse_btn"):
+            self.bg_animation_reverse_btn.setEnabled(can_montage)
+        if hasattr(self, "bg_animation_pingpong_btn"):
+            self.bg_animation_pingpong_btn.setEnabled(can_montage)
+        if hasattr(self, "bg_animation_normalize_duration_btn"):
+            self.bg_animation_normalize_duration_btn.setEnabled(has_frames)
+        if hasattr(self, "animation_stabilize_btn"):
+            self.animation_stabilize_btn.setEnabled(len(frame_paths) > 1 and not stabilize_busy)
+        if hasattr(self, "animation_stabilize_mode_combo"):
+            self.animation_stabilize_mode_combo.setEnabled(len(frame_paths) > 1 and not stabilize_busy)
+        if hasattr(self, "animation_select_range_btn"):
+            self.animation_select_range_btn.setEnabled(has_frames)
+        if hasattr(self, "animation_invert_selection_btn"):
+            self.animation_invert_selection_btn.setEnabled(has_frames)
+        if hasattr(self, "animation_clear_selection_btn"):
+            self.animation_clear_selection_btn.setEnabled(has_frames)
+        if hasattr(self, "animation_loop_in_btn"):
+            self.animation_loop_in_btn.setEnabled(has_frames)
+        if hasattr(self, "animation_loop_out_btn"):
+            self.animation_loop_out_btn.setEnabled(has_frames)
+        if hasattr(self, "animation_loop_clear_btn"):
+            self.animation_loop_clear_btn.setEnabled(self._current_animation_loop_range() is not None)
+        if hasattr(self, "animation_loop_label"):
+            loop_range = self._current_animation_loop_range()
+            if loop_range is None:
+                self.animation_loop_label.setText(self._tr("Loop: full", "Pętla: całość"))
+            else:
+                self.animation_loop_label.setText(
+                    self._tr(
+                        f"Loop: {loop_range[0] + 1}-{loop_range[1] + 1}",
+                        f"Pętla: {loop_range[0] + 1}-{loop_range[1] + 1}",
+                    )
+                )
+        if hasattr(self, "bg_animation_repeat_all_btn"):
+            self.bg_animation_repeat_all_btn.setEnabled(has_frames and not duplicate_busy)
         self.bg_animation_up_btn.setEnabled(has_selection and self.bg_animation_list.currentRow() > 0)
         self.bg_animation_down_btn.setEnabled(has_selection and self.bg_animation_list.currentRow() < len(frame_paths) - 1)
+        self._start_animation_thumbnail_worker(thumbnail_jobs)
+        self._refresh_animation_studio_preview()
+
+    def _animation_thumbnail_cache_key(self, path: Path) -> tuple[str, int]:
+        try:
+            return str(path.resolve()), int(path.stat().st_mtime_ns)
+        except Exception:
+            return str(path.resolve()), 0
+
+    def _start_animation_thumbnail_worker(self, jobs: list[dict[str, Any]]) -> None:
+        self._animation_thumbnail_generation += 1
+        generation = self._animation_thumbnail_generation
+        if not jobs:
+            self._set_animation_worker_state("thumbnails", None)
+            return
+        self._set_animation_worker_state(
+            "thumbnails",
+            self._tr(f"building {len(jobs)} thumbnails", f"miniatury: {len(jobs)}"),
+        )
+
+        def worker() -> None:
+            results: list[dict[str, Any]] = []
+            for job in jobs:
+                path = Path(str(job.get("path", ""))).expanduser()
+                image = QImage(str(path))
+                if image.isNull():
+                    continue
+                scaled = image.scaled(96, 54, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                results.append(
+                    {
+                        "row": int(job.get("row", -1)),
+                        "raw": str(job.get("raw", "")),
+                        "path": str(path.resolve()),
+                        "mtime": int(job.get("mtime", 0)),
+                        "image": scaled,
+                    }
+                )
+            self.api_result.emit(f"animation-thumbnails::{generation}", True, {"result": {"items": results}})
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _update_animation_preview_timer(self) -> None:
         animation = self._current_animation_effect()
@@ -7082,7 +8938,15 @@ class TrofeoGui(QMainWindow):
         frame_durations = animation.get("frame_durations_ms", []) if isinstance(animation.get("frame_durations_ms", []), list) else []
         should_run = (
             bool(self._animation_preview_active)
-            and self._animation_edit_mode_enabled()
+            and (
+                self._animation_edit_mode_enabled()
+                or (
+                    hasattr(self, "main_tabs")
+                    and hasattr(self, "studio_sections_tabs")
+                    and self.main_tabs.currentIndex() == 1
+                    and self.studio_sections_tabs.currentIndex() == 2
+                )
+            )
             and bool(animation.get("enabled", False))
             and bool(animation.get("use_as_background", True))
             and len(frame_paths) > 1
@@ -7100,109 +8964,720 @@ class TrofeoGui(QMainWindow):
         else:
             self.animation_preview_timer.stop()
         if hasattr(self, "bg_animation_play_btn"):
-            self.bg_animation_play_btn.setText("⏸ Pauza" if should_run else "▶ Odtwórz")
+            self.bg_animation_play_btn.setText(
+                self._tr("⏸ Pause", "⏸ Pauza") if should_run else self._tr("▶ Play", "▶ Odtwórz")
+            )
 
     def append_background_animation_frames(self) -> None:
+        if getattr(self, "_animation_import_in_flight", False):
+            return
         if self.theme_doc_model is None:
             self.reload_designer_from_json()
             if self.theme_doc_model is None:
                 return
         selected, _ = QFileDialog.getOpenFileNames(
             self,
-            "Dodaj klatki animacji",
+            self._tr("Add animation frames", "Dodaj klatki animacji"),
             str(Path.cwd()),
-            "Animacje/ramki (*.zt *.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
+            self._tr(
+                "Animation frames (*.zip *.zt *.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
+                "Animacje/ramki (*.zip *.zt *.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
+            ),
         )
         if not selected:
             return
         sources = [Path(item).expanduser() for item in selected]
-        copied_paths = self._collect_animation_frame_paths(sources)
-        if not copied_paths:
-            QMessageBox.warning(self, "Animacja", "Nie udało się dodać nowych klatek.")
-            return
-        self.push_designer_history()
-        animation = self._current_animation_effect()
-        frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
-        frame_durations = animation.get("frame_durations_ms", []) if isinstance(animation.get("frame_durations_ms", []), list) else []
-        default_duration = max(1, int(round(1000.0 / max(1.0, float(animation.get("fps", 12.0))))))
-        frame_paths.extend(copied_paths)
-        frame_durations.extend([default_duration] * len(copied_paths))
-        animation["frame_paths"] = frame_paths
-        animation["frame_durations_ms"] = frame_durations
-        animation["enabled"] = True
-        if len(frame_paths) == len(copied_paths):
-            animation["current_frame"] = 0
-        self.write_designer_to_json()
-        self._refresh_animation_controls()
-        self._sync_designer_preview_policy()
-        self._animation_preview_active = False
-        self._refresh_animation_frame_list()
-        self._rebuild_theme_asset_gallery()
-        self.preview_info_label.setText(f"Dodano {len(copied_paths)} klatek animacji.")
-        self.schedule_preview_theme_doc()
+        self._start_animation_frame_import(sources, mode="append")
 
-    def duplicate_selected_animation_frame(self) -> None:
+    def duplicate_selected_animation_frames_bulk(self) -> None:
+        if getattr(self, "_animation_duplicate_in_flight", False):
+            return
         animation = self._current_animation_effect()
         frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
         frame_durations = animation.get("frame_durations_ms", []) if isinstance(animation.get("frame_durations_ms", []), list) else []
         if not frame_paths:
             return
-        row = self.bg_animation_list.currentRow()
-        if row < 0 or row >= len(frame_paths):
+        times = max(1, int(self.animation_duplicate_repeat_spin.value()))
+        rows = sorted({idx.row() for idx in self.bg_animation_list.selectedIndexes()})
+        if not rows:
+            row = self.bg_animation_list.currentRow()
+            if row >= 0:
+                rows = [row]
+        if not rows:
+            QMessageBox.information(
+                self,
+                self._tr("Animation", "Animacja"),
+                self._tr(
+                    "Select frames in the list (Ctrl/Shift+click).",
+                    "Zaznacz klatki na liście (Ctrl/Shift+klik).",
+                ),
+            )
             return
-        source = self._resolve_theme_asset_path(str(frame_paths[row]))
-        if not source.exists():
-            QMessageBox.warning(self, "Animacja", f"Nie znaleziono klatki źródłowej:\n{source}")
-            return
-        copied = self._copy_animation_frame_asset(source, prefix="dup")
-        duration_ms = frame_durations[row] if row < len(frame_durations) else max(1, int(self.bg_animation_duration_spin.value()))
-        self.push_designer_history()
-        frame_paths.insert(row + 1, self._theme_display_path(copied))
-        frame_durations.insert(row + 1, duration_ms)
-        animation["frame_paths"] = frame_paths
-        animation["frame_durations_ms"] = frame_durations
-        animation["current_frame"] = row + 1
-        self.write_designer_to_json()
-        self._refresh_animation_controls()
-        self._sync_designer_preview_policy()
-        self.bg_animation_list.setCurrentRow(row + 1)
-        self._rebuild_theme_asset_gallery()
-        self.preview_info_label.setText("Zduplikowano klatkę animacji.")
-        self.schedule_preview_theme_doc()
+        default_ms = max(1, int(round(1000.0 / max(1.0, float(animation.get("fps", 12.0))))))
+        if len(frame_durations) < len(frame_paths):
+            frame_durations.extend([default_ms] * (len(frame_paths) - len(frame_durations)))
+        snapshot_paths = [str(frame_paths[r]) for r in rows]
+        snapshot_durs = [int(frame_durations[r]) if r < len(frame_durations) else default_ms for r in rows]
+        for sp in snapshot_paths:
+            src = self._resolve_theme_asset_path(sp)
+            if not src.exists():
+                QMessageBox.warning(
+                    self,
+                    self._tr("Animation", "Animacja"),
+                    self._tr("Frame file not found:\n{path}", "Nie znaleziono klatki:\n{path}").format(path=src),
+                )
+                return
+        insert_at = rows[-1] + 1
+        jobs = [
+            {"source": str(self._resolve_theme_asset_path(sp)), "duration_ms": int(d)}
+            for sp, d in zip(snapshot_paths, snapshot_durs, strict=True)
+        ]
+        self._start_animation_duplicate_worker(jobs, times=times, insert_at=insert_at, prefix="dup", mode="selection")
 
-    def insert_blank_animation_frame(self) -> None:
+    def _start_animation_duplicate_worker(
+        self,
+        jobs: list[dict[str, Any]],
+        *,
+        times: int,
+        insert_at: int,
+        prefix: str,
+        mode: str,
+    ) -> None:
+        if not jobs:
+            return
+        target_dir = self._theme_assets_dir() / "animation_frames"
+        theme_stem = Path(self.theme_doc_path_edit.text() or "theme").stem or "theme"
+        base_dir = self._theme_base_dir()
+        self._set_animation_duplicate_busy(True)
+        self.preview_info_label.setText(
+            self._tr(
+                f"Duplicating animation frames in background ({len(jobs)} ×{times}).",
+                f"Duplikuję klatki animacji w tle ({len(jobs)} ×{times}).",
+            )
+        )
+
+        def worker() -> None:
+            try:
+                copied: list[dict[str, Any]] = []
+                for _ in range(max(1, int(times))):
+                    for job in jobs:
+                        source = Path(str(job.get("source", ""))).expanduser()
+                        copied.append(
+                            {
+                                "path": self._copy_animation_frame_asset_for_worker(
+                                    source,
+                                    target_dir=target_dir,
+                                    theme_stem=theme_stem,
+                                    base_dir=base_dir,
+                                    prefix=prefix,
+                                ),
+                                "duration_ms": int(job.get("duration_ms", 83)),
+                            }
+                        )
+                self.api_result.emit(
+                    "animation-duplicate",
+                    True,
+                    {
+                        "result": {
+                            "mode": mode,
+                            "insert_at": int(insert_at),
+                            "source_count": len(jobs),
+                            "times": max(1, int(times)),
+                            "frames": copied,
+                        }
+                    },
+                )
+            except Exception as exc:
+                self.api_result.emit("animation-duplicate", False, str(exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_animation_duplicate(self, result: dict[str, Any]) -> None:
         animation = self._current_animation_effect()
         frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
         frame_durations = animation.get("frame_durations_ms", []) if isinstance(animation.get("frame_durations_ms", []), list) else []
+        frames = result.get("frames", [])
+        if not isinstance(frames, list) or not frames:
+            return
+        insert_at = min(max(0, int(result.get("insert_at", len(frame_paths)))), len(frame_paths))
+        self.push_designer_history()
+        pos = insert_at
+        for entry in frames:
+            if not isinstance(entry, dict):
+                continue
+            path = str(entry.get("path", "")).strip()
+            if not path:
+                continue
+            frame_paths.insert(pos, path)
+            frame_durations.insert(pos, max(1, int(entry.get("duration_ms", 83))))
+            pos += 1
+        animation["frame_paths"] = frame_paths
+        animation["frame_durations_ms"] = frame_durations[: len(frame_paths)]
+        animation["current_frame"] = min(max(insert_at, pos - 1), max(0, len(frame_paths) - 1))
+        self.write_designer_to_json()
+        self._refresh_animation_controls()
+        self._sync_designer_preview_policy()
+        self._refresh_animation_frame_list()
+        self.bg_animation_list.setCurrentRow(int(animation["current_frame"]))
+        self._rebuild_theme_asset_gallery()
+        self._maybe_warn_animation_frame_count(len(frame_paths))
+        source_count = int(result.get("source_count", 0) or 0)
+        times = int(result.get("times", 1) or 1)
+        mode = str(result.get("mode", "selection"))
+        if mode == "sequence":
+            self.preview_info_label.setText(
+                self._tr(
+                    f"Appended full sequence ×{times} ({source_count} frames each).",
+                    f"Dopisano całą sekwencję ×{times} ({source_count} klat.).",
+                )
+            )
+        else:
+            self.preview_info_label.setText(
+                self._tr(
+                    f"Duplicated {source_count} frame(s) ×{times}.",
+                    f"Zduplikowano {source_count} klat. ×{times}.",
+                )
+            )
+        self.schedule_preview_theme_doc()
+
+    def _set_animation_duplicate_busy(self, busy: bool) -> None:
+        self._animation_duplicate_in_flight = bool(busy)
+        self._set_animation_worker_state(
+            "duplicate",
+            self._tr("duplicating frames", "duplikowanie klatek") if busy else None,
+        )
+        for button in (getattr(self, "bg_animation_duplicate_btn", None), getattr(self, "bg_animation_repeat_all_btn", None)):
+            if button is not None:
+                button.setEnabled(not busy)
+        if hasattr(self, "bg_animation_duplicate_btn"):
+            self.bg_animation_duplicate_btn.setText(
+                self._tr("Duplicating…", "Duplikuję…") if busy else self._tr("Duplicate asset", "Duplikuj asset")
+            )
+
+    def stabilize_animation_frames(self) -> None:
+        if getattr(self, "_animation_stabilize_in_flight", False):
+            return
+        animation = self._current_animation_effect()
+        frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
+        if len(frame_paths) < 2:
+            QMessageBox.information(
+                self,
+                self._tr("Animation stabilization", "Stabilizacja animacji"),
+                self._tr("At least two animation frames are required.", "Wymagane są co najmniej dwie klatki animacji."),
+            )
+            return
+        rows = self._selected_animation_rows(fallback_current=False, fallback_all=False)
+        if len(rows) < 2:
+            rows = list(range(len(frame_paths)))
+        current_row = self.bg_animation_list.currentRow() if hasattr(self, "bg_animation_list") else -1
+        if current_row in rows:
+            rows = [current_row] + [row for row in rows if row != current_row]
+        jobs: list[dict[str, Any]] = []
+        for row in rows:
+            raw = str(frame_paths[row])
+            resolved = self._resolve_theme_asset_path(raw)
+            if not resolved.exists():
+                QMessageBox.warning(
+                    self,
+                    self._tr("Animation stabilization", "Stabilizacja animacji"),
+                    self._tr("Frame file not found:\n{path}", "Nie znaleziono klatki:\n{path}").format(path=resolved),
+                )
+                return
+            jobs.append({"index": int(row), "raw": raw, "source": str(resolved)})
+        target_dir = self._theme_assets_dir() / "animation_frames"
+        theme_stem = Path(self.theme_doc_path_edit.text() or "theme").stem or "theme"
+        base_dir = self._theme_base_dir()
+        mode = "safe_translation"
+        combo = getattr(self, "animation_stabilize_mode_combo", None)
+        if combo is not None and isinstance(combo.currentData(), str):
+            mode = str(combo.currentData())
+        self._set_animation_stabilize_busy(True)
+        self.preview_info_label.setText(
+            self._tr(
+                f"Stabilizing {len(jobs)} frame(s) in background with OpenCV ({mode}).",
+                f"Stabilizuję {len(jobs)} klat. w tle przez OpenCV ({mode}).",
+            )
+        )
+
+        def worker() -> None:
+            try:
+                result = self._stabilize_animation_frames_for_worker(
+                    jobs,
+                    target_dir=target_dir,
+                    theme_stem=theme_stem,
+                    base_dir=base_dir,
+                    mode=mode,
+                )
+                self.api_result.emit("animation-stabilize", True, {"result": result})
+            except Exception as exc:
+                self.api_result.emit("animation-stabilize", False, str(exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @classmethod
+    def _stabilize_animation_frames_for_worker(
+        cls,
+        jobs: list[dict[str, Any]],
+        *,
+        target_dir: Path,
+        theme_stem: str,
+        base_dir: Path,
+        mode: str = "auto_affine",
+    ) -> dict[str, Any]:
+        try:
+            import cv2  # type: ignore[import-not-found]
+            import numpy as np  # type: ignore[import-not-found]
+        except Exception as exc:
+            raise RuntimeError(
+                "OpenCV is required for stabilization. Install it in the GUI venv: "
+                ".venv-gui/bin/pip install opencv-python-headless"
+            ) from exc
+        if len(jobs) < 2:
+            raise ValueError("At least two frames are required for stabilization.")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        safe_stem = "".join(ch.lower() if ch.isalnum() else "_" for ch in theme_stem).strip("_") or "theme"
+        ref_job = jobs[0]
+        ref_path = Path(str(ref_job.get("source", "")))
+        ref = cv2.imread(str(ref_path), cv2.IMREAD_UNCHANGED)
+        if ref is None:
+            raise ValueError(f"Could not read reference frame: {ref_path}")
+        ref_gray = cls._opencv_stabilize_gray(ref, cv2)
+        replacements: list[dict[str, Any]] = []
+        shifts: list[dict[str, Any]] = []
+        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 160, 1e-6)
+        mode_order = cls._opencv_stabilize_mode_order(mode)
+        failures = 0
+        fallback_count = 0
+        rejected_count = 0
+        for job in jobs:
+            idx = int(job.get("index", -1))
+            source = Path(str(job.get("source", "")))
+            frame = cv2.imread(str(source), cv2.IMREAD_UNCHANGED)
+            if frame is None:
+                raise ValueError(f"Could not read frame: {source}")
+            warp = np.eye(2, 3, dtype=np.float32)
+            used_mode = "reference"
+            confidence = 1.0
+            if idx != int(ref_job.get("index", -1)):
+                gray = cls._opencv_stabilize_gray(frame, cv2)
+                last_error: Exception | None = None
+                for attempt, mode_name in enumerate(mode_order):
+                    motion, initial_warp = cls._opencv_stabilize_motion(mode_name, np, cv2)
+                    try:
+                        cc, found = cv2.findTransformECC(
+                            ref_gray,
+                            gray,
+                            initial_warp,
+                            motion,
+                            criteria,
+                            None,
+                            5,
+                        )
+                        if found.shape == (3, 3):
+                            warp = found
+                        else:
+                            warp = found.astype(np.float32)
+                        if not cls._opencv_stabilize_warp_is_safe(
+                            mode,
+                            mode_name,
+                            warp,
+                            ref_gray.shape[1],
+                            ref_gray.shape[0],
+                            float(cc),
+                        ):
+                            rejected_count += 1
+                            last_error = RuntimeError(f"Rejected unsafe {mode_name} warp")
+                            continue
+                        used_mode = mode_name
+                        confidence = float(cc)
+                        if attempt > 0:
+                            fallback_count += 1
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                else:
+                    failures += 1
+                    used_mode = "identity"
+                    confidence = 0.0
+                    warp = np.eye(2, 3, dtype=np.float32)
+                    if last_error is not None:
+                        pass
+            if warp.shape == (3, 3):
+                stabilized = cv2.warpPerspective(
+                    frame,
+                    warp,
+                    (ref_gray.shape[1], ref_gray.shape[0]),
+                    flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+                    borderMode=cv2.BORDER_REFLECT,
+                )
+            else:
+                height, width = ref_gray.shape[:2]
+                stabilized = cv2.warpAffine(
+                    frame,
+                    warp,
+                    (width, height),
+                    flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+                    borderMode=cv2.BORDER_REFLECT,
+                )
+            if stabilized.shape[:2] != ref.shape[:2]:
+                stabilized = cv2.resize(stabilized, (ref.shape[1], ref.shape[0]), interpolation=cv2.INTER_LINEAR)
+            out = target_dir / f"{safe_stem}_stabilized_{idx:04d}.png"
+            if not cv2.imwrite(str(out), stabilized):
+                raise ValueError(f"Could not write stabilized frame: {out}")
+            replacements.append({"index": idx, "path": cls._display_path_for_base(out, base_dir)})
+            shifts.append(
+                {
+                    "index": idx,
+                    "mode": used_mode,
+                    "confidence": round(float(confidence), 5),
+                    "dx": round(float(warp[0, 2]), 3),
+                    "dy": round(float(warp[1, 2]), 3),
+                }
+            )
+        return {
+            "replacements": replacements,
+            "count": len(replacements),
+            "mode": mode,
+            "fallback_count": fallback_count,
+            "failure_count": failures,
+            "rejected_count": rejected_count,
+            "shifts": shifts,
+        }
+
+    @staticmethod
+    def _opencv_stabilize_mode_order(mode: str) -> list[str]:
+        normalized = str(mode or "auto_affine").strip().lower()
+        if normalized == "safe_translation":
+            return ["translation"]
+        if normalized == "auto_safe":
+            return ["euclidean", "translation"]
+        if normalized == "translation":
+            return ["translation"]
+        if normalized == "euclidean":
+            return ["euclidean", "translation"]
+        if normalized == "affine":
+            return ["affine", "euclidean", "translation"]
+        return ["affine", "euclidean", "translation"]
+
+    @staticmethod
+    def _opencv_stabilize_motion(mode: str, np_module: Any, cv2_module: Any) -> tuple[int, Any]:
+        normalized = str(mode).strip().lower()
+        if normalized == "affine":
+            return cv2_module.MOTION_AFFINE, np_module.eye(2, 3, dtype=np_module.float32)
+        if normalized == "euclidean":
+            return cv2_module.MOTION_EUCLIDEAN, np_module.eye(2, 3, dtype=np_module.float32)
+        if normalized == "homography":
+            return cv2_module.MOTION_HOMOGRAPHY, np_module.eye(3, 3, dtype=np_module.float32)
+        return cv2_module.MOTION_TRANSLATION, np_module.eye(2, 3, dtype=np_module.float32)
+
+    @staticmethod
+    def _opencv_stabilize_warp_is_safe(
+        requested_mode: str,
+        used_mode: str,
+        warp: Any,
+        width: int,
+        height: int,
+        confidence: float,
+    ) -> bool:
+        requested = str(requested_mode or "").strip().lower()
+        used = str(used_mode or "").strip().lower()
+        safe_requested = requested.startswith("safe") or requested == "auto_safe"
+        if not safe_requested:
+            return True
+        if confidence < 0.35:
+            return False
+        max_dx = max(12.0, float(width) * 0.18)
+        max_dy = max(8.0, float(height) * 0.18)
+        dx = abs(float(warp[0, 2]))
+        dy = abs(float(warp[1, 2]))
+        if dx > max_dx or dy > max_dy:
+            return False
+        if used == "translation":
+            return True
+        a = float(warp[0, 0])
+        b = float(warp[0, 1])
+        c = float(warp[1, 0])
+        d = float(warp[1, 1])
+        scale_x = (a * a + c * c) ** 0.5
+        scale_y = (b * b + d * d) ** 0.5
+        if not (0.94 <= scale_x <= 1.06 and 0.94 <= scale_y <= 1.06):
+            return False
+        shear = abs(a * b + c * d)
+        if shear > 0.08:
+            return False
+        return True
+
+    @staticmethod
+    def _opencv_stabilize_gray(image: Any, cv2_module: Any) -> Any:
+        if len(image.shape) == 2:
+            gray = image
+        elif image.shape[2] == 4:
+            gray = cv2_module.cvtColor(image, cv2_module.COLOR_BGRA2GRAY)
+        else:
+            gray = cv2_module.cvtColor(image, cv2_module.COLOR_BGR2GRAY)
+        return cv2_module.GaussianBlur(gray, (5, 5), 0)
+
+    def _finish_animation_stabilize(self, result: dict[str, Any]) -> None:
+        replacements = result.get("replacements", [])
+        if not isinstance(replacements, list) or not replacements:
+            return
+        animation = self._current_animation_effect()
+        frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
+        if not frame_paths:
+            return
+        self.push_designer_history()
+        changed = 0
+        for entry in replacements:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                idx = int(entry.get("index", -1))
+            except Exception:
+                continue
+            path = str(entry.get("path", "")).strip()
+            if 0 <= idx < len(frame_paths) and path:
+                frame_paths[idx] = path
+                changed += 1
+        animation["frame_paths"] = frame_paths
+        self.write_designer_to_json()
+        self._image_thumbnail_cache.clear()
+        self._refresh_animation_controls()
+        self._sync_designer_preview_policy()
+        self._refresh_animation_frame_list()
+        self._rebuild_theme_asset_gallery()
+        mode = str(result.get("mode", "auto_affine"))
+        fallback_count = int(result.get("fallback_count", 0) or 0)
+        failure_count = int(result.get("failure_count", 0) or 0)
+        rejected_count = int(result.get("rejected_count", 0) or 0)
+        self.preview_info_label.setText(
+            self._tr(
+                f"Stabilized {changed} frame(s) ({mode}, fallbacks: {fallback_count}, rejected: {rejected_count}, failed: {failure_count}).",
+                f"Ustabilizowano {changed} klat. ({mode}, fallbacki: {fallback_count}, odrzucone: {rejected_count}, błędy: {failure_count}).",
+            )
+        )
+        self.schedule_preview_theme_doc()
+
+    def _set_animation_stabilize_busy(self, busy: bool) -> None:
+        self._animation_stabilize_in_flight = bool(busy)
+        self._set_animation_worker_state(
+            "stabilize",
+            self._tr("stabilizing frames", "stabilizacja klatek") if busy else None,
+        )
+        if hasattr(self, "animation_stabilize_btn"):
+            self.animation_stabilize_btn.setEnabled(not busy)
+            self.animation_stabilize_btn.setText(
+                self._tr("Stabilizing…", "Stabilizuję…") if busy else self._tr("Stabilize", "Stabilizuj")
+            )
+        if hasattr(self, "animation_stabilize_mode_combo"):
+            self.animation_stabilize_mode_combo.setEnabled(not busy)
+
+    def hold_selected_animation_frames_timing(self) -> None:
+        controller = self._animation_controller()
+        if controller is None:
+            return
+        seq = controller.normalize()
+        if not seq.frame_paths:
+            return
+        times = max(1, int(self.animation_duplicate_repeat_spin.value()))
+        rows = sorted({idx.row() for idx in self.bg_animation_list.selectedIndexes()})
+        if not rows:
+            row = self.bg_animation_list.currentRow()
+            if row >= 0:
+                rows = [row]
+        if not rows:
+            QMessageBox.information(
+                self,
+                self._tr("Animation", "Animacja"),
+                self._tr("Select one or more frames first.", "Najpierw zaznacz jedną lub więcej klatek."),
+            )
+            return
+        self.push_designer_history()
+        controller.repeat_timing(rows, times)
+        self.write_designer_to_json()
+        self._refresh_animation_controls()
+        self._sync_designer_preview_policy()
+        self._refresh_animation_frame_list()
+        for row in rows:
+            item = self.bg_animation_list.item(row)
+            if item is not None:
+                item.setSelected(True)
+        self.preview_info_label.setText(
+            self._tr(
+                f"Extended timing for {len(rows)} frame(s) ×{times} without copying files.",
+                f"Wydłużono czas {len(rows)} klat. ×{times} bez kopiowania plików.",
+            )
+        )
+        self.schedule_preview_theme_doc()
+
+    def reverse_selected_animation_frames(self) -> None:
+        controller = self._animation_controller()
+        if controller is None:
+            return
+        seq = controller.normalize()
+        if seq.frame_count < 2:
+            return
+        rows = self._selected_animation_rows(fallback_current=False, fallback_all=True)
+        self.push_designer_history()
+        result = controller.reverse_indices(rows)
+        self.write_designer_to_json()
+        self._refresh_animation_controls()
+        self._sync_designer_preview_policy()
+        self._refresh_animation_frame_list(preserve_selection=False)
+        affected = rows if len(rows) >= 2 else list(range(result.frame_count))
+        for row in affected:
+            item = self.bg_animation_list.item(row)
+            if item is not None:
+                item.setSelected(True)
+        self.bg_animation_list.setCurrentRow(result.current_frame)
+        self.preview_info_label.setText(
+            self._tr(
+                f"Reversed {len(affected)} animation frame(s).",
+                f"Odwrócono {len(affected)} klat. animacji.",
+            )
+        )
+        self.schedule_preview_theme_doc()
+
+    def pingpong_selected_animation_frames(self) -> None:
+        controller = self._animation_controller()
+        if controller is None:
+            return
+        seq = controller.normalize()
+        if seq.frame_count < 2:
+            return
+        rows = self._selected_animation_rows(fallback_current=False, fallback_all=True)
+        self.push_designer_history()
+        before_count = seq.frame_count
+        result = controller.ping_pong(rows)
+        added = max(0, result.frame_count - before_count)
+        self.write_designer_to_json()
+        self._refresh_animation_controls()
+        self._sync_designer_preview_policy()
+        self._refresh_animation_frame_list(preserve_selection=False)
+        if added:
+            start = max(0, result.current_frame)
+            for row in range(start, min(result.frame_count, start + added)):
+                item = self.bg_animation_list.item(row)
+                if item is not None:
+                    item.setSelected(True)
+            self.bg_animation_list.setCurrentRow(start)
+        self._maybe_warn_animation_frame_count(result.frame_count)
+        self.preview_info_label.setText(
+            self._tr(
+                f"Added ping-pong tail: {added} frame reference(s).",
+                f"Dodano ogon ping-pong: {added} referencji klatek.",
+            )
+        )
+        self.schedule_preview_theme_doc()
+
+    def normalize_selected_animation_frame_durations(self) -> None:
+        controller = self._animation_controller()
+        if controller is None:
+            return
+        seq = controller.normalize()
+        if not seq.frame_paths:
+            return
+        rows = self._selected_animation_rows(fallback_current=False, fallback_all=True)
+        ms = max(1, int(self.animation_bulk_duration_spin.value()))
+        self.push_designer_history()
+        controller.apply_duration(rows, ms)
+        self.write_designer_to_json()
+        self._refresh_animation_controls()
+        self._sync_designer_preview_policy()
+        self._refresh_animation_frame_list(preserve_selection=False)
+        for row in rows:
+            item = self.bg_animation_list.item(row)
+            if item is not None:
+                item.setSelected(True)
+        self.preview_info_label.setText(
+            self._tr(
+                f"Normalized {len(rows)} frame duration(s) to {ms} ms.",
+                f"Wyrównano czas {len(rows)} klat. do {ms} ms.",
+            )
+        )
+        self.schedule_preview_theme_doc()
+
+    def duplicate_full_animation_sequence_bulk(self) -> None:
+        if getattr(self, "_animation_duplicate_in_flight", False):
+            return
+        animation = self._current_animation_effect()
+        frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
+        frame_durations = animation.get("frame_durations_ms", []) if isinstance(animation.get("frame_durations_ms", []), list) else []
+        if not frame_paths:
+            QMessageBox.information(
+                self,
+                self._tr("Animation", "Animacja"),
+                self._tr("Add frames to the sequence first.", "Najpierw dodaj klatki do sekwencji."),
+            )
+            return
+        times = max(1, int(self.animation_duplicate_repeat_spin.value()))
+        default_ms = max(1, int(round(1000.0 / max(1.0, float(animation.get("fps", 12.0))))))
+        if len(frame_durations) < len(frame_paths):
+            frame_durations.extend([default_ms] * (len(frame_paths) - len(frame_durations)))
+        snapshot_paths = [str(p) for p in frame_paths]
+        snapshot_durs = [int(frame_durations[i]) if i < len(frame_durations) else default_ms for i in range(len(frame_paths))]
+        for sp in snapshot_paths:
+            src = self._resolve_theme_asset_path(sp)
+            if not src.exists():
+                QMessageBox.warning(
+                    self,
+                    self._tr("Animation", "Animacja"),
+                    self._tr("Frame file not found:\n{path}", "Nie znaleziono klatki:\n{path}").format(path=src),
+                )
+                return
+        jobs = [
+            {"source": str(self._resolve_theme_asset_path(sp)), "duration_ms": int(d)}
+            for sp, d in zip(snapshot_paths, snapshot_durs, strict=True)
+        ]
+        self._start_animation_duplicate_worker(
+            jobs,
+            times=times,
+            insert_at=len(frame_paths),
+            prefix="seq",
+            mode="sequence",
+        )
+
+    def insert_blank_animation_frame(self) -> None:
+        controller = self._animation_controller()
+        if controller is None:
+            return
         blank = self._create_blank_animation_frame_asset()
         if blank is None:
-            QMessageBox.warning(self, "Animacja", "Nie udało się utworzyć pustej klatki.")
+            QMessageBox.warning(
+                self,
+                self._tr("Animation", "Animacja"),
+                self._tr("Could not create a blank frame.", "Nie udało się utworzyć pustej klatki."),
+            )
             return
         insert_at = self.bg_animation_list.currentRow()
+        seq_before = controller.normalize()
+        n_frames = seq_before.frame_count
         if insert_at < 0:
-            insert_at = len(frame_paths)
+            insert_at = n_frames
         else:
             insert_at += 1
         self.push_designer_history()
-        frame_paths.insert(insert_at, self._theme_display_path(blank))
-        frame_durations.insert(insert_at, max(1, int(self.bg_animation_duration_spin.value())))
-        animation["frame_paths"] = frame_paths
-        animation["frame_durations_ms"] = frame_durations
+        seq = controller.insert_frames(
+            [self._theme_display_path(blank)],
+            index=insert_at,
+            duration_ms=max(1, int(self.bg_animation_duration_spin.value())),
+        )
+        animation = controller.animation()
         animation["enabled"] = True
         animation["use_as_background"] = True
-        animation["current_frame"] = insert_at
         self.write_designer_to_json()
         self._refresh_animation_controls()
         self._sync_designer_preview_policy()
-        self.bg_animation_list.setCurrentRow(insert_at)
+        self.bg_animation_list.setCurrentRow(seq.current_frame)
         self._rebuild_theme_asset_gallery()
-        self.preview_info_label.setText("Dodano pustą klatkę animacji.")
+        self.preview_info_label.setText(self._tr("Added a blank animation frame.", "Dodano pustą klatkę animacji."))
         self.schedule_preview_theme_doc()
 
     def remove_selected_animation_frames(self) -> None:
-        animation = self._current_animation_effect()
-        frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
-        if not frame_paths:
+        controller = self._animation_controller()
+        if controller is None:
+            return
+        seq = controller.normalize()
+        if not seq.frame_paths:
             return
         rows = sorted({idx.row() for idx in self.bg_animation_list.selectedIndexes()})
         if not rows:
@@ -7212,19 +9687,11 @@ class TrofeoGui(QMainWindow):
         if not rows:
             return
         self.push_designer_history()
-        frame_durations = animation.get("frame_durations_ms", []) if isinstance(animation.get("frame_durations_ms", []), list) else []
-        for row in reversed(rows):
-            if 0 <= row < len(frame_paths):
-                del frame_paths[row]
-            if 0 <= row < len(frame_durations):
-                del frame_durations[row]
-        animation["frame_paths"] = frame_paths
-        animation["frame_durations_ms"] = frame_durations
-        if not frame_paths:
+        seq = controller.remove_indices(rows)
+        animation = controller.animation()
+        if not seq.frame_paths:
             animation["enabled"] = False
             animation["current_frame"] = 0
-        else:
-            animation["current_frame"] = min(int(animation.get("current_frame", 0)), len(frame_paths) - 1)
         self.write_designer_to_json()
         self._refresh_animation_controls()
         self._sync_designer_preview_policy()
@@ -7232,30 +9699,25 @@ class TrofeoGui(QMainWindow):
         self.schedule_preview_theme_doc()
 
     def move_selected_animation_frames(self, delta: int) -> None:
-        animation = self._current_animation_effect()
-        frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
-        if not frame_paths:
+        controller = self._animation_controller()
+        if controller is None:
+            return
+        seq = controller.normalize()
+        if not seq.frame_paths:
             return
         rows = sorted({idx.row() for idx in self.bg_animation_list.selectedIndexes()})
         if len(rows) != 1:
             return
         row = rows[0]
-        target = row + int(delta)
-        if target < 0 or target >= len(frame_paths):
+        if row + int(delta) < 0 or row + int(delta) >= seq.frame_count:
             return
         self.push_designer_history()
-        frame_durations = animation.get("frame_durations_ms", []) if isinstance(animation.get("frame_durations_ms", []), list) else []
-        frame_paths[row], frame_paths[target] = frame_paths[target], frame_paths[row]
-        if row < len(frame_durations) and target < len(frame_durations):
-            frame_durations[row], frame_durations[target] = frame_durations[target], frame_durations[row]
-        animation["frame_paths"] = frame_paths
-        animation["frame_durations_ms"] = frame_durations
-        animation["current_frame"] = target
+        seq = controller.move_single(row, delta)
         self.write_designer_to_json()
         self._refresh_animation_controls()
         self._sync_designer_preview_policy()
         self._refresh_animation_frame_list()
-        self.bg_animation_list.setCurrentRow(target)
+        self.bg_animation_list.setCurrentRow(seq.current_frame)
         self.schedule_preview_theme_doc()
 
     def select_animation_frame(self, row: int) -> None:
@@ -7294,45 +9756,189 @@ class TrofeoGui(QMainWindow):
             self.schedule_preview_theme_doc()
 
     def export_animation_sequence(self) -> None:
+        self._export_animation_sequence_for_indices(None, suffix="animation", scope_label=self._tr("full", "całość"))
+
+    def export_animation_loop_range(self) -> None:
+        loop_range = self._current_animation_loop_range()
+        if loop_range is None:
+            QMessageBox.information(
+                self,
+                self._tr("Animation export", "Eksport animacji"),
+                self._tr("Set an animation loop range first.", "Najpierw ustaw zakres pętli animacji."),
+            )
+            return
+        indices = list(range(loop_range[0], loop_range[1] + 1))
+        self._export_animation_sequence_for_indices(indices, suffix="loop", scope_label=self._tr("loop", "pętla"))
+
+    def export_animation_selection(self) -> None:
+        indices = self._selected_animation_rows(fallback_current=True, fallback_all=False)
+        if not indices:
+            QMessageBox.information(
+                self,
+                self._tr("Animation export", "Eksport animacji"),
+                self._tr("Select animation frames to export.", "Zaznacz klatki animacji do eksportu."),
+            )
+            return
+        self._export_animation_sequence_for_indices(
+            indices,
+            suffix="selection",
+            scope_label=self._tr("selection", "zaznaczenie"),
+        )
+
+    def _export_animation_sequence_for_indices(
+        self,
+        frame_indices: list[int] | None,
+        *,
+        suffix: str,
+        scope_label: str,
+    ) -> None:
+        if getattr(self, "_animation_export_in_flight", False):
+            return
         if self.theme_doc_model is None:
             return
         animation = self._current_animation_effect()
         frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
         if not frame_paths:
-            QMessageBox.information(self, "Eksport animacji", "Brak klatek animacji do eksportu.")
+            QMessageBox.information(
+                self,
+                self._tr("Animation export", "Eksport animacji"),
+                self._tr("No animation frames to export.", "Brak klatek animacji do eksportu."),
+            )
             return
+        if frame_indices is None:
+            export_indices = list(range(len(frame_paths)))
+        else:
+            export_indices = sorted({int(i) for i in frame_indices if 0 <= int(i) < len(frame_paths)})
+        if not export_indices:
+            QMessageBox.information(
+                self,
+                self._tr("Animation export", "Eksport animacji"),
+                self._tr("No valid animation frames in this export range.", "Brak prawidłowych klatek w tym zakresie eksportu."),
+            )
+            return
+        stem = Path(self.theme_doc_path_edit.text() or "motyw").stem
+        safe_suffix = str(suffix or "animation").strip("_") or "animation"
         selected, _ = QFileDialog.getSaveFileName(
             self,
-            "Zapisz eksport animacji",
-            str((Path.cwd() / "exports" / f"{Path(self.theme_doc_path_edit.text() or 'motyw').stem}_animation.zip").resolve()),
+            self._tr("Save animation export", "Zapisz eksport animacji"),
+            str((Path.cwd() / "exports" / f"{stem}_{safe_suffix}.zip").resolve()),
             "ZIP (*.zip)",
         )
         if not selected:
             return
         target = Path(selected).expanduser()
+        document = normalize_theme_document(deepcopy(self.theme_doc_model))
+        base_dir = self._theme_base_dir()
+        self._set_animation_export_busy(True)
+        self.preview_info_label.setText(
+            self._tr(
+                f"Exporting animation {scope_label} in background: {target.name} ({len(export_indices)} frames)",
+                f"Eksportuję animację ({scope_label}) w tle: {target.name} ({len(export_indices)} klatek)",
+            )
+        )
+        self.append_log(
+            f"[animation-export] start target={target} scope={scope_label} frames={len(export_indices)}/{len(frame_paths)}"
+        )
+        self._run_animation_export_worker(target, document, base_dir, export_indices, scope_label)
+
+    def _run_animation_export_worker(
+        self,
+        target: Path,
+        document: dict[str, Any],
+        base_dir: Path,
+        frame_indices: list[int],
+        scope_label: str,
+    ) -> None:
+        def worker() -> None:
+            try:
+                result = self._export_animation_sequence_zip(target, document, base_dir, frame_indices, scope_label)
+                self.api_result.emit("animation-export", True, {"result": result})
+            except Exception as exc:
+                self.api_result.emit("animation-export", False, str(exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _export_animation_sequence_zip(
+        self,
+        target: Path,
+        document: dict[str, Any],
+        base_dir: Path,
+        frame_indices: list[int],
+        scope_label: str,
+    ) -> dict[str, Any]:
+        if render_theme_document is None:
+            raise RuntimeError("Theme renderer is not available.")
         target.parent.mkdir(parents=True, exist_ok=True)
-        document = normalize_theme_document(self.theme_doc_model)
+        animation = document.setdefault("effects", {}).setdefault("animation", {})
+        if not isinstance(animation, dict):
+            raise ValueError("Theme animation block is invalid.")
+        frame_paths = animation.get("frame_paths", [])
+        if not isinstance(frame_paths, list) or not frame_paths:
+            raise ValueError("No animation frames to export.")
         frame_durations = animation.get("frame_durations_ms", []) if isinstance(animation.get("frame_durations_ms", []), list) else []
+        frame_count = len(frame_paths)
+        export_indices = [int(i) for i in frame_indices if 0 <= int(i) < frame_count]
+        if not export_indices:
+            raise ValueError("No valid animation frames to export.")
+        default_duration = max(1, int(round(1000.0 / max(1.0, float(animation.get("fps", 12.0))))))
+        export_durations = [
+            int(frame_durations[idx]) if idx < len(frame_durations) else default_duration
+            for idx in export_indices
+        ]
         with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             manifest = {
                 "type": "trofeo-animation-export",
                 "theme_name": document.get("meta", {}).get("name", "Motyw"),
+                "scope": scope_label,
                 "fps": float(animation.get("fps", 12.0)),
                 "loop": bool(animation.get("loop", True)),
-                "frame_count": len(frame_paths),
-                "frame_durations_ms": frame_durations[: len(frame_paths)],
+                "loop_start": animation.get("loop_start"),
+                "loop_end": animation.get("loop_end"),
+                "frame_count": len(export_indices),
+                "source_frame_count": frame_count,
+                "source_indices": export_indices,
+                "frame_durations_ms": export_durations,
             }
             zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
-            for idx in range(len(frame_paths)):
-                theme_frame = json.loads(json.dumps(document))
+            for out_idx, source_idx in enumerate(export_indices):
+                theme_frame = deepcopy(document)
                 theme_frame.setdefault("effects", {}).setdefault("animation", {})
-                theme_frame["effects"]["animation"]["current_frame"] = idx
-                image = render_theme_document(ThemeDocument(normalize_theme_document(theme_frame)), base_dir=self._theme_base_dir())
+                theme_frame["effects"]["animation"]["current_frame"] = source_idx
+                image = render_theme_document(ThemeDocument(normalize_theme_document(theme_frame)), base_dir=base_dir)
                 buffer = io.BytesIO()
                 image.save(buffer, format="PNG")
-                zf.writestr(f"frames/frame_{idx:04d}.png", buffer.getvalue())
-        self.preview_info_label.setText(f"Wyeksportowano animację: {target.name}")
-        self.append_log(f"[animation-export] {target}")
+                zf.writestr(f"frames/frame_{out_idx:04d}.png", buffer.getvalue())
+        return {
+            "target": str(target),
+            "name": target.name,
+            "scope": scope_label,
+            "frame_count": len(export_indices),
+            "source_frame_count": frame_count,
+            "bytes": target.stat().st_size if target.exists() else 0,
+        }
+
+    def _set_animation_export_busy(self, busy: bool) -> None:
+        self._animation_export_in_flight = bool(busy)
+        self._set_animation_worker_state(
+            "export",
+            self._tr("exporting ZIP", "eksport ZIP") if busy else None,
+        )
+        if hasattr(self, "bg_animation_export_btn"):
+            self.bg_animation_export_btn.setEnabled(not busy)
+            self.bg_animation_export_btn.setText(
+                self._tr("Exporting…", "Eksport…") if busy else self._tr("Export", "Eksportuj")
+            )
+        if hasattr(self, "animation_export_loop_btn"):
+            self.animation_export_loop_btn.setEnabled(not busy and self._current_animation_loop_range() is not None)
+            self.animation_export_loop_btn.setText(
+                self._tr("Exporting…", "Eksport…") if busy else self._tr("Export Loop", "Eksport pętli")
+            )
+        if hasattr(self, "animation_export_selection_btn"):
+            has_selection = hasattr(self, "bg_animation_list") and self.bg_animation_list.currentRow() >= 0
+            self.animation_export_selection_btn.setEnabled(not busy and has_selection)
+            self.animation_export_selection_btn.setText(
+                self._tr("Exporting…", "Eksport…") if busy else self._tr("Export Sel", "Eksport zazn.")
+            )
 
     def toggle_animation_preview_playback(self) -> None:
         if not self._animation_edit_mode_enabled():
@@ -7348,66 +9954,272 @@ class TrofeoGui(QMainWindow):
         self._update_animation_preview_timer()
 
     def _advance_animation_preview(self) -> None:
-        animation = self._current_animation_effect()
-        frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
-        if len(frame_paths) <= 1:
-            self._animation_preview_active = False
-            self._update_animation_preview_timer()
-            return
-        current = int(animation.get("current_frame", 0))
-        next_index = current + 1
-        if next_index >= len(frame_paths):
-            if bool(animation.get("loop", True)):
-                next_index = 0
-            else:
+        try:
+            animation = self._current_animation_effect()
+            frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
+            if len(frame_paths) <= 1:
                 self._animation_preview_active = False
                 self._update_animation_preview_timer()
                 return
-        self._set_current_animation_frame(next_index, persist=False)
+            loop_range = self._current_animation_loop_range()
+            loop_start = loop_range[0] if loop_range is not None else 0
+            loop_end = loop_range[1] if loop_range is not None else len(frame_paths) - 1
+            current = int(animation.get("current_frame", 0))
+            if current < loop_start or current > loop_end:
+                current = loop_start
+            next_index = current + 1
+            if next_index > loop_end or next_index >= len(frame_paths):
+                if bool(animation.get("loop", True)):
+                    next_index = loop_start
+                else:
+                    self._animation_preview_active = False
+                    self._update_animation_preview_timer()
+                    return
+            self._set_current_animation_frame_lightweight(next_index)
+            self._update_animation_preview_timer()
+        except Exception as exc:
+            self._animation_preview_active = False
+            self._update_animation_preview_timer()
+            self.append_log(f"[animation-preview] ERROR: {exc}")
+            if hasattr(self, "preview_info_label"):
+                self.preview_info_label.setText(
+                    self._tr(
+                        f"Animation preview stopped after an error: {exc}",
+                        f"Podgląd animacji zatrzymany po błędzie: {exc}",
+                    )
+                )
 
     def import_background_animation(self) -> None:
+        if getattr(self, "_animation_import_in_flight", False):
+            return
         if self.theme_doc_model is None:
             self.reload_designer_from_json()
             if self.theme_doc_model is None:
                 return
         selected, _ = QFileDialog.getOpenFileNames(
             self,
-            "Wybierz klatki animacji lub kontener TTCR",
+            self._tr("Choose animation frames or a TTCR container", "Wybierz klatki animacji lub kontener TTCR"),
             str(Path.cwd()),
-            "Animacje/ramki (*.zt *.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
+            self._tr(
+                "Animation frames (*.zt *.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
+                "Animacje/ramki (*.zt *.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
+            ),
         )
         if not selected:
             return
         sources = [Path(item).expanduser() for item in selected]
-        copied_paths = self._collect_animation_frame_paths(sources)
+        self._start_animation_frame_import(sources, mode="replace")
+
+    def _start_animation_frame_import(self, sources: list[Path], *, mode: str) -> None:
+        if not sources:
+            return
+        target_dir = self._theme_assets_dir() / "animation_frames"
+        theme_stem = Path(self.theme_doc_path_edit.text() or "theme").stem or "theme"
+        base_dir = self._theme_base_dir()
+        self._set_animation_import_busy(True)
+        self.preview_info_label.setText(
+            self._tr(
+                f"Preparing animation frames in background ({len(sources)} source file(s)).",
+                f"Przygotowuję klatki animacji w tle ({len(sources)} plików źródłowych).",
+            )
+        )
+
+        def worker() -> None:
+            try:
+                import_payload = self._collect_animation_frame_import_payload_for_worker(
+                    sources,
+                    target_dir=target_dir,
+                    theme_stem=theme_stem,
+                    base_dir=base_dir,
+                )
+                self.api_result.emit(
+                    "animation-import",
+                    True,
+                    {"result": {"mode": mode, "source_count": len(sources), **import_payload}},
+                )
+            except Exception as exc:
+                self.api_result.emit("animation-import", False, str(exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @classmethod
+    def _collect_animation_frame_import_payload_for_worker(
+        cls,
+        sources: list[Path],
+        *,
+        target_dir: Path,
+        theme_stem: str,
+        base_dir: Path,
+    ) -> dict[str, Any]:
+        if len(sources) == 1 and sources[0].suffix.lower() == ".zip":
+            return cls._collect_animation_zip_export_for_worker(
+                sources[0],
+                target_dir=target_dir,
+                theme_stem=theme_stem,
+                base_dir=base_dir,
+            )
+        copied_paths = cls._collect_animation_frame_paths_for_worker(
+            sources,
+            target_dir=target_dir,
+            theme_stem=theme_stem,
+            base_dir=base_dir,
+        )
+        return {"frame_paths": copied_paths, "frame_durations_ms": []}
+
+    @classmethod
+    def _collect_animation_zip_export_for_worker(
+        cls,
+        source: Path,
+        *,
+        target_dir: Path,
+        theme_stem: str,
+        base_dir: Path,
+    ) -> dict[str, Any]:
+        copied_paths: list[str] = []
+        durations: list[int] = []
+        target_dir.mkdir(parents=True, exist_ok=True)
+        safe_stem = "".join(ch.lower() if ch.isalnum() else "_" for ch in theme_stem).strip("_") or "theme"
+        with zipfile.ZipFile(source, "r") as zf:
+            manifest: dict[str, Any] = {}
+            try:
+                raw_manifest = zf.read("manifest.json")
+                loaded = json.loads(raw_manifest.decode("utf-8"))
+                if isinstance(loaded, dict):
+                    manifest = loaded
+            except Exception:
+                manifest = {}
+            raw_durations = manifest.get("frame_durations_ms", [])
+            if isinstance(raw_durations, list):
+                for item in raw_durations:
+                    try:
+                        durations.append(max(1, int(float(item))))
+                    except Exception:
+                        continue
+            names = [
+                name
+                for name in zf.namelist()
+                if name.startswith("frames/")
+                and not name.endswith("/")
+                and Path(name).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+            ]
+            names.sort()
+            for idx, name in enumerate(names):
+                suffix = Path(name).suffix.lower() or ".png"
+                out = target_dir / f"{safe_stem}_zip_{idx:04d}{suffix}"
+                with zf.open(name, "r") as src, out.open("wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                copied_paths.append(cls._display_path_for_base(out, base_dir))
+        return {"frame_paths": copied_paths, "frame_durations_ms": durations[: len(copied_paths)]}
+
+    def _finish_animation_frame_import(self, mode: str, copied_paths: list[str], frame_durations: list[int] | None = None) -> None:
         if not copied_paths:
-            QMessageBox.warning(self, "Import animacji", "Nie udało się przygotować klatek animacji.")
+            QMessageBox.warning(
+                self,
+                self._tr("Animation import", "Import animacji"),
+                self._tr("Could not prepare animation frames.", "Nie udało się przygotować klatek animacji."),
+            )
+            return
+        controller = self._animation_controller()
+        if controller is None:
             return
         self.push_designer_history()
-        animation = self._current_animation_effect()
-        animation["frame_paths"] = copied_paths
-        animation["frame_durations_ms"] = [max(1, int(round(1000.0 / max(1.0, float(animation.get("fps", 12.0)))))) for _ in copied_paths]
+        seq = controller.normalize()
+        animation = controller.animation()
+        duration_ms = max(1, int(round(1000.0 / max(1.0, seq.fps))))
+        imported_durations = [max(1, int(item)) for item in (frame_durations or [])[: len(copied_paths)]]
+        before_count = seq.frame_count
+        if mode == "append":
+            controller.insert_frames(copied_paths, duration_ms=duration_ms)
+            if imported_durations:
+                existing = animation.get("frame_durations_ms", [])
+                if isinstance(existing, list):
+                    start = max(0, len(existing) - len(copied_paths))
+                    for offset, value in enumerate(imported_durations):
+                        idx = start + offset
+                        if idx < len(existing):
+                            existing[idx] = value
+        else:
+            controller.replace_frames(copied_paths, duration_ms=duration_ms)
+            if imported_durations:
+                padded = imported_durations + [duration_ms] * max(0, len(copied_paths) - len(imported_durations))
+                animation["frame_durations_ms"] = padded[: len(copied_paths)]
         animation["enabled"] = True
         animation["use_as_background"] = True
-        animation["fps"] = float(animation.get("fps", 12.0))
-        animation["current_frame"] = 0
+        if mode == "replace" or before_count == 0:
+            animation["current_frame"] = 0
         self.write_designer_to_json()
         self._refresh_animation_controls()
         self._sync_designer_preview_policy()
         self._animation_preview_active = False
         self._refresh_animation_frame_list()
-        self._set_image_preview_label(self.background_preview_label, copied_paths[0], empty_text="Podgląd tła")
+        self._set_image_preview_label(self.background_preview_label, copied_paths[0], empty_text=self._empty_background_preview_caption())
         self._rebuild_theme_asset_gallery()
-        self.preview_info_label.setText(f"Zaimportowano animację: {len(copied_paths)} klatek.")
+        self._maybe_warn_animation_frame_count(controller.normalize().frame_count)
+        if mode == "append":
+            self.preview_info_label.setText(self._tr(f"Added {len(copied_paths)} animation frame(s).", f"Dodano {len(copied_paths)} klat. animacji."))
+        else:
+            self.preview_info_label.setText(self._tr(f"Imported animation: {len(copied_paths)} frame(s).", f"Zaimportowano animację: {len(copied_paths)} klat."))
         self.schedule_preview_theme_doc()
+
+    def _set_animation_import_busy(self, busy: bool) -> None:
+        self._animation_import_in_flight = bool(busy)
+        self._set_animation_worker_state(
+            "import",
+            self._tr("preparing frames", "przygotowanie klatek") if busy else None,
+        )
+        for button in (getattr(self, "bg_animation_import_btn", None), getattr(self, "bg_animation_add_btn", None)):
+            if button is not None:
+                button.setEnabled(not busy)
+        if hasattr(self, "bg_animation_import_btn"):
+            self.bg_animation_import_btn.setText(
+                self._tr("Importing…", "Import…") if busy else self._tr("Import", "Importuj")
+            )
+
+    def _apply_animation_thumbnail_payload(self, action: str, payload: object) -> None:
+        try:
+            generation = int(action.rsplit("::", 1)[1])
+        except Exception:
+            return
+        if generation != getattr(self, "_animation_thumbnail_generation", 0):
+            return
+        self._set_animation_worker_state("thumbnails", None)
+        data = payload if isinstance(payload, dict) else {}
+        result = data.get("result", {})
+        items = result.get("items", []) if isinstance(result, dict) else []
+        if not isinstance(items, list) or not hasattr(self, "bg_animation_list"):
+            return
+        for entry in items:
+            if not isinstance(entry, dict):
+                continue
+            row = int(entry.get("row", -1))
+            if row < 0 or row >= self.bg_animation_list.count():
+                continue
+            item = self.bg_animation_list.item(row)
+            if item is None or str(item.data(Qt.UserRole)) != str(entry.get("raw", "")):
+                continue
+            image = entry.get("image")
+            if not isinstance(image, QImage) or image.isNull():
+                continue
+            pixmap = QPixmap.fromImage(image)
+            if pixmap.isNull():
+                continue
+            cache_key = (str(entry.get("path", "")), int(entry.get("mtime", 0) or 0))
+            self._image_thumbnail_cache = {key: val for key, val in self._image_thumbnail_cache.items() if key[0] != cache_key[0]}
+            self._image_thumbnail_cache[cache_key] = pixmap
+            item.setIcon(QIcon(pixmap))
+        self._refresh_animation_frame_list(preserve_selection=True)
 
     def clear_background_animation(self) -> None:
         if self.theme_doc_model is None:
             return
         self.push_designer_history()
-        animation = self._current_animation_effect()
-        animation["frame_paths"] = []
-        animation["frame_durations_ms"] = []
+        controller = self._animation_controller()
+        animation = controller.animation() if controller is not None else self._current_animation_effect()
+        if controller is not None:
+            controller.replace_frames([])
+        else:
+            animation["frame_paths"] = []
+            animation["frame_durations_ms"] = []
         animation["enabled"] = False
         animation["current_frame"] = 0
         self.write_designer_to_json()
@@ -7415,18 +10227,19 @@ class TrofeoGui(QMainWindow):
         self._sync_designer_preview_policy()
         self._animation_preview_active = False
         self._refresh_animation_frame_list()
-        self._set_image_preview_label(self.background_preview_label, self.bg_path_edit.text(), empty_text="Podgląd tła")
+        self._set_image_preview_label(self.background_preview_label, self.bg_path_edit.text(), empty_text=self._empty_background_preview_caption())
         self.schedule_preview_theme_doc()
 
     def nudge_animation_frame(self, delta: int) -> None:
-        animation = self._current_animation_effect()
-        frame_paths = animation.get("frame_paths", []) if isinstance(animation.get("frame_paths", []), list) else []
-        if not frame_paths:
+        controller = self._animation_controller()
+        if controller is None:
             return
-        current = int(animation.get("current_frame", 0))
-        animation["current_frame"] = min(max(0, current + delta), len(frame_paths) - 1)
+        seq = controller.normalize()
+        if not seq.frame_paths:
+            return
+        controller.set_current_frame(seq.current_frame + int(delta))
         self._refresh_animation_controls()
-        self._set_current_animation_frame(int(animation["current_frame"]), persist=True)
+        self._set_current_animation_frame(controller.normalize().current_frame, persist=True)
 
     def _write_theme_autosave(self) -> None:
         if self.theme_doc_model is None:
@@ -7514,11 +10327,22 @@ class TrofeoGui(QMainWindow):
 
     def _on_api_result(self, action: str, ok: bool, payload: object) -> None:
         is_designer_preview = action.startswith("theme-doc-preview")
+        is_animation_thumbnails = action.startswith("animation-thumbnails::")
         if action == "status":
             self._status_in_flight = False
+        if action == "animation-export":
+            self._set_animation_export_busy(False)
+        if action == "animation-import":
+            self._set_animation_import_busy(False)
+        if action == "animation-stabilize":
+            self._set_animation_stabilize_busy(False)
         if is_designer_preview:
             self._preview_request_in_flight = False
-        if action in {"theme-doc-load", "studio-theme-save", "studio-theme-apply"} or is_designer_preview:
+        if (
+            action
+            in {"theme-doc-load", "theme-doc-apply", "studio-theme-save", "studio-theme-apply"}
+            or is_designer_preview
+        ):
             self._set_designer_toolbar_busy("theme-doc-preview" if is_designer_preview else action, False)
         is_template_preview = action.startswith("template-preview::")
         quiet_actions = {
@@ -7528,9 +10352,64 @@ class TrofeoGui(QMainWindow):
             "theme-doc-preview",
         }
 
+        if is_animation_thumbnails:
+            if ok:
+                self._apply_animation_thumbnail_payload(action, payload)
+            return
+
+        if action == "animation-export" and not ok:
+            self.append_log(f"[{action}] ERROR: {payload}")
+            self.preview_info_label.setText(
+                self._tr(
+                    f"Animation export failed: {str(payload)[:140]}",
+                    f"Eksport animacji nie powiódł się: {str(payload)[:140]}",
+                )
+            )
+            self._push_system_event("WARN", action, str(payload)[:120])
+            QMessageBox.warning(
+                self,
+                self._tr("Animation Export", "Eksport animacji"),
+                str(payload),
+            )
+            return
+        if action == "animation-import" and not ok:
+            self.append_log(f"[{action}] ERROR: {payload}")
+            self.preview_info_label.setText(
+                self._tr(
+                    f"Animation import failed: {str(payload)[:140]}",
+                    f"Import animacji nie powiódł się: {str(payload)[:140]}",
+                )
+            )
+            self._push_system_event("WARN", action, str(payload)[:120])
+            QMessageBox.warning(
+                self,
+                self._tr("Animation Import", "Import animacji"),
+                str(payload),
+            )
+            return
+        if action == "animation-stabilize" and not ok:
+            self.append_log(f"[{action}] ERROR: {payload}")
+            self.preview_info_label.setText(
+                self._tr(
+                    f"Animation stabilization failed: {str(payload)[:140]}",
+                    f"Stabilizacja animacji nie powiodła się: {str(payload)[:140]}",
+                )
+            )
+            self._push_system_event("WARN", action, str(payload)[:120])
+            QMessageBox.warning(
+                self,
+                self._tr("Animation stabilization", "Stabilizacja animacji"),
+                str(payload),
+            )
+            return
+
         if not ok:
             self.append_log(f"[{action}] ERROR: {payload}")
-            if action in {"theme-doc-load", "studio-theme-save", "studio-theme-apply"} or is_designer_preview:
+            if (
+                action
+                in {"theme-doc-load", "theme-doc-apply", "studio-theme-save", "studio-theme-apply"}
+                or is_designer_preview
+            ):
                 self._set_designer_toolbar_feedback(f"Błąd: {str(payload)[:120]}")
             self._push_system_event("WARN", action, str(payload)[:120])
             if is_designer_preview and self._preview_request_queued:
@@ -7542,6 +10421,41 @@ class TrofeoGui(QMainWindow):
 
         data = payload if isinstance(payload, dict) else {}
         self.append_log(self._format_log_payload(action, data))
+        if action == "animation-export":
+            result = data.get("result", {})
+            if isinstance(result, dict):
+                name = str(result.get("name", "animation.zip"))
+                scope = str(result.get("scope", "full"))
+                frame_count = int(result.get("frame_count", 0) or 0)
+                size_bytes = int(result.get("bytes", 0) or 0)
+                self.preview_info_label.setText(
+                    self._tr(
+                        f"Animation exported: {name} ({scope}, {frame_count} frames, {size_bytes / 1024:.1f} KiB).",
+                        f"Wyeksportowano animację: {name} ({scope}, {frame_count} klatek, {size_bytes / 1024:.1f} KiB).",
+                    )
+                )
+            return
+        if action == "animation-import":
+            result = data.get("result", {})
+            if isinstance(result, dict):
+                mode = str(result.get("mode", "replace"))
+                raw_paths = result.get("frame_paths", [])
+                copied_paths = [str(item) for item in raw_paths] if isinstance(raw_paths, list) else []
+                raw_durations = result.get("frame_durations_ms", [])
+                frame_durations: list[int] = []
+                if isinstance(raw_durations, list):
+                    for item in raw_durations:
+                        try:
+                            frame_durations.append(max(1, int(float(item))))
+                        except Exception:
+                            continue
+                self._finish_animation_frame_import(mode, copied_paths, frame_durations)
+            return
+        if action == "animation-stabilize":
+            result = data.get("result", {})
+            if isinstance(result, dict):
+                self._finish_animation_stabilize(result)
+            return
         if action != "status":
             status_payload = data.get("status", data)
             result_payload = data.get("result", {})
@@ -7612,7 +10526,7 @@ class TrofeoGui(QMainWindow):
                     try:
                         normalized = normalize_theme_document(document)
                     except Exception as exc:
-                        QMessageBox.warning(self, "Błąd motywu", str(exc))
+                        QMessageBox.warning(self, self._tr("Theme error", "Błąd motywu"), str(exc))
                         normalized = None
                     if normalized is not None:
                         self.theme_doc_model = deepcopy(normalized)
@@ -7655,6 +10569,9 @@ class TrofeoGui(QMainWindow):
                     if image_path:
                         self.append_log(f"[theme-doc-apply] rendered image: {image_path}")
                 self._rebuild_theme_asset_gallery()
+                self._set_designer_toolbar_feedback(
+                    self._tr("Theme applied to LCD.", "Motyw zastosowany na LCD.")
+                )
         if is_designer_preview:
             preview_seq = 0
             if "::" in action:
@@ -7867,7 +10784,7 @@ class TrofeoGui(QMainWindow):
     def browse_image(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
             self,
-            "Wybierz obraz",
+            self._tr("Choose image", "Wybierz obraz"),
             str(Path.cwd()),
             "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif);;All files (*)",
         )
@@ -7877,7 +10794,11 @@ class TrofeoGui(QMainWindow):
     def send_image(self) -> None:
         image_path = self.image_edit.text().strip()
         if not image_path:
-            QMessageBox.information(self, "Info", "Podaj ścieżkę do obrazu.")
+            QMessageBox.information(
+                self,
+                self._tr("Information", "Informacja"),
+                self._tr("Enter the path to an image file.", "Podaj ścieżkę do obrazu."),
+            )
             return
         payload = {
             "path": image_path,
@@ -7896,7 +10817,7 @@ class TrofeoGui(QMainWindow):
     def browse_theme_path(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
             self,
-            "Wybierz plik theme",
+            self._tr("Choose theme file", "Wybierz plik theme"),
             str(Path.cwd()),
             "Theme files (*.json *.png *.jpg *.jpeg *.bmp *.webp *.gif);;JSON (*.json);;Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif);;All files (*)",
         )
@@ -7907,7 +10828,11 @@ class TrofeoGui(QMainWindow):
         name = self.theme_name_edit.text().strip()
         path = self.theme_path_edit.text().strip()
         if not name or not path:
-            QMessageBox.information(self, "Info", "Podaj nazwę i plik theme.")
+            QMessageBox.information(
+                self,
+                self._tr("Information", "Informacja"),
+                self._tr("Enter a theme name and file path.", "Podaj nazwę i plik theme."),
+            )
             return
         payload = {
             "name": name,
@@ -7919,7 +10844,11 @@ class TrofeoGui(QMainWindow):
     def remove_theme(self) -> None:
         name = self.theme_combo.currentText().strip()
         if not name:
-            QMessageBox.information(self, "Info", "Brak wybranego theme.")
+            QMessageBox.information(
+                self,
+                self._tr("Information", "Informacja"),
+                self._tr("No theme selected.", "Brak wybranego theme."),
+            )
             return
         payload = {"name": name}
         self.api_call("theme-remove", "POST", "/v1/themes/remove", payload, timeout=10.0)
@@ -7927,7 +10856,11 @@ class TrofeoGui(QMainWindow):
     def apply_theme(self) -> None:
         name = self.theme_combo.currentText().strip()
         if not name:
-            QMessageBox.information(self, "Info", "Brak wybranego theme.")
+            QMessageBox.information(
+                self,
+                self._tr("Information", "Informacja"),
+                self._tr("No theme selected.", "Brak wybranego theme."),
+            )
             return
         item = self.theme_items.get(name, {})
         path = str(item.get("path", "")).strip()
@@ -8055,7 +10988,7 @@ class TrofeoGui(QMainWindow):
             try:
                 image = render_theme_file(path)
                 try:
-                    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+                    raw = parse_theme_json_text(Path(path).read_text(encoding="utf-8"))
                     if isinstance(raw, dict):
                         rotation = int(raw.get("canvas", {}).get("rotation", 0)) % 360
                         if rotation:
@@ -8373,7 +11306,7 @@ class TrofeoGui(QMainWindow):
             return None
         try:
             resolved = self._resolve_theme_asset_path(path)
-            raw = json.loads(resolved.read_text(encoding="utf-8"))
+            raw = parse_theme_json_text(resolved.read_text(encoding="utf-8"))
             return raw if isinstance(raw, dict) else None
         except Exception:
             return None
@@ -8431,11 +11364,12 @@ class TrofeoGui(QMainWindow):
 
     def _show_library_theme_card_menu(self, theme_name: str, theme_item: dict[str, Any], anchor: QWidget) -> None:
         menu = QMenu(self)
-        edit_action = menu.addAction("Edytuj")
-        preview_action = menu.addAction("Podgląd")
-        apply_action = menu.addAction("Zastosuj")
-        duplicate_action = menu.addAction("Duplikuj")
-        remove_action = menu.addAction("Usuń")
+        tr = self._tr
+        edit_action = menu.addAction(tr("Edit", "Edytuj"))
+        preview_action = menu.addAction(tr("Preview", "Podgląd"))
+        apply_action = menu.addAction(tr("Apply", "Zastosuj"))
+        duplicate_action = menu.addAction(tr("Duplicate", "Duplikuj"))
+        remove_action = menu.addAction(tr("Remove", "Usuń"))
         chosen = menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
         if chosen == edit_action:
             self._library_select_theme(theme_name, theme_item)
@@ -8452,11 +11386,18 @@ class TrofeoGui(QMainWindow):
         theme_type = str(theme_item.get("type", "")).strip()
         path = str(theme_item.get("path", "")).strip()
         if theme_type != "theme-doc" or not path:
-            QMessageBox.information(self, "Duplikowanie motywu", "Duplikowanie jest dostępne tylko dla zapisanych motywów edytowalnych.")
+            QMessageBox.information(
+                self,
+                self._tr("Duplicate theme", "Duplikowanie motywu"),
+                self._tr(
+                    "Duplication is only available for saved editable theme documents.",
+                    "Duplikowanie jest dostępne tylko dla zapisanych motywów edytowalnych.",
+                ),
+            )
             return
         try:
             src_path = self._resolve_theme_asset_path(path)
-            document = json.loads(src_path.read_text(encoding="utf-8"))
+            document = parse_theme_json_text(src_path.read_text(encoding="utf-8"))
             if not isinstance(document, dict):
                 raise ValueError("Plik motywu nie zawiera poprawnego dokumentu.")
             new_name = f"{theme_name} Kopia"
@@ -8476,7 +11417,7 @@ class TrofeoGui(QMainWindow):
                 timeout=10.0,
             )
         except Exception as exc:
-            QMessageBox.warning(self, "Duplikowanie motywu", str(exc))
+            QMessageBox.warning(self, self._tr("Duplicate theme", "Duplikowanie motywu"), str(exc))
 
     def _rebuild_theme_asset_gallery(self) -> None:
         if not hasattr(self, "asset_gallery_layout"):
@@ -8555,7 +11496,7 @@ class TrofeoGui(QMainWindow):
         animation = self._current_animation_effect()
         animation["enabled"] = False
         self._refresh_animation_controls()
-        self._set_image_preview_label(self.background_preview_label, self.bg_path_edit.text(), empty_text="Podgląd tła")
+        self._set_image_preview_label(self.background_preview_label, self.bg_path_edit.text(), empty_text=self._empty_background_preview_caption())
         self.on_background_field_changed()
 
     def _load_ttcr_stat_rules(self) -> dict[str, str]:
@@ -8709,11 +11650,22 @@ class TrofeoGui(QMainWindow):
             self._sync_designer_preview_policy()
             self.preview_theme_doc()
         except Exception as exc:
-            QMessageBox.warning(self, "Import TTCR", f"Nie udało się zapisać poprawionego mapowania statystyk:\n{exc}")
+            QMessageBox.warning(
+                self,
+                self._tr("TTCR import", "Import TTCR"),
+                self._tr(
+                    "Could not save the corrected stat mapping:\n{err}",
+                    "Nie udało się zapisać poprawionego mapowania statystyk:\n{err}",
+                ).format(err=exc),
+            )
 
     def import_ttcr_theme_bundle(self) -> None:
         if import_ttcr_theme is None:
-            QMessageBox.warning(self, "Import TTCR", "Moduł importu TTCR nie jest dostępny.")
+            QMessageBox.warning(
+                self,
+                self._tr("TTCR import", "Import TTCR"),
+                self._tr("The TTCR import module is not available.", "Moduł importu TTCR nie jest dostępny."),
+            )
             return
         default_dir = Path.cwd()
         ttcr_root = Path.cwd() / "TTCR_Windows"
@@ -8732,7 +11684,7 @@ class TrofeoGui(QMainWindow):
         try:
             result = import_ttcr_theme(source_path, output_path)
         except Exception as exc:
-            QMessageBox.warning(self, "Import TTCR", str(exc))
+            QMessageBox.warning(self, self._tr("TTCR import", "Import TTCR"), str(exc))
             return
 
         document = result.get("document")
@@ -8895,7 +11847,7 @@ class TrofeoGui(QMainWindow):
         self.write_designer_to_json()
         self.refresh_designer_element_list()
         self.designer_element_list.setCurrentRow(len(items) - 1)
-        self._set_image_preview_label(self.designer_image_preview_label, new_item["path"], empty_text="Podgląd obrazu")
+        self._set_image_preview_label(self.designer_image_preview_label, new_item["path"], empty_text=self._empty_image_preview_caption())
         self.schedule_preview_theme_doc()
 
     def _apply_runtime_theme_card(self, theme_name: str) -> None:
@@ -8939,7 +11891,7 @@ class TrofeoGui(QMainWindow):
         for item in self._template_cards:
             path = str(Path(item["path"]).resolve())
             try:
-                document = json.loads(Path(path).read_text(encoding="utf-8"))
+                document = parse_theme_json_text(Path(path).read_text(encoding="utf-8"))
                 if not isinstance(document, dict):
                     continue
             except Exception:
@@ -8955,7 +11907,7 @@ class TrofeoGui(QMainWindow):
     def browse_new_theme_path(self) -> None:
         selected, _ = QFileDialog.getSaveFileName(
             self,
-            "Zapisz nowy motyw",
+            self._tr("Save new theme", "Zapisz nowy motyw"),
             self.new_theme_path_edit.text().strip() or str(self._default_new_theme_path()),
             "JSON (*.json);;All files (*)",
         )
@@ -9003,7 +11955,7 @@ class TrofeoGui(QMainWindow):
             src_path = Path(template_path)
             if not src_path.is_absolute():
                 src_path = Path.cwd() / src_path
-            document = json.loads(src_path.read_text(encoding="utf-8"))
+            document = parse_theme_json_text(src_path.read_text(encoding="utf-8"))
             if not isinstance(document, dict):
                 raise ValueError("Szablon nie jest poprawnym obiektem JSON.")
             document.setdefault("meta", {})
@@ -9029,7 +11981,7 @@ class TrofeoGui(QMainWindow):
             QMessageBox.warning(self, "Template Error", f"Nie znaleziono szablonu:\n{resolved}")
             return
         try:
-            raw = json.loads(resolved.read_text(encoding="utf-8"))
+            raw = parse_theme_json_text(resolved.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
                 raise ValueError("Template musi być obiektem JSON.")
             normalized = normalize_theme_document(raw)
@@ -9079,17 +12031,98 @@ class TrofeoGui(QMainWindow):
             QMessageBox.information(self, "Info", "Motyw jest pusty.")
             return None
         try:
-            document = json.loads(raw)
+            document = parse_theme_json_text(raw)
         except json.JSONDecodeError as exc:
-            QMessageBox.warning(self, "Błąd motywu", f"Nie udało się odczytać danych motywu: {exc}")
+            QMessageBox.warning(
+                self,
+                self._tr("Theme error", "Błąd motywu"),
+                self._tr("Could not read theme data: {err}", "Nie udało się odczytać danych motywu: {err}").format(err=exc),
+            )
             return None
         if not isinstance(document, dict):
-            QMessageBox.warning(self, "Błąd motywu", "Plik motywu ma niepoprawny format.")
+            QMessageBox.warning(
+                self,
+                self._tr("Theme error", "Błąd motywu"),
+                self._tr("The theme file format is invalid.", "Plik motywu ma niepoprawny format."),
+            )
             return None
         return document
 
     def _set_theme_doc_editor_document(self, document: dict[str, Any]) -> None:
         self.theme_doc_editor.setPlainText(json.dumps(document, ensure_ascii=False, indent=2))
+
+    def open_current_theme_json_externally(self, *, from_animation_studio: bool = False) -> None:
+        if self.theme_doc_model is None:
+            QMessageBox.information(
+                self,
+                self._tr("Theme JSON", "JSON motywu"),
+                self._tr("Load or create a theme first.", "Najpierw wczytaj lub utwórz motyw."),
+            )
+            return
+        path = self.theme_doc_path_edit.text().strip()
+        if not path:
+            QMessageBox.information(
+                self,
+                self._tr("Theme JSON", "JSON motywu"),
+                self._tr(
+                    "Set the theme file path first (JSON tab — theme file field).",
+                    "Najpierw ustaw ścieżkę pliku motywu (zakładka JSON — pole pliku).",
+                ),
+            )
+            return
+        resolved = Path(path).expanduser()
+        if not resolved.is_absolute():
+            resolved = (Path.cwd() / resolved).resolve()
+        try:
+            normalized = normalize_theme_document(deepcopy(self.theme_doc_model))
+            self.theme_doc_model = normalized
+            save_theme_document(resolved, normalized, include_doc_header=True)
+            self._set_theme_doc_editor_document(normalized)
+            self._schedule_theme_autosave()
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                self._tr("Theme JSON", "JSON motywu"),
+                self._tr(f"Could not write theme file:\n{exc}", f"Nie można zapisać pliku motywu:\n{exc}"),
+            )
+            return
+        url = QUrl.fromLocalFile(str(resolved.resolve()))
+        if not QDesktopServices.openUrl(url):
+            QMessageBox.warning(
+                self,
+                self._tr("Theme JSON", "JSON motywu"),
+                self._tr(
+                    f"No application opened this file:\n{resolved}",
+                    f"Nie otwarto pliku w domyślnej aplikacji:\n{resolved}",
+                ),
+            )
+            return
+        extra = ""
+        if from_animation_studio:
+            extra = " " + self._tr(
+                "Background animation: effects.animation.",
+                "Animacja tła: effects.animation.",
+            )
+        self._set_designer_toolbar_feedback(
+            self._tr(
+                "Theme JSON opened in external editor. After saving there, use Load theme to refresh." + extra,
+                "Otwarto plik JSON motywu w zewnętrznym edytorze. Po zapisie tam użyj „Wczytaj motyw”, by odświeżyć."
+                + extra,
+            ),
+            auto_clear_ms=9000,
+        )
+
+    def insert_theme_json_field_guide_in_editor(self) -> None:
+        guide = theme_json_documentation_preamble()
+        cur = self.theme_doc_editor.toPlainText()
+        if "Open Trofeo LCD — theme JSON" in cur[:2048]:
+            QMessageBox.information(
+                self,
+                self._tr("Field guide", "Opis pól"),
+                self._tr("The guide is already at the beginning of the editor.", "Opis jest już na początku edytora."),
+            )
+            return
+        self.theme_doc_editor.setPlainText(guide + cur)
 
     def _theme_doc_editor_differs_from_model(self) -> bool:
         if not isinstance(self.theme_doc_model, dict):
@@ -9113,7 +12146,7 @@ class TrofeoGui(QMainWindow):
         try:
             normalized = normalize_theme_document(document)
         except Exception as exc:
-            QMessageBox.warning(self, "Błąd motywu", str(exc))
+            QMessageBox.warning(self, self._tr("Theme error", "Błąd motywu"), str(exc))
             return None
         self.theme_doc_model = deepcopy(normalized)
         self._set_theme_doc_editor_document(normalized)
@@ -9141,6 +12174,66 @@ class TrofeoGui(QMainWindow):
             return
         payload = {"path": theme_path, "document": document}
         self.api_call("theme-doc-save", "POST", "/v1/theme-doc/save", payload, timeout=20.0)
+
+    def _suggest_theme_save_as_path(self) -> Path:
+        raw = self.theme_doc_path_edit.text().strip()
+        if raw:
+            current = Path(raw).expanduser()
+            if not current.is_absolute():
+                current = (Path.cwd() / current).resolve()
+            parent = current.parent if current.parent else (Path.cwd() / "themes").resolve()
+            stem = current.stem or "theme"
+            candidate = parent / f"{stem}_copy.json"
+        else:
+            parent = (Path.cwd() / "themes").resolve()
+            candidate = parent / "theme_copy.json"
+        index = 2
+        while candidate.exists():
+            candidate = candidate.with_name(f"{candidate.stem.rsplit('_', 1)[0] if candidate.stem.endswith(f'_{index - 1}') else candidate.stem}_{index}.json")
+            index += 1
+        return candidate
+
+    def save_theme_doc_as(self, *, from_animation_studio: bool = False) -> None:
+        document = self._current_theme_document()
+        if document is None:
+            return
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            self._tr("Save Theme As", "Zapisz motyw jako"),
+            str(self._suggest_theme_save_as_path()),
+            "JSON (*.json);;All files (*)",
+        )
+        if not selected:
+            return
+        target = Path(selected).expanduser()
+        if target.suffix.lower() != ".json":
+            target = target.with_suffix(".json")
+        if not target.is_absolute():
+            target = (Path.cwd() / target).resolve()
+
+        normalized = normalize_theme_document(deepcopy(document))
+        self.theme_doc_path_edit.setText(str(target))
+        self.theme_doc_model = deepcopy(normalized)
+        self._set_theme_doc_editor_document(normalized)
+        self._load_background_fields()
+        self.refresh_designer_element_list()
+        self.load_selected_designer_item()
+        self._update_preview_canvas_overlay()
+        self._sync_designer_preview_policy()
+        self._schedule_theme_autosave()
+        self._run_theme_library_workflow(
+            action="studio-theme-save",
+            theme_path=str(target),
+            document=normalized,
+            apply_after=False,
+        )
+        origin = self._tr("Animation Studio", "Studio animacji") if from_animation_studio else self._tr("Theme Designer", "Projektant")
+        self._set_designer_toolbar_feedback(
+            self._tr(
+                f"{origin}: saving theme copy {target.name}.",
+                f"{origin}: zapisuję kopię motywu {target.name}.",
+            )
+        )
 
     def _current_theme_library_name(self, document: dict[str, Any] | None = None) -> str:
         if isinstance(document, dict):
@@ -10236,7 +13329,14 @@ class TrofeoGui(QMainWindow):
 
     def prepare_image_asset(self, source_edit: QLineEdit) -> None:
         if not self._image_tools_available():
-            QMessageBox.warning(self, "Brak Pillow", "Moduł przygotowania obrazów nie jest dostępny.")
+            QMessageBox.warning(
+                self,
+                self._tr("Pillow not installed", "Brak Pillow"),
+                self._tr(
+                    "Image preparation is not available in this environment.",
+                    "Moduł przygotowania obrazów nie jest dostępny.",
+                ),
+            )
             return
         source = source_edit.text().strip()
         if not source:
@@ -10253,7 +13353,11 @@ class TrofeoGui(QMainWindow):
         if not resolved.is_absolute():
             resolved = (Path.cwd() / resolved).resolve()
         if not resolved.exists():
-            QMessageBox.warning(self, "Brak pliku", f"Nie znaleziono obrazu:\n{resolved}")
+            QMessageBox.warning(
+                self,
+                self._tr("Missing file", "Brak pliku"),
+                self._tr("Image not found:\n{path}", "Nie znaleziono obrazu:\n{path}").format(path=resolved),
+            )
             return
         dlg = ImagePrepDialog(self, resolved)
         if dlg.exec() != QDialog.Accepted or dlg.output_path is None:
@@ -10263,10 +13367,21 @@ class TrofeoGui(QMainWindow):
 
     def import_background_image(self) -> None:
         if not self._image_tools_available():
-            QMessageBox.warning(self, "Brak Pillow", "Moduł przygotowania obrazów nie jest dostępny.")
+            QMessageBox.warning(
+                self,
+                self._tr("Pillow not installed", "Brak Pillow"),
+                self._tr(
+                    "Image preparation is not available in this environment.",
+                    "Moduł przygotowania obrazów nie jest dostępny.",
+                ),
+            )
             return
         if not self._ensure_theme_doc_model():
-            QMessageBox.warning(self, "Błąd motywu", "Najpierw wczytaj poprawny motyw w projektancie.")
+            QMessageBox.warning(
+                self,
+                self._tr("Theme error", "Błąd motywu"),
+                self._tr("Load a valid theme in the designer first.", "Najpierw wczytaj poprawny motyw w projektancie."),
+            )
             return
         chosen, _ = QFileDialog.getOpenFileName(
             self,
@@ -10280,7 +13395,11 @@ class TrofeoGui(QMainWindow):
         if not source.is_absolute():
             source = (Path.cwd() / source).resolve()
         if not source.exists():
-            QMessageBox.warning(self, "Brak pliku", f"Nie znaleziono obrazu:\n{source}")
+            QMessageBox.warning(
+                self,
+                self._tr("Missing file", "Brak pliku"),
+                self._tr("Image not found:\n{path}", "Nie znaleziono obrazu:\n{path}").format(path=source),
+            )
             return
         out = self._run_theme_image_import(source, asset_kind="background", button_text="Importuj tło")
         if out is None:
@@ -10296,7 +13415,7 @@ class TrofeoGui(QMainWindow):
         )
         self.append_log(f"[background-import] {source} -> {out}")
         self._refresh_animation_controls()
-        self._set_image_preview_label(self.background_preview_label, self.bg_path_edit.text(), empty_text="Podgląd tła")
+        self._set_image_preview_label(self.background_preview_label, self.bg_path_edit.text(), empty_text=self._empty_background_preview_caption())
 
     def clear_background_image(self) -> None:
         if not self._ensure_theme_doc_model():
@@ -10309,7 +13428,7 @@ class TrofeoGui(QMainWindow):
         animation["enabled"] = False
         self.preview_info_label.setText("Tło wyczyszczone. Możesz wrócić do generated/color albo zaimportować nowe tło.")
         self._refresh_animation_controls()
-        self._set_image_preview_label(self.background_preview_label, "", empty_text="Podgląd tła")
+        self._set_image_preview_label(self.background_preview_label, "", empty_text=self._empty_background_preview_caption())
 
     def _load_background_fields(self) -> None:
         if self.theme_doc_model is None:
@@ -10337,7 +13456,7 @@ class TrofeoGui(QMainWindow):
             current_frame = min(max(0, int(animation.get("current_frame", 0))), max(0, len(frame_paths) - 1))
             self.bg_animation_frame_spin.setMaximum(max(0, len(frame_paths) - 1))
             self.bg_animation_frame_spin.setValue(current_frame)
-            self.bg_animation_count_label.setText(f"{len(frame_paths)} klatek")
+            self.bg_animation_count_label.setText(self._format_animation_frame_count(len(frame_paths)))
         finally:
             self._designer_updating = False
         self._refresh_all_color_previews()
@@ -10350,7 +13469,7 @@ class TrofeoGui(QMainWindow):
         self._set_image_preview_label(
             self.background_preview_label,
             preview_path,
-            empty_text="Podgląd tła",
+            empty_text=self._empty_background_preview_caption(),
         )
 
     def reload_designer_from_json(self) -> None:
@@ -10361,7 +13480,7 @@ class TrofeoGui(QMainWindow):
             self.push_designer_history()
             self.theme_doc_model = normalize_theme_document(document)
         except Exception as exc:
-            QMessageBox.warning(self, "Błąd motywu", str(exc))
+            QMessageBox.warning(self, self._tr("Theme error", "Błąd motywu"), str(exc))
             return
         self._sync_designer_preview_policy()
         self._load_background_fields()
@@ -10753,24 +13872,11 @@ class TrofeoGui(QMainWindow):
     def _update_designer_element_list_height(self) -> None:
         if not hasattr(self, "designer_element_list"):
             return
-        row_heights: list[int] = []
-        for row in range(self.designer_element_list.count()):
-            item = self.designer_element_list.item(row)
-            if item is None or item.isHidden():
-                continue
-            hint = item.sizeHint()
-            row_heights.append(max(40, hint.height()))
-        visible_rows = len(row_heights)
-        spacing = max(0, self.designer_element_list.spacing())
-        frame = max(6, self.designer_element_list.frameWidth() * 2)
-        if visible_rows <= 0:
-            target_height = 190
-        else:
-            body_height = sum(row_heights[:6]) + max(0, min(visible_rows, 6) - 1) * spacing
-            target_height = frame + body_height + 8
-        target_height = max(190, min(420, target_height))
-        self.designer_element_list.setMinimumHeight(target_height)
-        self.designer_element_list.setMaximumHeight(target_height)
+        # Keep the left panel stable. The list is the only vertically expanding
+        # child; recalculating max height from visible rows makes the Designer
+        # jump while filtering or changing selection.
+        self.designer_element_list.setMinimumHeight(260)
+        self.designer_element_list.setMaximumHeight(16777215)
 
     def apply_studio_layout_preset(self, preset_name: str) -> None:
         splitter = getattr(self, "studio_splitter", None)
@@ -11065,14 +14171,15 @@ class TrofeoGui(QMainWindow):
             item.setSelected(True)
             self.designer_element_list.setCurrentItem(item)
         menu = QMenu(self)
-        visible_action = menu.addAction("Pokaż / Ukryj")
-        lock_action = menu.addAction("Blokuj / Odblokuj")
+        tr = self._tr
+        visible_action = menu.addAction(tr("Show / hide", "Pokaż / Ukryj"))
+        lock_action = menu.addAction(tr("Lock / unlock", "Blokuj / Odblokuj"))
         menu.addSeparator()
-        up_action = menu.addAction("Warstwa +")
-        down_action = menu.addAction("Warstwa -")
+        up_action = menu.addAction(tr("Layer +", "Warstwa +"))
+        down_action = menu.addAction(tr("Layer −", "Warstwa -"))
         menu.addSeparator()
-        dup_action = menu.addAction("Duplikuj")
-        del_action = menu.addAction("Usuń")
+        dup_action = menu.addAction(tr("Duplicate", "Duplikuj"))
+        del_action = menu.addAction(tr("Delete", "Usuń"))
         chosen = menu.exec(self.designer_element_list.mapToGlobal(pos))
         if chosen == visible_action:
             self.toggle_selected_visible()
@@ -11554,7 +14661,7 @@ class TrofeoGui(QMainWindow):
         self._set_image_preview_label(
             self.designer_image_preview_label,
             preview_image_path,
-            empty_text="Podgląd obrazu",
+            empty_text=self._empty_image_preview_caption(),
         )
         self._update_preview_canvas_overlay()
         self._update_gauge_stat_inspector_visibility()
@@ -11571,7 +14678,7 @@ class TrofeoGui(QMainWindow):
 
     def _populate_designer_theme_gauge_style_combo(self) -> None:
         self.designer_theme_gauge_style_combo.clear()
-        self.designer_theme_gauge_style_combo.addItem("(domyślny z nazwy motywu)", "")
+        self.designer_theme_gauge_style_combo.addItem("(default from theme name)", "")
         style_keys = sorted(set(GAUGE_PRESETS.keys()) | set(THEME_STYLE_PRESET.keys()))
         for sk in style_keys:
             if sk in GAUGE_PRESETS:
@@ -11989,7 +15096,7 @@ class TrofeoGui(QMainWindow):
             item["rotation"] = int(self.designer_rotation_spin.value())
             source = str(item.get("source", "")).strip()
             preview_path = self._current_media_dynamic_path(source) if source in {"media_cover", "media_video_frame"} else item["path"]
-            self._set_image_preview_label(self.designer_image_preview_label, preview_path, empty_text="Podgląd obrazu")
+            self._set_image_preview_label(self.designer_image_preview_label, preview_path, empty_text=self._empty_image_preview_caption())
         elif collection == "panels":
             item["rect"] = [
                 self._snap_value(int(self.designer_x_spin.value())),
@@ -12026,10 +15133,21 @@ class TrofeoGui(QMainWindow):
 
     def import_image_as_designer_element(self) -> None:
         if not self._image_tools_available():
-            QMessageBox.warning(self, "Brak Pillow", "Moduł przygotowania obrazów nie jest dostępny.")
+            QMessageBox.warning(
+                self,
+                self._tr("Pillow not installed", "Brak Pillow"),
+                self._tr(
+                    "Image preparation is not available in this environment.",
+                    "Moduł przygotowania obrazów nie jest dostępny.",
+                ),
+            )
             return
         if not self._ensure_theme_doc_model():
-            QMessageBox.warning(self, "Błąd motywu", "Najpierw wczytaj poprawny motyw w projektancie.")
+            QMessageBox.warning(
+                self,
+                self._tr("Theme error", "Błąd motywu"),
+                self._tr("Load a valid theme in the designer first.", "Najpierw wczytaj poprawny motyw w projektancie."),
+            )
             return
         chosen, _ = QFileDialog.getOpenFileName(
             self,
@@ -12043,7 +15161,11 @@ class TrofeoGui(QMainWindow):
         if not source.is_absolute():
             source = (Path.cwd() / source).resolve()
         if not source.exists():
-            QMessageBox.warning(self, "Brak pliku", f"Nie znaleziono obrazu:\n{source}")
+            QMessageBox.warning(
+                self,
+                self._tr("Missing file", "Brak pliku"),
+                self._tr("Image not found:\n{path}", "Nie znaleziono obrazu:\n{path}").format(path=source),
+            )
             return
         prepared_path = self._run_theme_image_import(source, asset_kind="image", button_text="Importuj obraz")
         if prepared_path is None:
@@ -12228,7 +15350,11 @@ class TrofeoGui(QMainWindow):
             if not source.is_absolute():
                 source = (Path.cwd() / source).resolve()
             if not self._ensure_theme_doc_model():
-                QMessageBox.warning(self, "Błąd motywu", "Najpierw wczytaj poprawny motyw w projektancie.")
+                QMessageBox.warning(
+                    self,
+                    self._tr("Theme error", "Błąd motywu"),
+                    self._tr("Load a valid theme in the designer first.", "Najpierw wczytaj poprawny motyw w projektancie."),
+                )
                 return
             if source.exists() and self._image_tools_available():
                 prepared_path = self._run_theme_image_import(source, asset_kind="image", button_text="Importuj obraz")
@@ -12236,7 +15362,7 @@ class TrofeoGui(QMainWindow):
                     self.designer_path_edit.setText(self._theme_display_path(prepared_path))
             else:
                 self.designer_path_edit.setText(self._theme_display_path(source))
-            self._set_image_preview_label(self.designer_image_preview_label, self.designer_path_edit.text(), empty_text="Podgląd obrazu")
+            self._set_image_preview_label(self.designer_image_preview_label, self.designer_path_edit.text(), empty_text=self._empty_image_preview_caption())
 
     def browse_background_path(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
@@ -12250,7 +15376,11 @@ class TrofeoGui(QMainWindow):
             if not source.is_absolute():
                 source = (Path.cwd() / source).resolve()
             if not self._ensure_theme_doc_model():
-                QMessageBox.warning(self, "Błąd motywu", "Najpierw wczytaj poprawny motyw w projektancie.")
+                QMessageBox.warning(
+                    self,
+                    self._tr("Theme error", "Błąd motywu"),
+                    self._tr("Load a valid theme in the designer first.", "Najpierw wczytaj poprawny motyw w projektancie."),
+                )
                 return
             if source.exists() and self._image_tools_available():
                 prepared_path = self._run_theme_image_import(source, asset_kind="background", button_text="Importuj tło")
@@ -12266,7 +15396,7 @@ class TrofeoGui(QMainWindow):
             animation = self._current_animation_effect()
             animation["enabled"] = False
             self._refresh_animation_controls()
-            self._set_image_preview_label(self.background_preview_label, self.bg_path_edit.text(), empty_text="Podgląd tła")
+            self._set_image_preview_label(self.background_preview_label, self.bg_path_edit.text(), empty_text=self._empty_background_preview_caption())
 
     def on_background_field_changed(self, *_args: object) -> None:
         if self._designer_updating or self.theme_doc_model is None:
@@ -12313,7 +15443,7 @@ class TrofeoGui(QMainWindow):
             preview_path = self._current_animation_preview_path()
         if not preview_path:
             preview_path = background.get("path", "")
-        self._set_image_preview_label(self.background_preview_label, str(preview_path), empty_text="Podgląd tła")
+        self._set_image_preview_label(self.background_preview_label, str(preview_path), empty_text=self._empty_background_preview_caption())
         self.schedule_preview_theme_doc()
 
     def select_designer_element_from_canvas(self, collection: str, index: int) -> None:
@@ -12709,7 +15839,7 @@ class TrofeoGui(QMainWindow):
             try:
                 self.theme_doc_model = normalize_theme_document(document)
             except Exception as exc:
-                QMessageBox.warning(self, "Błąd motywu", str(exc))
+                QMessageBox.warning(self, self._tr("Theme error", "Błąd motywu"), str(exc))
                 return
 
         model = deepcopy(self.theme_doc_model)

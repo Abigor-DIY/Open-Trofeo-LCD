@@ -11,7 +11,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Keep a static background with hot-reload overlay on TRCC LCD")
     parser.add_argument("image")
     parser.add_argument("--overlay", required=True)
-    parser.add_argument("--interval", type=float, default=0.5)
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=0.5,
+        help="How often to poll the overlay file for changes (seconds)",
+    )
+    parser.add_argument(
+        "--keepalive",
+        type=float,
+        default=1.5,
+        help="Resend the last frame at least this often so the LCD does not fall back to the vendor logo",
+    )
     parser.add_argument("--duration", type=float, default=0.0)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
@@ -101,13 +112,17 @@ def main() -> int:
     deadline = time.monotonic() + max(0.0, float(args.duration)) if float(args.duration) > 0 else None
     sleep_s = max(0.05, float(args.interval))
     try:
+        keepalive_s = max(sleep_s, float(args.keepalive))
+    except Exception:
+        keepalive_s = max(sleep_s, 1.5)
+    last_send_at = 0.0
+    try:
         while True:
-            if _refresh_overlay():
+            now = time.monotonic()
+            overlay_changed = _refresh_overlay()
+            if overlay_changed or (now - last_send_at >= keepalive_s):
                 lcd.send(_active_image())
-            else:
-                # TRCC LCD needs regular refresh/keepalive even when the overlay
-                # did not change, otherwise firmware falls back to the default logo.
-                lcd.send(_active_image())
+                last_send_at = now
             if deadline is not None and time.monotonic() >= deadline:
                 break
             time.sleep(sleep_s)

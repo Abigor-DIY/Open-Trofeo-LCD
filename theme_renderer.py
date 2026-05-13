@@ -83,6 +83,7 @@ def _animation_frame_path(theme: ThemeDocument, base_dir: Path) -> Path | None:
     return _resolve_asset_path(base_dir, raw_path)
 
 
+
 def _load_font(
     size: int,
     *,

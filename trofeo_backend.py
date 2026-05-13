@@ -413,6 +413,16 @@ class ReplayController:
             "height": image.height,
         }
 
+    def _save_image_atomic(self, image: Image.Image, out_path: str) -> Path:
+        target = Path(out_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=f"{target.stem}-", suffix=target.suffix or ".png", dir=str(target.parent))
+        os.close(fd)
+        tmp_target = Path(tmp_name)
+        image.save(tmp_target)
+        os.replace(tmp_target, target)
+        return target
+
     def _merge_live_stats(self, media_override: dict[str, str] | None = None) -> dict[str, str]:
         values = dict(self.stats_provider.snapshot().values)
         if isinstance(media_override, dict):
@@ -580,26 +590,13 @@ class ReplayController:
         out_path: str | None = None,
         stats_override: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        theme = ThemeDocument(normalize_theme_document(document))
-        base_dir = self.cfg.workdir if path is None else to_abs(self.cfg.workdir, path).parent
-        image = render_theme_document(
-            theme,
-            base_dir=base_dir,
-            stats_provider=self.stats_provider,
+        image = self._render_theme_overlay_image(
+            document,
+            path=path,
             stats_override=stats_override,
-            transparent_background=True,
-            include_images=True,
-            include_effects=False,
-            output_mode="RGBA",
         )
         if out_path:
-            target = Path(out_path)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp_name = tempfile.mkstemp(prefix=f"{target.stem}-", suffix=target.suffix or ".png", dir=str(target.parent))
-            os.close(fd)
-            tmp_target = Path(tmp_name)
-            image.save(tmp_target)
-            os.replace(tmp_target, target)
+            target = self._save_image_atomic(image, out_path)
         else:
             fd, tmp_name = tempfile.mkstemp(prefix="trofeo-theme-overlay-", suffix=".png")
             os.close(fd)
@@ -611,17 +608,40 @@ class ReplayController:
             "height": image.height,
         }
 
+    def _render_theme_overlay_image(
+        self,
+        document: dict[str, Any],
+        *,
+        path: str | None = None,
+        stats_override: dict[str, str] | None = None,
+    ) -> Image.Image:
+        theme = ThemeDocument(normalize_theme_document(document))
+        base_dir = self.cfg.workdir if path is None else to_abs(self.cfg.workdir, path).parent
+        return render_theme_document(
+            theme,
+            base_dir=base_dir,
+            stats_provider=self.stats_provider,
+            stats_override=stats_override,
+            transparent_background=True,
+            include_images=True,
+            include_effects=False,
+            output_mode="RGBA",
+        )
+
     def _compose_overlay_frame(self, base_path: str, overlay_path: str, out_path: str) -> dict[str, Any]:
         base = Image.open(base_path).convert("RGBA")
         overlay = Image.open(overlay_path).convert("RGBA")
         composed = Image.alpha_composite(base, overlay)
-        target = Path(out_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(prefix=f"{target.stem}-", suffix=target.suffix or ".png", dir=str(target.parent))
-        os.close(fd)
-        tmp_target = Path(tmp_name)
-        composed.save(tmp_target)
-        os.replace(tmp_target, target)
+        target = self._save_image_atomic(composed, out_path)
+        return {
+            "image_path": str(target),
+            "width": composed.width,
+            "height": composed.height,
+        }
+
+    def _compose_overlay_image(self, base_image: Image.Image, overlay_image: Image.Image, out_path: str) -> dict[str, Any]:
+        composed = Image.alpha_composite(base_image.copy(), overlay_image)
+        target = self._save_image_atomic(composed, out_path)
         return {
             "image_path": str(target),
             "width": composed.width,
@@ -717,6 +737,20 @@ class ReplayController:
                     animation_spec["overlay_path"] = overlay_render["image_path"]
                     live_refresh_overlay_doc = overlay_doc
                     live_refresh_overlay_path = str(overlay_render["image_path"])
+                    # Throttle extra USB sends while the base animation advances, so EQ/media overlay
+                    # refresh cannot starve frame transitions on bandwidth-limited TRCC links.
+                    durs = animation_spec.get("frame_durations_ms", [])
+                    min_ms = 83
+                    if isinstance(durs, list) and durs:
+                        try:
+                            min_ms = min(max(1, int(x)) for x in durs if int(x) > 0)
+                        except Exception:
+                            min_ms = 83
+                    min_s = min_ms / 1000.0
+                    if self._theme_has_fast_visual_live_refresh(theme_input):
+                        animation_spec["overlay_min_interval_s"] = round(max(0.09, min_s * 0.48), 4)
+                    else:
+                        animation_spec["overlay_min_interval_s"] = round(max(0.12, min_s * 0.62), 4)
                 send_result = self._start_trcc_animation_worker(animation_spec)
                 send_result["rendered_animation"] = animation_spec
                 if overlay_doc is not None:
@@ -1146,6 +1180,8 @@ class ReplayController:
         last_media_sig = _media_sig(media_cache)
         if media_cache.get("media_app") and media_cache["media_app"] != "N/A":
             media_players[media_cache["media_app"]] = dict(media_cache)
+        cached_base_rgba: Image.Image | None = None
+        cached_base_sig: tuple[int, int] | None = None
         try:
             stats_cache = self._merge_live_stats(media_cache)
         except Exception:
@@ -1166,6 +1202,18 @@ class ReplayController:
             stats_cache = self._merge_live_stats(media_override)
             last_full_stats_at = time.time()
             return dict(stats_cache)
+
+        def _load_cached_base_rgba() -> Image.Image:
+            nonlocal cached_base_rgba, cached_base_sig
+            if not base_render_path:
+                raise RuntimeError("missing base render path")
+            stat = os.stat(base_render_path)
+            sig = (stat.st_mtime_ns, stat.st_size)
+            if cached_base_rgba is None or cached_base_sig != sig:
+                with Image.open(base_render_path) as img:
+                    cached_base_rgba = img.convert("RGBA").copy()
+                cached_base_sig = sig
+            return cached_base_rgba
 
         def _start_followers() -> tuple[subprocess.Popen | None, subprocess.Popen | None]:
             meta = None
@@ -1369,17 +1417,16 @@ class ReplayController:
                         merged_stats = _refresh_full_live_stats(media_cache)
                     if overlay_document is not None and overlay_path and refresh_target_path and base_render_path:
                         stage_started = time.perf_counter()
-                        self._render_theme_overlay_to_file(
+                        overlay_image = self._render_theme_overlay_image(
                             deepcopy(overlay_document),
                             path=path,
-                            out_path=overlay_path,
                             stats_override=merged_stats,
                         )
                         overlay_render_ms = (time.perf_counter() - stage_started) * 1000.0
                         stage_started = time.perf_counter()
-                        self._compose_overlay_frame(
-                            base_render_path,
-                            overlay_path,
+                        self._compose_overlay_image(
+                            _load_cached_base_rgba(),
+                            overlay_image,
                             refresh_target_path,
                         )
                         compose_ms = (time.perf_counter() - stage_started) * 1000.0
@@ -2048,7 +2095,6 @@ class ReplayController:
         raise RuntimeError(f"static overlay worker failed to start: {startup_tail or 'unknown error'}")
 
     def _start_trcc_animation_worker(self, animation_spec: dict[str, Any]) -> dict[str, Any]:
-        self._preflight_trcc_display_start()
         trcc_bin = Path(self.cfg.trcc_bin).expanduser()
         if not trcc_bin.is_absolute():
             trcc_bin = (self.cfg.workdir / trcc_bin).resolve()
@@ -2070,6 +2116,20 @@ class ReplayController:
                 + ", ".join(missing_frames[:3])
                 + (" ..." if len(missing_frames) > 3 else "")
             )
+        undersized: list[str] = []
+        for raw in frame_paths:
+            p = Path(str(raw)).expanduser()
+            try:
+                if p.stat().st_size < 32:
+                    undersized.append(str(p))
+            except OSError:
+                undersized.append(str(p))
+        if undersized:
+            raise RuntimeError(
+                "animation worker failed to start: empty or truncated frame files: "
+                + ", ".join(undersized[:3])
+                + (" ..." if len(undersized) > 3 else "")
+            )
 
         manifest_path = self._runtime_temp_file("trofeo-theme-anim-", ".json")
         manifest_path.write_text(json.dumps(animation_spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -2081,7 +2141,8 @@ class ReplayController:
                 return ""
 
         startup_tail = ""
-        for attempt in range(2):
+        for attempt in range(3):
+            self._preflight_trcc_display_start()
             ensure_parent(self.cfg.child_log_file)
             child_log = open(self.cfg.child_log_file, "a", encoding="utf-8")
             child_log.write(f"\n[{now_iso()}] start animation manifest {manifest_path} attempt={attempt + 1}\n")
@@ -2109,7 +2170,7 @@ class ReplayController:
                 child_log.close()
                 raise
 
-            time.sleep(1.2)
+            time.sleep(1.0 if attempt == 0 else 1.15)
             self._cleanup_proc_locked()
             if self.proc is not None and self.proc.poll() is None:
                 return {
@@ -2121,11 +2182,16 @@ class ReplayController:
                 }
 
             startup_tail = _read_start_tail().strip()
-            if attempt == 0 and (
+            recoverable = (
                 "in use by another process" in startup_tail.lower()
                 or "operation timed out" in startup_tail.lower()
-            ):
-                self._log("animation worker retry after device busy/timeout")
+                or "usbtimouterror" in startup_tail.lower()
+                or "errno 110" in startup_tail.lower()
+                or "failed to load" in startup_tail.lower()
+                or "resolution is (0, 0)" in startup_tail.lower()
+            )
+            if attempt < 2 and recoverable:
+                self._log("animation worker retry after device busy, USB timeout, or LCD init failure")
                 self._stop_display_worker(timeout=2.0)
                 time.sleep(1.0)
                 continue

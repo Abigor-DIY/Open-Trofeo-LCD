@@ -79,3 +79,33 @@
   - service scripts
   - desktop entry
   - uninstall / upgrade path
+
+## Etap 7 - Animation Studio
+
+- Wydzielic kontroler sekwencji animacji z `trofeo_gui.py` do modulu animacji:
+  - normalizacja `effects.animation`
+  - wybor aktualnej klatki
+  - usuwanie, przesuwanie i powtarzanie klatek
+  - bezpieczne uzupelnianie `frame_durations_ms`
+- Rozdzielic podglad na dwa tryby:
+  - `Frame preview` dla surowej klatki z dysku
+  - `Composite preview` dla finalnego renderu motywu z overlayami
+- Dodac `hold / repeat` bez kopiowania plikow:
+  - wydluzanie czasu klatki przez `duration_ms`
+  - osobna akcja fizycznego duplikowania assetu tylko gdy uzytkownik tego chce
+- Przeniesc ciezsze operacje poza glowny watek GUI:
+  - import klatek
+  - ekstrakcja `.zt`
+  - eksport ZIP
+  - generowanie miniaturek
+- Dodac narzedzia montazowe:
+  - reverse
+  - ping-pong
+  - normalize durations
+  - retime selection
+  - loop range in/out
+- Dodac komfort pracy:
+  - zoom timeline
+  - onion skin
+  - skroty transportu
+  - informacja o koszcie animacji dla USB/LCD
