@@ -11,7 +11,7 @@ On Ubuntu/Kubuntu/Debian:
 ```bash
 sudo apt install flatpak flatpak-builder
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+flatpak install flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
 ```
 
 ## Build And Install Locally
@@ -21,6 +21,12 @@ Run from the repository root:
 ```bash
 flatpak-builder --force-clean --user --install build-dir packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.yml
 flatpak run io.github.AbigorDIY.OpenTrofeoLCD
+```
+
+If your environment does not expose `/dev/fuse`, use:
+
+```bash
+flatpak-builder --force-clean --disable-rofiles-fuse --user --install build-dir packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.yml
 ```
 
 ## Current Permissions
