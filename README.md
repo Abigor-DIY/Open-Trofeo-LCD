@@ -2,6 +2,47 @@
 
 Reverse-engineered driver for the Thermalright Trofeo LCD cooler display.
 
+> **Development preview**
+>
+> Open Trofeo LCD is usable, but it is still in active development. The USB
+> driver, backend, theme gallery, Theme Designer, Animation Studio, MPRIS media
+> widgets, gauges and packaging flow are being improved quickly. Expect UI
+> changes, incomplete editor tools and occasional regressions while the project
+> is prepared for broader Linux distribution.
+
+## Project Status
+
+Current focus:
+- Stable local backend for the Thermalright Trofeo LCD USB display.
+- Qt desktop GUI with Theme Gallery, Theme Designer and Animation Studio.
+- Live system stats, MPRIS/Now Playing widgets, volume/EQ widgets, gauges and animated backgrounds.
+- Safer single-backend runtime to avoid USB `Resource busy` conflicts.
+- Documentation and packaging for public testing.
+
+Known development areas:
+- Theme Designer layout and editor tooling are still being refined.
+- Animation Studio is functional, but timeline UX, stabilization and export workflow are still evolving.
+- Some advanced widgets may need tuning for LCD refresh performance.
+- Flatpak/DEB/RPM packages are planned, but source/venv launch is the recommended path for now.
+
+## Release Plan
+
+Short-term publication plan:
+1. Push the current development preview to GitHub with this README warning.
+2. Keep source installation as the primary supported method for early testers.
+3. Add a Flatpak manifest with explicit USB device access notes.
+4. Build test packages: Flatpak first, then DEB/RPM if the runtime layout is stable.
+5. Publish downloadable artifacts on GitHub Releases after local install, udev and backend startup are verified.
+
+Flatpak packaging checklist:
+- Bundle Python dependencies or use pinned modules from `requirements.txt`.
+- Include PySide6/Qt runtime dependencies.
+- Document USB access requirements for `0416:5408`.
+- Test whether direct USB access needs `--device=all` or a narrower udev/portal setup.
+- Persist app state under XDG paths, especially `~/.local/state/open-trofeo-lcd`.
+- Ship a `.desktop` entry and icon.
+- Ensure only one backend instance can own the LCD device.
+
 ## Support
 
 If this project is useful, you can support development here:
@@ -56,12 +97,13 @@ After each packet, the host reads a 512-byte ACK from EP1 IN.
 
 ```bash
 # Kubuntu / Ubuntu / Debian
-sudo apt install python3-usb python3-pil playerctl
+sudo apt install python3-venv python3-pip python3-usb python3-pil playerctl
 
-# Or via venv pip
-~/trofeo-venv/bin/pip install pyusb Pillow
+# Python dependencies used by the backend, renderer and GUI
+python3 -m venv .venv-gui
+.venv-gui/bin/pip install -r requirements.txt
 
-# Qt GUI client (Etap 2.3)
+# Helper script for the Qt GUI venv
 scripts/setup_gui_venv.sh
 
 # Optional but recommended for "Now Playing" widget (MPRIS metadata)
@@ -69,7 +111,20 @@ scripts/setup_gui_venv.sh
 playerctl -v
 ```
 
-### Udev Rule (run without sudo)
+Python packages are tracked in `requirements.txt`:
+- `PySide6` for the Qt GUI
+- `pyusb` for USB communication
+- `Pillow` for image rendering
+- `opencv-python-headless` for animation stabilization tools
+- `trcc-linux` for TRCC-compatible LCD transfer helpers
+
+### USB Permissions
+
+The LCD identifies as `0416:5408`. Install the udev rule before running the GUI
+as a normal user. Without this rule, the app may require root or fail with
+permission errors.
+
+### Udev Rule
 
 ```bash
 sudo cp 99-trofeo-lcd.rules /etc/udev/rules.d/
