@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd /app/share/open-trofeo-lcd
+exec python3 /app/share/open-trofeo-lcd/main.py "$@"

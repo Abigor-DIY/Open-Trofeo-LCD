@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.AbigorDIY.OpenTrofeoLCD</id>
+  <name>Open Trofeo LCD</name>
+  <summary>Linux driver and theme editor for Thermalright Trofeo LCD</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-Unknown</project_license>
+  <launchable type="desktop-id">io.github.AbigorDIY.OpenTrofeoLCD.desktop</launchable>
+  <developer_name>Abigor-DIY</developer_name>
+  <url type="homepage">https://github.com/Abigor-DIY/Open-Trofeo-LCD</url>
+  <url type="bugtracker">https://github.com/Abigor-DIY/Open-Trofeo-LCD/issues</url>
+  <description>
+    <p>
+      Open Trofeo LCD is a reverse-engineered Linux driver and desktop editor
+      for the Thermalright Trofeo LCD cooler display.
+    </p>
+    <p>
+      This is a development preview. The backend, USB transfer path, Theme
+      Gallery, Theme Designer, Animation Studio and packaging flow are still
+      being refined.
+    </p>
+  </description>
+  <releases>
+    <release version="0.1.0-dev" date="2026-05-13">
+      <description>
+        <p>Initial public development preview with source launch flow and experimental Flatpak packaging.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>

@@ -23,7 +23,8 @@ Known development areas:
 - Theme Designer layout and editor tooling are still being refined.
 - Animation Studio is functional, but timeline UX, stabilization and export workflow are still evolving.
 - Some advanced widgets may need tuning for LCD refresh performance.
-- Flatpak/DEB/RPM packages are planned, but source/venv launch is the recommended path for now.
+- Experimental Flatpak packaging is available for local testing, but source/venv launch is still the recommended path for now.
+- DEB/RPM packages are planned after the Flatpak runtime layout is stable.
 
 ## Release Plan
 
@@ -42,6 +43,8 @@ Flatpak packaging checklist:
 - Persist app state under XDG paths, especially `~/.local/state/open-trofeo-lcd`.
 - Ship a `.desktop` entry and icon.
 - Ensure only one backend instance can own the LCD device.
+
+Experimental Flatpak build instructions are available in `docs/flatpak.md`.
 
 ## Support
 

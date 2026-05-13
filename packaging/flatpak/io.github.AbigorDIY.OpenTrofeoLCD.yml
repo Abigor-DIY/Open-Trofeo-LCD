@@ -1,0 +1,63 @@
+app-id: io.github.AbigorDIY.OpenTrofeoLCD
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+command: open-trofeo-lcd
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=x11
+  - --socket=wayland
+  - --socket=session-bus
+  - --device=all
+  - --filesystem=home
+  - --persist=.local/state/open-trofeo-lcd
+  - --env=PYTHONUNBUFFERED=1
+
+modules:
+  - name: python-dependencies
+    buildsystem: simple
+    build-commands:
+      - python3 -m pip install --prefix=/app --no-cache-dir -r requirements.txt
+    sources:
+      - type: file
+        path: ../../requirements.txt
+
+  - name: open-trofeo-lcd
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/share/open-trofeo-lcd
+      - cp -a . /app/share/open-trofeo-lcd
+      - install -Dm755 packaging/flatpak/open-trofeo-lcd /app/bin/open-trofeo-lcd
+      - install -Dm644 packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.desktop /app/share/applications/io.github.AbigorDIY.OpenTrofeoLCD.desktop
+      - install -Dm644 packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.metainfo.xml /app/share/metainfo/io.github.AbigorDIY.OpenTrofeoLCD.metainfo.xml
+      - install -Dm644 packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.svg /app/share/icons/hicolor/scalable/apps/io.github.AbigorDIY.OpenTrofeoLCD.svg
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - .venv
+          - .venv-gui
+          - .venv-trcc
+          - .trofeo-backend.env
+          - .trofeo-service.env
+          - .trofeo-playlist.json
+          - .trofeo-theme-autosave.json
+          - .trofeo-themes.json
+          - .trofeo-ttcr-stat-rules.json
+          - .trofeo-ui-state.json
+          - __pycache__
+          - backups
+          - Anim_temp
+          - temp_img
+          - TTCR_Windows
+          - header_scan_logs
+          - live_test_logs
+          - reference_protocol_logs
+          - reference_timing_logs
+          - "*.pcapng"
+          - "*.pyc"
+          - "*.pyo"
+          - "*.log"
