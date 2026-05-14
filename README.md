@@ -46,6 +46,16 @@ Flatpak packaging checklist:
 
 Experimental Flatpak build instructions are available in `docs/flatpak.md`.
 
+## Screenshots
+
+Theme previews rendered from bundled starter themes:
+
+![Heritage Duality theme preview](docs/screenshots/theme-heritage-duality.png)
+
+![Verdant Bloom theme preview](docs/screenshots/theme-verdant-bloom.png)
+
+![Wolfstorm Forge theme preview](docs/screenshots/theme-wolfstorm-forge.png)
+
 ## Support
 
 If this project is useful, you can support development here:

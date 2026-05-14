@@ -13,6 +13,7 @@ import os
 import random
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -1926,17 +1927,25 @@ class ReplayController:
 
             return {"running": True, "pid": self.proc.pid}
 
-    def _start_trcc_static_worker(self, image_path: Path) -> dict[str, Any]:
-        self._preflight_trcc_display_start()
+    def _resolve_trcc_python(self) -> Path:
         trcc_bin = Path(self.cfg.trcc_bin).expanduser()
         if not trcc_bin.is_absolute():
             trcc_bin = (self.cfg.workdir / trcc_bin).resolve()
         if not trcc_bin.exists():
-            raise RuntimeError(f"Brak binarki trcc: {trcc_bin}")
+            found = shutil.which("trcc")
+            if found:
+                trcc_bin = Path(found).resolve()
+            else:
+                raise RuntimeError(f"Brak binarki trcc: {trcc_bin}")
 
         trcc_python = trcc_bin.parent / "python"
-        if not trcc_python.exists():
-            raise RuntimeError(f"Brak interpretera venv trcc: {trcc_python}")
+        if trcc_python.exists():
+            return trcc_python
+        return Path(sys.executable).resolve()
+
+    def _start_trcc_static_worker(self, image_path: Path) -> dict[str, Any]:
+        self._preflight_trcc_display_start()
+        trcc_python = self._resolve_trcc_python()
         if not self.cfg.trcc_static_script.exists():
             raise RuntimeError(f"Brak skryptu TRCC static worker: {self.cfg.trcc_static_script}")
 
@@ -2055,15 +2064,7 @@ class ReplayController:
         poll_interval_s: float = 0.25,
         keepalive_s: float = 1.5,
     ) -> dict[str, Any]:
-        trcc_bin = Path(self.cfg.trcc_bin).expanduser()
-        if not trcc_bin.is_absolute():
-            trcc_bin = (self.cfg.workdir / trcc_bin).resolve()
-        if not trcc_bin.exists():
-            raise RuntimeError(f"Brak binarki trcc: {trcc_bin}")
-
-        trcc_python = trcc_bin.parent / "python"
-        if not trcc_python.exists():
-            raise RuntimeError(f"Brak interpretera venv trcc: {trcc_python}")
+        trcc_python = self._resolve_trcc_python()
         if not self.cfg.trcc_static_overlay_script.exists():
             raise RuntimeError(f"Brak skryptu TRCC static overlay worker: {self.cfg.trcc_static_overlay_script}")
 
@@ -2133,15 +2134,7 @@ class ReplayController:
         raise RuntimeError(f"static overlay worker failed to start: {startup_tail or 'unknown error'}")
 
     def _start_trcc_animation_worker(self, animation_spec: dict[str, Any]) -> dict[str, Any]:
-        trcc_bin = Path(self.cfg.trcc_bin).expanduser()
-        if not trcc_bin.is_absolute():
-            trcc_bin = (self.cfg.workdir / trcc_bin).resolve()
-        if not trcc_bin.exists():
-            raise RuntimeError(f"Brak binarki trcc: {trcc_bin}")
-
-        trcc_python = trcc_bin.parent / "python"
-        if not trcc_python.exists():
-            raise RuntimeError(f"Brak interpretera venv trcc: {trcc_python}")
+        trcc_python = self._resolve_trcc_python()
         if not self.cfg.trcc_animation_script.exists():
             raise RuntimeError(f"Brak skryptu TRCC animation worker: {self.cfg.trcc_animation_script}")
         frame_paths = animation_spec.get("frame_paths", [])
@@ -2677,7 +2670,7 @@ def main() -> None:
     trcc_bin = Path(args.trcc_bin).expanduser()
     if not trcc_bin.is_absolute():
         trcc_bin = (workdir / trcc_bin).resolve()
-    display_backend = args.display_backend or ("trcc" if trcc_bin.exists() else "native")
+    display_backend = args.display_backend or ("trcc" if trcc_bin.exists() or shutil.which("trcc") else "native")
     cfg = BackendConfig(
         workdir=workdir,
         pcap_path=to_abs(workdir, args.pcap).resolve(),

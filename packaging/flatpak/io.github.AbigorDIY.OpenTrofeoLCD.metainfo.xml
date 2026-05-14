@@ -20,6 +20,20 @@
       being refined.
     </p>
   </description>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-heritage-duality.png</image>
+      <caption>Bundled Heritage Duality theme preview</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-verdant-bloom.png</image>
+      <caption>Bundled Verdant Bloom theme preview</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-wolfstorm-forge.png</image>
+      <caption>Bundled Wolfstorm Forge theme preview</caption>
+    </screenshot>
+  </screenshots>
   <releases>
     <release version="0.1.0-dev" date="2026-05-13">
       <description>
