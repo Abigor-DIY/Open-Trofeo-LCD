@@ -127,6 +127,7 @@ class ReplayController:
         self.live_theme_started_at: float | None = None
         self.stats_provider = StatsProvider()
         self._load_themes()
+        self._seed_themes_from_directory()
         self._load_playlist()
 
     def _refresh_mode_locked(self) -> None:
@@ -256,6 +257,43 @@ class ReplayController:
                 self.themes_file_mtime_ns = self.cfg.themes_file.stat().st_mtime_ns
             except Exception:
                 self.themes_file_mtime_ns = None
+
+    def _theme_name_from_file(self, path: Path) -> str:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                name = str(raw.get("name") or raw.get("title") or "").strip()
+                if name:
+                    return name
+        except Exception:
+            pass
+        return path.stem.replace("_", " ").replace("-", " ").title()
+
+    def _unique_theme_name_locked(self, name: str) -> str:
+        base = str(name).strip() or "Theme"
+        if base not in self.themes:
+            return base
+        idx = 2
+        while f"{base} {idx}" in self.themes:
+            idx += 1
+        return f"{base} {idx}"
+
+    def _seed_themes_from_directory(self) -> None:
+        with self.lock:
+            if self.themes:
+                return
+            themes_dir = self.cfg.workdir / "themes"
+            if not themes_dir.exists():
+                return
+            for path in sorted(themes_dir.glob("*.json")):
+                rel_path = path.relative_to(self.cfg.workdir).as_posix()
+                name = self._unique_theme_name_locked(self._theme_name_from_file(path))
+                self.themes[name] = {
+                    "path": rel_path,
+                    "raw_jpeg_passthrough": False,
+                }
+            if self.themes:
+                self._save_themes()
 
     def _reload_themes_if_changed(self) -> None:
         with self.lock:
