@@ -1,5 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /app/share/open-trofeo-lcd
-exec python3 /app/share/open-trofeo-lcd/main.py "$@"
+APP_SOURCE="/app/share/open-trofeo-lcd"
+APP_WORKDIR="${XDG_DATA_HOME:-$HOME/.local/share}/open-trofeo-lcd-workdir"
+VERSION_FILE="$APP_WORKDIR/.flatpak-source-version"
+SOURCE_VERSION="$(cat "$APP_SOURCE/.flatpak-source-version" 2>/dev/null || echo dev)"
+
+mkdir -p "$APP_WORKDIR"
+
+if [ ! -f "$VERSION_FILE" ] || [ "$(cat "$VERSION_FILE" 2>/dev/null || true)" != "$SOURCE_VERSION" ]; then
+  rm -rf \
+    "$APP_WORKDIR/docs" \
+    "$APP_WORKDIR/packaging" \
+    "$APP_WORKDIR/scripts" \
+    "$APP_WORKDIR/themes" \
+    "$APP_WORKDIR/__pycache__"
+  find "$APP_WORKDIR" -maxdepth 1 -type f -name '*.py' -delete
+  cp -a "$APP_SOURCE/." "$APP_WORKDIR/"
+  printf '%s\n' "$SOURCE_VERSION" > "$VERSION_FILE"
+fi
+
+cd "$APP_WORKDIR"
+exec python3 "$APP_WORKDIR/main.py" "$@"
