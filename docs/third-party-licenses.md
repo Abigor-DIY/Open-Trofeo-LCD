@@ -1,7 +1,8 @@
 # Third-Party Licenses
 
-Open Trofeo LCD project code is licensed under the MIT License. Runtime and
-packaging dependencies keep their own licenses.
+Open Trofeo LCD project code is licensed under the GNU General Public License
+version 3.0 only (`GPL-3.0-only`). Runtime and packaging dependencies keep their
+own licenses.
 
 Important bundled/runtime dependencies include:
 

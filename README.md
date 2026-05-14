@@ -54,7 +54,8 @@ If this project is useful, you can support development here:
 
 ## License
 
-Open Trofeo LCD project code is licensed under the MIT License. See `LICENSE`.
+Open Trofeo LCD project code is licensed under the GNU General Public License
+version 3.0 only (`GPL-3.0-only`). See `LICENSE`.
 
 Third-party dependencies keep their own licenses. The Flatpak build currently
 bundles Python/Qt dependencies, so review `docs/third-party-licenses.md` before
