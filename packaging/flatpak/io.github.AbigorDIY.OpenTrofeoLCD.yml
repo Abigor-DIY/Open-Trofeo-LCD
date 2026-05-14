@@ -41,6 +41,10 @@ modules:
         path: ../..
         skip:
           - .git
+          - .flatpak-builder
+          - build-dir
+          - repo
+          - dist
           - .venv
           - .venv-gui
           - .venv-trcc
