@@ -49,6 +49,10 @@ Experimental Flatpak build instructions are available in `docs/flatpak.md`.
 
 ## Screenshots
 
+Application UI:
+
+![Open Trofeo LCD Animation Studio](docs/screenshots/open-trofeo-lcd-animation-studio.png)
+
 Theme previews rendered from bundled starter themes:
 
 ![Heritage Duality theme preview](docs/screenshots/theme-heritage-duality.png)
