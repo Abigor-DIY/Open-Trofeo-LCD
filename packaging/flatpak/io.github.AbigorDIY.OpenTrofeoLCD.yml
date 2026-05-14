@@ -18,11 +18,14 @@ finish-args:
 modules:
   - name: python-dependencies
     buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
     build-commands:
       - python3 -m pip install --prefix=/app --no-cache-dir -r requirements.txt
     sources:
       - type: file
-        path: ../../requirements.txt
+        path: requirements.txt
 
   - name: open-trofeo-lcd
     buildsystem: simple

@@ -2,7 +2,7 @@
 
 Open Trofeo LCD currently ships an experimental Flatpak manifest for local
 testing. The source/venv launcher is still the primary supported path until USB
-access, dependency pinning and runtime permissions are verified on more systems.
+access and runtime permissions are verified on more systems.
 
 ## Install Build Tools
 
@@ -41,6 +41,15 @@ The development manifest intentionally uses broad permissions:
 These permissions should be tightened after hardware testing confirms the
 minimal working set.
 
+## Python Dependencies
+
+Flatpak-specific Python versions are pinned in
+`packaging/flatpak/requirements.txt`. The build currently lets the dependency
+module access the network so `pip` can download wheels from PyPI. Before a
+stable public Flatpak release, this should be replaced with generated source
+entries and hashes, for example with `flatpak-pip-generator`, so builds do not
+depend on live PyPI resolution.
+
 ## USB Notes
 
 The LCD identifies as `0416:5408`. For source launches, install the udev rule
@@ -54,9 +63,10 @@ LCD.
 
 ## Known Limitations
 
-- Python dependencies are installed from `requirements.txt` during the Flatpak
-  build. This is acceptable for the first local test package, but a release
-  Flatpak should use generated, pinned dependency sources.
+- Python dependencies are installed from the Flatpak-specific pinned
+  requirements file during the build. This is acceptable for the first local
+  test package, but a release Flatpak should use generated source entries with
+  hashes.
 - The package has not yet been validated on clean systems without the source
   checkout.
 - DEB/RPM packages are planned after the Flatpak runtime layout is stable.
