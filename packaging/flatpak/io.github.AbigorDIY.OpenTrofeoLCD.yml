@@ -31,7 +31,7 @@ modules:
     buildsystem: simple
     build-commands:
       - mkdir -p /app/share/open-trofeo-lcd
-      - git rev-parse --short HEAD > .flatpak-source-version || printf 'dev\n' > .flatpak-source-version
+      - printf '0.1.0-dev\n' > .flatpak-source-version
       - cp -a . /app/share/open-trofeo-lcd
       - install -Dm755 packaging/flatpak/open-trofeo-lcd /app/bin/open-trofeo-lcd
       - install -Dm644 packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.desktop /app/share/applications/io.github.AbigorDIY.OpenTrofeoLCD.desktop
