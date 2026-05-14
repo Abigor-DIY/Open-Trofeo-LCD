@@ -45,6 +45,9 @@ The development manifest intentionally uses broad permissions:
 - `--device=all` for direct access to the Thermalright Trofeo LCD USB device.
 - `--filesystem=home` so users can import images, themes and TTCR files while the editor is still evolving.
 - `--socket=session-bus` for MPRIS media metadata from Chromium, Spotify, VLC and other players.
+- `--talk-name=org.mpris.MediaPlayer2.*` for direct MPRIS access when the player allows sandboxed clients.
+- `--talk-name=org.freedesktop.Flatpak` so the app can fall back to host `playerctl` for Snap-packaged browsers.
+- `--socket=pulseaudio` for volume-driven widgets such as Graphic EQ.
 - `--share=network` because the GUI talks to the local backend over `127.0.0.1:18777`.
 
 These permissions should be tightened after hardware testing confirms the

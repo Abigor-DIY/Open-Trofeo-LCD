@@ -859,13 +859,15 @@ class StatsProvider:
 
     def _read_media_now_playing(self) -> dict[str, str]:
         out = self._default_media_snapshot()
-        if not os.path.exists("/usr/bin/playerctl"):
-            return out
+        playerctl_cmd = self._playerctl_cmd()
+
+        if not playerctl_cmd:
+            return self._read_media_now_playing_mpris(out)
 
         try:
             payload = subprocess.check_output(
-                [
-                    "playerctl",
+                playerctl_cmd
+                + [
                     "-a",
                     "metadata",
                     "--format",
@@ -922,7 +924,7 @@ class StatsProvider:
             pass
         try:
             payload = subprocess.check_output(
-                ["playerctl", "-a", "status", "--format", "{{playerName}}\t{{status}}"],
+                playerctl_cmd + ["-a", "status", "--format", "{{playerName}}\t{{status}}"],
                 encoding="utf-8",
                 stderr=subprocess.DEVNULL,
                 timeout=0.35,
@@ -943,6 +945,10 @@ class StatsProvider:
                     out["media_app"] = player
         except Exception:
             pass
+        if out["media_app"] == "N/A" and out["media_title"] == "N/A":
+            mpris_out = self._read_media_now_playing_mpris(dict(out))
+            if mpris_out.get("media_app") != "N/A" or mpris_out.get("media_title") != "N/A":
+                return mpris_out
         if out["media_state"] in {"playing", "paused"} and (time.time() - self._last_media_at) <= 600.0:
             fallback = dict(self._last_media_snapshot)
             if fallback.get("media_title") and fallback["media_title"] != "N/A":
@@ -957,6 +963,145 @@ class StatsProvider:
                 out["media_source_url"] = fallback["media_source_url"]
             if out["media_app"] == "N/A" and fallback.get("media_app"):
                 out["media_app"] = fallback["media_app"]
+        return out
+
+    @staticmethod
+    def _playerctl_cmd() -> list[str] | None:
+        playerctl = shutil.which("playerctl")
+        if playerctl:
+            return [playerctl]
+        flatpak_spawn = shutil.which("flatpak-spawn")
+        if flatpak_spawn and os.path.exists("/.flatpak-info"):
+            return [flatpak_spawn, "--host", "playerctl"]
+        return None
+
+    @staticmethod
+    def _gvariant_unquote(token: str) -> str:
+        token = token.strip()
+        if len(token) >= 2 and token[0] in {"'", '"'} and token[-1] == token[0]:
+            try:
+                return bytes(token[1:-1], "utf-8").decode("unicode_escape")
+            except Exception:
+                return token[1:-1]
+        return token
+
+    @classmethod
+    def _gvariant_first_string(cls, payload: str) -> str:
+        match = re.search(r"<('(?:\\.|[^'])*'|\"(?:\\.|[^\"])*\")>", payload)
+        return cls._gvariant_unquote(match.group(1)) if match else ""
+
+    @classmethod
+    def _gvariant_metadata_string(cls, payload: str, key: str) -> str:
+        escaped_key = re.escape(key)
+        match = re.search(rf"['\"]{escaped_key}['\"]:\s*<('(?:\\.|[^'])*'|\"(?:\\.|[^\"])*\")>", payload)
+        return cls._gvariant_unquote(match.group(1)) if match else ""
+
+    @classmethod
+    def _gvariant_metadata_artist(cls, payload: str) -> str:
+        match = re.search(r"['\"]xesam:artist['\"]:\s*<\[(.*?)\]>", payload, flags=re.S)
+        if not match:
+            return ""
+        artists = re.findall(r"'(?:\\.|[^'])*'|\"(?:\\.|[^\"])*\"", match.group(1))
+        return cls._cleanup_media_artist(", ".join(cls._gvariant_unquote(item) for item in artists))
+
+    def _gdbus_call(self, args: list[str], *, timeout: float = 0.45) -> str:
+        gdbus = shutil.which("gdbus")
+        if not gdbus:
+            return ""
+        try:
+            return subprocess.check_output(
+                [gdbus, "call", "--session", *args],
+                encoding="utf-8",
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            ).strip()
+        except Exception:
+            return ""
+
+    def _read_media_now_playing_mpris(self, out: dict[str, str]) -> dict[str, str]:
+        names_payload = self._gdbus_call(
+            [
+                "--dest",
+                "org.freedesktop.DBus",
+                "--object-path",
+                "/org/freedesktop/DBus",
+                "--method",
+                "org.freedesktop.DBus.ListNames",
+            ],
+            timeout=0.35,
+        )
+        players = sorted(set(re.findall(r"org\.mpris\.MediaPlayer2\.[A-Za-z0-9_.-]+", names_payload)))
+        if not players:
+            return out
+
+        best = None
+        for player in players:
+            state_payload = self._gdbus_call(
+                [
+                    "--dest",
+                    player,
+                    "--object-path",
+                    "/org/mpris/MediaPlayer2",
+                    "--method",
+                    "org.freedesktop.DBus.Properties.Get",
+                    "org.mpris.MediaPlayer2.Player",
+                    "PlaybackStatus",
+                ],
+                timeout=0.3,
+            )
+            metadata_payload = self._gdbus_call(
+                [
+                    "--dest",
+                    player,
+                    "--object-path",
+                    "/org/mpris/MediaPlayer2",
+                    "--method",
+                    "org.freedesktop.DBus.Properties.Get",
+                    "org.mpris.MediaPlayer2.Player",
+                    "Metadata",
+                ],
+                timeout=0.45,
+            )
+            state = self._gvariant_first_string(state_payload).strip().lower() or "stopped"
+            player_name = player.rsplit(".", 1)[-1].split(".")[0]
+            title = self._gvariant_metadata_string(metadata_payload, "xesam:title")
+            artist = self._gvariant_metadata_artist(metadata_payload)
+            art_url = self._gvariant_metadata_string(metadata_payload, "mpris:artUrl")
+            media_url = self._gvariant_metadata_string(metadata_payload, "xesam:url")
+            album = self._gvariant_metadata_string(metadata_payload, "xesam:album")
+            score = self._media_priority(player_name, state, title)
+            row = (score, player_name, state, title, artist, art_url, media_url, album)
+            if best is None or row[0] > best[0]:
+                best = row
+
+        if best is None:
+            return out
+        _score, player, state, title, artist, art_url, media_url, album = best
+        out["media_state"] = state or "stopped"
+        if player:
+            out["media_app"] = player
+        if title:
+            out["media_title"] = title
+        if artist:
+            out["media_artist"] = artist
+        if album:
+            out["media_album"] = album
+        if media_url:
+            out["media_source_url"] = media_url
+        out["media_cover_path"] = self.resolve_media_cover_path(
+            art_url,
+            player_name=player,
+            title=title,
+            artist=artist,
+            album=album,
+        )
+        out["media_video_frame_path"] = self.resolve_media_video_frame_path(
+            out.get("media_source_url", ""),
+            out["media_cover_path"],
+        )
+        if title or artist:
+            self._last_media_snapshot = dict(out)
+            self._last_media_at = time.time()
         return out
 
     def snapshot(self) -> StatsSnapshot:

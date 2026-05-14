@@ -1043,6 +1043,8 @@ class ReplayController:
         cheap_overlay_mode = isinstance(overlay_document, dict) and bool(overlay_path)
         fast_file_refresh_mode = bool(refresh_target_path) and not cheap_overlay_mode
         has_media_sources = self._theme_has_media_sources(document) or self._theme_has_media_sources(overlay_document)
+        playerctl_cmd = self.stats_provider._playerctl_cmd()
+        playerctl_available = playerctl_cmd is not None
         periodic_live_refresh = self._theme_needs_periodic_live_refresh(document) or self._theme_needs_periodic_live_refresh(overlay_document)
         fast_visual_refresh = self._theme_has_fast_visual_live_refresh(document) or self._theme_has_fast_visual_live_refresh(overlay_document)
         marquee_motion = self._theme_has_marquee_motion(document) or self._theme_has_marquee_motion(overlay_document)
@@ -1063,7 +1065,7 @@ class ReplayController:
         heavy_overlay = self._theme_has_heavy_live_overlay(overlay_document)
         if cheap_overlay_mode:
             if fast_visual_refresh:
-                fallback_interval_s = FAST_VISUAL_REFRESH_INTERVAL_S
+                fallback_interval_s = 0.75 if animated_theme else FAST_VISUAL_REFRESH_INTERVAL_S
             else:
                 fallback_interval_s = 300.0
         elif fast_visual_refresh:
@@ -1076,12 +1078,16 @@ class ReplayController:
             fallback_interval_s = 3600.0 if animated_theme else (120.0 if fast_file_refresh_mode else max(10.0, interval_s))
         last_media_sig: tuple[str, str, str, str, str, str] | None = None
         last_probe = 0.0
-        if fast_visual_refresh:
+        if has_media_sources and not playerctl_available:
+            # Flatpak builds do not bundle playerctl; poll direct MPRIS fallback often enough
+            # for Chromium/VLC track changes without starting unavailable follower processes.
+            probe_interval_s = 0.5
+        elif fast_visual_refresh:
             probe_interval_s = 3.0
         else:
             probe_interval_s = 0.45 if cheap_overlay_mode else (0.25 if fast_file_refresh_mode else max(0.7, min(2.0, interval_s)))
         if cheap_overlay_mode and fast_visual_refresh:
-            min_refresh_gap_s = 0.07
+            min_refresh_gap_s = 0.45 if animated_theme else 0.07
         elif cheap_overlay_mode:
             min_refresh_gap_s = 0.15 if heavy_overlay else 0.10
         else:
@@ -1257,6 +1263,8 @@ class ReplayController:
         def _start_followers() -> tuple[subprocess.Popen | None, subprocess.Popen | None]:
             meta = None
             status = None
+            if not playerctl_cmd:
+                return meta, status
             cmd_prefix: list[str] = []
             stdbuf_bin = shutil.which("stdbuf")
             if stdbuf_bin:
@@ -1279,8 +1287,7 @@ class ReplayController:
 
             try:
                 meta = subprocess.Popen(
-                    cmd_prefix + [
-                        "playerctl",
+                    cmd_prefix + playerctl_cmd + [
                         "-a",
                         "metadata",
                         "--follow",
@@ -1297,7 +1304,7 @@ class ReplayController:
                 meta = None
             try:
                 status = subprocess.Popen(
-                    cmd_prefix + ["playerctl", "-a", "status", "--format", "{{playerName}}\t{{status}}", "--follow"],
+                    cmd_prefix + playerctl_cmd + ["-a", "status", "--format", "{{playerName}}\t{{status}}", "--follow"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     text=True,

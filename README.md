@@ -23,6 +23,7 @@ Known development areas:
 - Theme Designer layout and editor tooling are still being refined.
 - Animation Studio is functional, but timeline UX, stabilization and export workflow are still evolving.
 - Some advanced widgets may need tuning for LCD refresh performance.
+- Planned widget: configurable weather block using a free API, with provider/API key/location settings in the UI.
 - Experimental Flatpak packaging is available for local testing, but source/venv launch is still the recommended path for now.
 - DEB/RPM packages are planned after the Flatpak runtime layout is stable.
 
