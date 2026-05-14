@@ -52,6 +52,14 @@ If this project is useful, you can support development here:
 - GitHub Sponsors: https://github.com/sponsors/Abigor-DIY
 - Repository: https://github.com/Abigor-DIY/Open-Trofeo-LCD
 
+## License
+
+Open Trofeo LCD project code is licensed under the MIT License. See `LICENSE`.
+
+Third-party dependencies keep their own licenses. The Flatpak build currently
+bundles Python/Qt dependencies, so review `docs/third-party-licenses.md` before
+publishing stable binary packages.
+
 ## Discovered Protocol
 
 | Parameter       | Value                                    |
