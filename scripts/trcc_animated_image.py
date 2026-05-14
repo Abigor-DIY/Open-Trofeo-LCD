@@ -25,6 +25,14 @@ def main() -> int:
         print(f"Error: failed to import trcc: {exc}", flush=True)
         return 1
 
+    try:
+        from trcc.adapters.system.linux.setup import LinuxSetup
+
+        LinuxSetup.needs_setup = lambda self: False
+        LinuxSetup.auto_setup = lambda self: None
+    except Exception:
+        pass
+
     manifest_path = Path(args.manifest).expanduser()
     if not manifest_path.exists():
         print(f"Error: manifest not found: {manifest_path}", flush=True)

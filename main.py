@@ -6,6 +6,7 @@ Ten skrypt automatycznie uruchamia backend i GUI, dbając o ich współpracę.
 """
 
 import argparse
+import fcntl
 import os
 import subprocess
 import sys
@@ -19,6 +20,7 @@ BACKEND_PORT = 18777
 BACKEND_URL = f"http://127.0.0.1:{BACKEND_PORT}"
 STATE_DIR = Path.home() / ".local/state/open-trofeo-lcd"
 MANAGED_BACKEND_PID = STATE_DIR / "launcher-backend.pid"
+INSTANCE_LOCK = STATE_DIR / "launcher.lock"
 
 def is_backend_running() -> bool:
     """Sprawdza, czy backend odpowiada na /health."""
@@ -46,6 +48,21 @@ def _clear_managed_backend_pid() -> None:
         MANAGED_BACKEND_PID.unlink(missing_ok=True)
     except Exception:
         pass
+
+def _acquire_instance_lock():
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    lock_handle = open(INSTANCE_LOCK, "w", encoding="utf-8")
+    try:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("[-] Open Trofeo LCD już działa. Zamknij istniejące okno przed uruchomieniem kolejnego.")
+        lock_handle.close()
+        return None
+    lock_handle.seek(0)
+    lock_handle.truncate()
+    lock_handle.write(f"{os.getpid()}\n")
+    lock_handle.flush()
+    return lock_handle
 
 def _pid_is_alive(pid: int | None) -> bool:
     if not pid or pid <= 0:
@@ -191,6 +208,10 @@ def main():
     if args.cli:
         print("[!] Tryb CLI: uruchamianie trofeo_lcd.py...")
         subprocess.run([sys.executable, str(WORKDIR / "trofeo_lcd.py")] + sys.argv[2:])
+        return
+
+    instance_lock = _acquire_instance_lock()
+    if instance_lock is None:
         return
 
     backend_proc = None

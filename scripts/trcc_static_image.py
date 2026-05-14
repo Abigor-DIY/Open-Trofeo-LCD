@@ -24,6 +24,14 @@ def main() -> int:
         print(f"Error: failed to import trcc: {exc}", flush=True)
         return 1
 
+    try:
+        from trcc.adapters.system.linux.setup import LinuxSetup
+
+        LinuxSetup.needs_setup = lambda self: False
+        LinuxSetup.auto_setup = lambda self: None
+    except Exception:
+        pass
+
     StandardLoggingConfigurator().configure(verbosity=0)
     app = TrccApp.init()
     app.init_platform(verbosity=0, renderer_factory=trcc_cli._make_cli_renderer)

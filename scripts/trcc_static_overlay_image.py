@@ -37,6 +37,14 @@ def main() -> int:
         print(f"Error: failed to import trcc: {exc}", flush=True)
         return 1
 
+    try:
+        from trcc.adapters.system.linux.setup import LinuxSetup
+
+        LinuxSetup.needs_setup = lambda self: False
+        LinuxSetup.auto_setup = lambda self: None
+    except Exception:
+        pass
+
     background_path = Path(args.image).expanduser()
     overlay_path = Path(args.overlay).expanduser()
     if not background_path.exists():

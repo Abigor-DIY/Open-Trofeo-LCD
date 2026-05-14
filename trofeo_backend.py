@@ -1914,6 +1914,7 @@ class ReplayController:
                     cwd=self.cfg.workdir,
                     stdout=child_log,
                     stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
                     text=True,
                 )
                 self.proc_started_at = time.time()
@@ -1968,6 +1969,7 @@ class ReplayController:
                 cwd=self.cfg.workdir,
                 stdout=child_log,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
                 text=True,
             )
             self.proc_started_at = time.time()
@@ -2034,6 +2036,7 @@ class ReplayController:
                 cwd=self.cfg.workdir,
                 stdout=child_log,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
                 text=True,
             )
             self.proc_started_at = time.time()
@@ -2103,6 +2106,7 @@ class ReplayController:
                     cwd=self.cfg.workdir,
                     stdout=child_log,
                     stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
                     text=True,
                 )
                 self.proc_started_at = time.time()
@@ -2191,6 +2195,7 @@ class ReplayController:
                     cwd=self.cfg.workdir,
                     stdout=child_log,
                     stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
                     text=True,
                 )
                 self.proc_started_at = time.time()
