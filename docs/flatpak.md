@@ -23,6 +23,15 @@ flatpak-builder --force-clean --user --install build-dir packaging/flatpak/io.gi
 flatpak run io.github.AbigorDIY.OpenTrofeoLCD
 ```
 
+## Install Release Bundle
+
+Download `open-trofeo-lcd-0.1.0-dev.flatpak` from the GitHub Release page, then:
+
+```bash
+flatpak install --user ./open-trofeo-lcd-0.1.0-dev.flatpak
+flatpak run io.github.AbigorDIY.OpenTrofeoLCD
+```
+
 If your environment does not expose `/dev/fuse`, use:
 
 ```bash
