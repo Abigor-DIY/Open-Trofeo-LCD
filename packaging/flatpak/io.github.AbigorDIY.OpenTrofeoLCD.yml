@@ -31,7 +31,7 @@ modules:
     buildsystem: simple
     build-commands:
       - mkdir -p /app/share/open-trofeo-lcd
-      - printf '0.1.0-dev\n' > .flatpak-source-version
+      - python3 -c "from pathlib import Path; import hashlib; h=hashlib.sha256(); [h.update(p.as_posix().encode()+b'\0'+p.read_bytes()) for p in sorted(Path('.').rglob('*')) if p.is_file() and '.git' not in p.parts and p.name != '.flatpak-source-version']; print(h.hexdigest()[:16])" > .flatpak-source-version
       - cp -a . /app/share/open-trofeo-lcd
       - install -Dm755 packaging/flatpak/open-trofeo-lcd /app/bin/open-trofeo-lcd
       - install -Dm644 packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.desktop /app/share/applications/io.github.AbigorDIY.OpenTrofeoLCD.desktop
