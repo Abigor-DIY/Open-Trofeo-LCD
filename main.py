@@ -116,7 +116,9 @@ def start_backend(force_replace: bool = False):
     
     python_bin = get_venv_python(".venv-trcc")
     
-    env_args = ["--autostart"]
+    env_args = []
+    if os.environ.get("OPEN_TROFEO_BACKEND_AUTOSTART", "").strip().lower() in {"1", "true", "yes", "on"}:
+        env_args.append("--autostart")
     
     # Używamy start_new_session=True, aby backend nie zginął razem z launcherem 
     # przedwcześnie, ale będziemy go kontrolować.
