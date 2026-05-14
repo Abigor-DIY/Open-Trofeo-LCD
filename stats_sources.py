@@ -572,7 +572,7 @@ class StatsProvider:
         return not media_path or not self._is_local_video_path(media_path)
 
     def _detect_gpu_type(self) -> str | None:
-        if os.path.exists("/usr/bin/nvidia-smi"):
+        if self._local_or_host_cmd("nvidia-smi"):
             return "nvidia"
         for i in range(4):
             if os.path.exists(f"/sys/class/drm/card{i}/device/hwmon"):
@@ -629,10 +629,10 @@ class StatsProvider:
 
         out = {"volume_percent": "N/A", "volume_state": "N/A"}
         try:
-            wpctl = shutil.which("wpctl")
+            wpctl = self._local_or_host_cmd("wpctl")
             if wpctl:
                 payload = subprocess.check_output(
-                    [wpctl, "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                    wpctl + ["get-volume", "@DEFAULT_AUDIO_SINK@"],
                     encoding="utf-8",
                     stderr=subprocess.DEVNULL,
                     timeout=0.35,
@@ -642,10 +642,10 @@ class StatsProvider:
                     out["volume_percent"] = f"{int(round(float(match.group(1)) * 100.0))}%"
                 out["volume_state"] = "muted" if "MUTED" in payload.upper() else "active"
             else:
-                pactl = shutil.which("pactl")
+                pactl = self._local_or_host_cmd("pactl")
                 if pactl:
                     vol_payload = subprocess.check_output(
-                        [pactl, "get-sink-volume", "@DEFAULT_SINK@"],
+                        pactl + ["get-sink-volume", "@DEFAULT_SINK@"],
                         encoding="utf-8",
                         stderr=subprocess.DEVNULL,
                         timeout=0.45,
@@ -654,17 +654,17 @@ class StatsProvider:
                     if vol_match:
                         out["volume_percent"] = f"{int(vol_match.group(1))}%"
                     mute_payload = subprocess.check_output(
-                        [pactl, "get-sink-mute", "@DEFAULT_SINK@"],
+                        pactl + ["get-sink-mute", "@DEFAULT_SINK@"],
                         encoding="utf-8",
                         stderr=subprocess.DEVNULL,
                         timeout=0.35,
                     ).strip()
                     out["volume_state"] = "muted" if "yes" in mute_payload.lower() else "active"
                 else:
-                    pamixer = shutil.which("pamixer")
+                    pamixer = self._local_or_host_cmd("pamixer")
                     if pamixer:
                         volume_value = subprocess.check_output(
-                            [pamixer, "--get-volume"],
+                            pamixer + ["--get-volume"],
                             encoding="utf-8",
                             stderr=subprocess.DEVNULL,
                             timeout=0.35,
@@ -672,7 +672,7 @@ class StatsProvider:
                         if volume_value.isdigit():
                             out["volume_percent"] = f"{int(volume_value)}%"
                         mute_value = subprocess.check_output(
-                            [pamixer, "--get-mute"],
+                            pamixer + ["--get-mute"],
                             encoding="utf-8",
                             stderr=subprocess.DEVNULL,
                             timeout=0.35,
@@ -692,7 +692,10 @@ class StatsProvider:
         }
         if self._gpu_type == "nvidia":
             try:
-                cmd = ["nvidia-smi", "--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"]
+                nvidia_smi = self._local_or_host_cmd("nvidia-smi")
+                if not nvidia_smi:
+                    return stats
+                cmd = nvidia_smi + ["--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"]
                 out = subprocess.check_output(cmd, encoding="utf-8").strip().split(", ")
                 if len(out) >= 5:
                     stats.update({
@@ -967,12 +970,16 @@ class StatsProvider:
 
     @staticmethod
     def _playerctl_cmd() -> list[str] | None:
-        playerctl = shutil.which("playerctl")
-        if playerctl:
-            return [playerctl]
+        return StatsProvider._local_or_host_cmd("playerctl")
+
+    @staticmethod
+    def _local_or_host_cmd(binary_name: str) -> list[str] | None:
+        binary = shutil.which(binary_name)
+        if binary:
+            return [binary]
         flatpak_spawn = shutil.which("flatpak-spawn")
         if flatpak_spawn and os.path.exists("/.flatpak-info"):
-            return [flatpak_spawn, "--host", "playerctl"]
+            return [flatpak_spawn, "--host", binary_name]
         return None
 
     @staticmethod
