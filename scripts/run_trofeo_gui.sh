@@ -3,7 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKDIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BACKEND_URL="${1:-http://127.0.0.1:18777}"
 
 pick_python() {
   if [[ -x "${WORKDIR}/.venv-gui/bin/python" ]]; then
@@ -20,4 +19,11 @@ pick_python() {
 PYTHON_BIN="$(pick_python)"
 
 cd "${WORKDIR}"
-exec "${PYTHON_BIN}" "${WORKDIR}/trofeo_gui.py" --url "${BACKEND_URL}"
+
+if [[ "${OPEN_TROFEO_GUI_ONLY:-0}" == "1" || "${1:-}" == "--gui-only" ]]; then
+  shift || true
+  BACKEND_URL="${1:-http://127.0.0.1:18777}"
+  exec "${PYTHON_BIN}" "${WORKDIR}/trofeo_gui.py" --url "${BACKEND_URL}"
+fi
+
+exec "${PYTHON_BIN}" "${WORKDIR}/main.py" "$@"
