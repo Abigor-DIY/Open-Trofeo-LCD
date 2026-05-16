@@ -1901,6 +1901,7 @@ class TrofeoGui(QMainWindow):
         self.animation_preview_timer.timeout.connect(self._advance_animation_preview)
         self._animation_preview_active = False
         self._weather_search_target = "config"
+        self._weather_config_restored_to_backend = False
 
         self.client = BackendClient(base_url=base_url)
         self._build_ui(base_url)
@@ -1910,6 +1911,7 @@ class TrofeoGui(QMainWindow):
         self.apply_ui_chrome()
         self.api_result.connect(self._on_api_result)
         self.weather_city_search_finished.connect(self._finish_weather_city_search)
+        QTimer.singleShot(750, self._apply_restored_weather_config_to_backend)
 
         self.status_timer = QTimer(self)
         self.status_timer.timeout.connect(self.refresh_status)
@@ -2315,8 +2317,19 @@ class TrofeoGui(QMainWindow):
             return
         payload = self._weather_config_payload()
         self.api_call("config", "POST", "/v1/config", payload)
+        self._weather_config_restored_to_backend = True
         self._save_ui_state()
         self.append_log("[weather] Applied weather configuration.")
+
+    def _apply_restored_weather_config_to_backend(self) -> None:
+        if self._weather_config_restored_to_backend or not hasattr(self, "cfg_weather_lat_edit"):
+            return
+        payload = self._weather_config_payload()
+        if not str(payload.get("weather_lat", "")).strip() or not str(payload.get("weather_lon", "")).strip():
+            return
+        self._weather_config_restored_to_backend = True
+        self.api_call("config", "POST", "/v1/config", payload)
+        self.append_log("[weather] Restored saved weather configuration.")
 
     def refresh_weather_now(self) -> None:
         if not hasattr(self, "cfg_weather_lat_edit"):
@@ -2326,20 +2339,12 @@ class TrofeoGui(QMainWindow):
         self.api_call("config", "POST", "/v1/config", payload)
         self.append_log("[weather] Forced weather refresh.")
 
-    def search_weather_city(self) -> None:
-        if not hasattr(self, "cfg_weather_city_search_edit"):
-            return
-        self._weather_search_target = "config"
-        query = self.cfg_weather_city_search_edit.text().strip()
-        if len(query) < 2:
-            QMessageBox.information(
-                self,
-                self._tr("Weather", "Pogoda"),
-                self._tr("Type at least two characters.", "Wpisz co najmniej dwa znaki."),
-            )
-            return
-        self.cfg_weather_search_btn.setEnabled(False)
-        self.cfg_weather_search_btn.setText(self._tr("Searching...", "Szukam..."))
+    def _start_weather_city_search(self, query: str, target: str) -> None:
+        self._weather_search_target = target
+        search_btn = self.weather_designer_search_btn if target == "designer" and hasattr(self, "weather_designer_search_btn") else getattr(self, "cfg_weather_search_btn", None)
+        if search_btn is not None:
+            search_btn.setEnabled(False)
+            search_btn.setText(self._tr("Searching...", "Szukam..."))
 
         def worker() -> None:
             results: list[dict[str, object]] = []
@@ -2361,6 +2366,19 @@ class TrofeoGui(QMainWindow):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def search_weather_city(self) -> None:
+        if not hasattr(self, "cfg_weather_city_search_edit"):
+            return
+        query = self.cfg_weather_city_search_edit.text().strip()
+        if len(query) < 2:
+            QMessageBox.information(
+                self,
+                self._tr("Weather", "Pogoda"),
+                self._tr("Type at least two characters.", "Wpisz co najmniej dwa znaki."),
+            )
+            return
+        self._start_weather_city_search(query, "config")
+
     def search_designer_weather_city(self) -> None:
         if not hasattr(self, "weather_designer_city_search_edit"):
             return
@@ -2374,10 +2392,7 @@ class TrofeoGui(QMainWindow):
             return
         if hasattr(self, "cfg_weather_city_search_edit"):
             self.cfg_weather_city_search_edit.setText(query)
-        self.search_weather_city()
-        self._weather_search_target = "designer"
-        self.weather_designer_search_btn.setEnabled(False)
-        self.weather_designer_search_btn.setText(self._tr("Searching...", "Szukam..."))
+        self._start_weather_city_search(query, "designer")
 
     def _finish_weather_city_search(self, results: list[dict[str, object]], error: str = "") -> None:
         target = getattr(self, "_weather_search_target", "config")
