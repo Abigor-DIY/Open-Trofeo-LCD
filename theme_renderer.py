@@ -33,6 +33,7 @@ FONT_FAMILY_FILES = {
     "Noto Sans": "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
     "Noto Serif": "/usr/share/fonts/truetype/noto/NotoSerif-Regular.ttf",
 }
+_WEATHER_ICON_IMAGE_CACHE: dict[tuple[str, int, int, int, int], Image.Image] = {}
 
 
 def _rgba(color: list[int]) -> tuple[int, int, int, int]:
@@ -1512,7 +1513,20 @@ def _weather_icon_image(source: str, snapshot: dict[str, str], base_dir: Path, s
     if not src_path.exists():
         return None
     try:
-        return _fit_image(Image.open(src_path).convert("RGBA"), size[0], size[1], "contain")
+        stat = src_path.stat()
+        cache_key = (str(src_path), int(stat.st_mtime_ns), int(stat.st_size), int(size[0]), int(size[1]))
+    except OSError:
+        return None
+    cached = _WEATHER_ICON_IMAGE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached.copy()
+    try:
+        with Image.open(src_path) as src:
+            fitted = _fit_image(src.convert("RGBA"), size[0], size[1], "contain")
+        if len(_WEATHER_ICON_IMAGE_CACHE) > 96:
+            _WEATHER_ICON_IMAGE_CACHE.clear()
+        _WEATHER_ICON_IMAGE_CACHE[cache_key] = fitted
+        return fitted.copy()
     except Exception:
         return None
 

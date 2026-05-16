@@ -93,6 +93,8 @@ class StatsProvider:
         self._last_weather_at = 0.0
         self._last_weather_error = ""
         self._last_weather_source = "none"
+        self._weather_lock = threading.Lock()
+        self._weather_refresh_inflight = False
 
     @staticmethod
     def _parse_weather_refresh_s(value: object) -> float:
@@ -338,29 +340,29 @@ class StatsProvider:
         out["weather_daily_json"] = json.dumps(forecast, ensure_ascii=False, separators=(",", ":"))
         return out
 
-    def read_weather_stats(self) -> dict[str, str]:
+    def _cached_weather_snapshot(self) -> tuple[dict[str, str] | None, float]:
+        cached = self._read_weather_cache()
+        if cached and isinstance(cached.get("normalized"), dict):
+            try:
+                cached_at = float(cached.get("fetched_at", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                cached_at = 0.0
+            return {str(k): str(v) for k, v in cached["normalized"].items()}, cached_at  # type: ignore[index]
+        return None, 0.0
+
+    def _refresh_weather_stats_sync(
+        self,
+        *,
+        now: float | None = None,
+        cached_snapshot: dict[str, str] | None = None,
+    ) -> dict[str, str]:
         lat = self._weather_lat
         lon = self._weather_lon
         if lat is None or lon is None:
             self._last_weather_source = "disabled"
             return self._default_weather_snapshot()
 
-        now = time.time()
-        refresh_s = self._weather_refresh_s
-        if now - self._last_weather_at < refresh_s:
-            self._last_weather_source = "memory"
-            return dict(self._last_weather_snapshot)
-
-        cached = self._read_weather_cache()
-        if cached and isinstance(cached.get("normalized"), dict):
-            cached_at = float(cached.get("fetched_at", 0.0) or 0.0)
-            if now - cached_at < refresh_s:
-                self._last_weather_snapshot = {str(k): str(v) for k, v in cached["normalized"].items()}  # type: ignore[index]
-                self._last_weather_at = now
-                self._last_weather_error = ""
-                self._last_weather_source = "cache"
-                return dict(self._last_weather_snapshot)
-
+        now = time.time() if now is None else now
         params = {
             "latitude": f"{lat:.5f}",
             "longitude": f"{lon:.5f}",
@@ -388,13 +390,61 @@ class StatsProvider:
             return dict(normalized)
         except Exception as exc:
             self._last_weather_error = str(exc)
-            if cached and isinstance(cached.get("normalized"), dict):
-                self._last_weather_snapshot = {str(k): str(v) for k, v in cached["normalized"].items()}  # type: ignore[index]
+            if cached_snapshot:
+                self._last_weather_snapshot = dict(cached_snapshot)
                 self._last_weather_at = now
                 self._last_weather_source = "cache-fallback"
                 return dict(self._last_weather_snapshot)
             self._last_weather_source = "error"
             return self._default_weather_snapshot()
+
+    def _start_weather_refresh_thread(self, cached_snapshot: dict[str, str] | None = None) -> None:
+        with self._weather_lock:
+            if self._weather_refresh_inflight:
+                return
+            self._weather_refresh_inflight = True
+
+        def _worker() -> None:
+            try:
+                self._refresh_weather_stats_sync(cached_snapshot=cached_snapshot)
+            finally:
+                with self._weather_lock:
+                    self._weather_refresh_inflight = False
+
+        threading.Thread(target=_worker, name="trofeo-weather-refresh", daemon=True).start()
+
+    def read_weather_stats(self, *, blocking: bool = False, force: bool = False) -> dict[str, str]:
+        lat = self._weather_lat
+        lon = self._weather_lon
+        if lat is None or lon is None:
+            self._last_weather_source = "disabled"
+            return self._default_weather_snapshot()
+
+        now = time.time()
+        refresh_s = self._weather_refresh_s
+        if not force and now - self._last_weather_at < refresh_s:
+            self._last_weather_source = "memory"
+            return dict(self._last_weather_snapshot)
+
+        cached_snapshot, cached_at = self._cached_weather_snapshot()
+        if not force and cached_snapshot and now - cached_at < refresh_s:
+            self._last_weather_snapshot = dict(cached_snapshot)
+            self._last_weather_at = now
+            self._last_weather_error = ""
+            self._last_weather_source = "cache"
+            return dict(self._last_weather_snapshot)
+
+        if blocking or force:
+            return self._refresh_weather_stats_sync(now=now, cached_snapshot=cached_snapshot)
+
+        fallback = dict(cached_snapshot or self._last_weather_snapshot or self._default_weather_snapshot())
+        self._start_weather_refresh_thread(cached_snapshot=cached_snapshot)
+        if cached_snapshot:
+            self._last_weather_snapshot = dict(cached_snapshot)
+            self._last_weather_source = "stale-cache-refreshing"
+        else:
+            self._last_weather_source = "refreshing"
+        return fallback
 
     @staticmethod
     def _default_media_snapshot() -> dict[str, str]:

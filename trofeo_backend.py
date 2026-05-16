@@ -2412,7 +2412,7 @@ class ReplayController:
                 )
             if bool(payload.get("weather_refresh_now", False)):
                 self.stats_provider._last_weather_at = 0.0
-                self.stats_provider.read_weather_stats()
+                self.stats_provider.read_weather_stats(blocking=True, force=True)
 
             self.scan_capture()
             if restart_required and self.proc is not None and self.proc.poll() is None:
