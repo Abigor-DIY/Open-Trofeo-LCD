@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from PIL import Image
+from PIL import Image, ImageChops
 from replay_from_pcap import parse_usbpcap_bulk_payloads, extract_init_and_frames
 from stats_sources import StatsProvider
 from theme_renderer import render_theme_document
@@ -440,14 +440,7 @@ class ReplayController:
             stats_override=stats_override,
         )
         if out_path:
-            target = Path(out_path)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp_name = tempfile.mkstemp(prefix=f"{target.stem}-", suffix=target.suffix or ".png", dir=str(target.parent))
-            os.close(fd)
-            tmp_target = Path(tmp_name)
-            image.save(tmp_target)
-            os.replace(tmp_target, target)
-            out_file = target
+            out_file = self._save_image_atomic(image, out_path)
         else:
             fd, tmp_name = tempfile.mkstemp(prefix="trofeo-theme-", suffix=".png", dir=str(self._preview_runtime_dir()))
             os.close(fd)
@@ -460,9 +453,34 @@ class ReplayController:
             "height": image.height,
         }
 
-    def _save_image_atomic(self, image: Image.Image, out_path: str) -> Path:
+    def _image_matches_file(self, image: Image.Image, path: Path) -> bool:
+        try:
+            if not path.exists():
+                return False
+            with Image.open(path) as existing:
+                if existing.size != image.size:
+                    return False
+                if "A" in (existing.mode + image.mode):
+                    existing_cmp = existing.convert("RGBA")
+                    image_cmp = image.convert("RGBA")
+                    rgb_same = ImageChops.difference(
+                        existing_cmp.convert("RGB"),
+                        image_cmp.convert("RGB"),
+                    ).getbbox() is None
+                    alpha_same = ImageChops.difference(
+                        existing_cmp.getchannel("A"),
+                        image_cmp.getchannel("A"),
+                    ).getbbox() is None
+                    return rgb_same and alpha_same
+                return ImageChops.difference(existing.convert("RGB"), image.convert("RGB")).getbbox() is None
+        except Exception:
+            return False
+
+    def _save_image_atomic(self, image: Image.Image, out_path: str, *, skip_unchanged: bool = True) -> Path:
         target = Path(out_path)
         target.parent.mkdir(parents=True, exist_ok=True)
+        if skip_unchanged and self._image_matches_file(image, target):
+            return target
         fd, tmp_name = tempfile.mkstemp(prefix=f"{target.stem}-", suffix=target.suffix or ".png", dir=str(target.parent))
         os.close(fd)
         tmp_target = Path(tmp_name)
@@ -1003,8 +1021,6 @@ class ReplayController:
             source = str(entry.get("source", "")).strip()
             display = str(entry.get("display", "")).strip().lower()
             if display == "equalizer":
-                return True
-            if source == "time_hms":
                 return True
         for entry in document.get("images", []):
             if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
