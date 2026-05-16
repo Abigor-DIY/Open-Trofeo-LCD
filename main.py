@@ -72,11 +72,21 @@ def _clear_managed_backend_pid() -> None:
 
 def _acquire_instance_lock():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    lock_handle = open(INSTANCE_LOCK, "w", encoding="utf-8")
+    lock_handle = open(INSTANCE_LOCK, "a+", encoding="utf-8")
     try:
         fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        print("[-] Open Trofeo LCD już działa. Zamknij istniejące okno przed uruchomieniem kolejnego.")
+        lock_handle.seek(0)
+        raw_pid = lock_handle.read().strip()
+        try:
+            pid = int(raw_pid) if raw_pid else None
+        except Exception:
+            pid = None
+        if pid:
+            print(f"[-] Open Trofeo LCD już działa albo launcher trzyma lock (PID: {pid}).")
+        else:
+            print("[-] Open Trofeo LCD już działa albo launcher trzyma lock bez zapisanego PID.")
+        print("[-] Jeśli użyłeś nuke i to nadal występuje, uruchom: scripts/trofeo_nuke.sh")
         lock_handle.close()
         return None
     lock_handle.seek(0)
@@ -265,19 +275,29 @@ def main():
         return
 
     backend_proc = None
-    if not args.gui_only:
-        backend_proc = start_backend(force_replace=bool(args.replace_existing_backend))
+    try:
+        if not args.gui_only:
+            backend_proc = start_backend(force_replace=bool(args.replace_existing_backend))
 
-    if not args.backend_only:
-        run_gui()
-        # Wykonuje się dopiero gdy GUI faktycznie kończy proces (np. Quit w tray)
-        if backend_proc:
-            stop_backend(backend_proc)
-        else:
-            # Nawet jeśli nie my go odpaliliśmy, możemy spróbować go zamknąć 
-            # jeśli użytkownik tego oczekuje przy pełnym wyjściu z aplikacji.
-            # Ale bezpieczniej zatrzymać tylko "nasz" proces.
-            print("[-] Backend nie był uruchomiony przez ten launcher, pozostawiam go w tle.")
+        if not args.backend_only:
+            run_gui()
+            # Wykonuje się dopiero gdy GUI faktycznie kończy proces (np. Quit w tray)
+            if backend_proc:
+                stop_backend(backend_proc)
+            else:
+                # Nawet jeśli nie my go odpaliliśmy, możemy spróbować go zamknąć
+                # jeśli użytkownik tego oczekuje przy pełnym wyjściu z aplikacji.
+                # Ale bezpieczniej zatrzymać tylko "nasz" proces.
+                print("[-] Backend nie był uruchomiony przez ten launcher, pozostawiam go w tle.")
+    finally:
+        try:
+            fcntl.flock(instance_lock.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        try:
+            instance_lock.close()
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     try:

@@ -16,6 +16,7 @@ Twardy cleanup Open-Trofeo-LCD:
   - ubija procesy:
       trofeo_gui.py
       trofeo_backend.py
+      main.py
       trofeo_lcd.py
       replay_from_pcap.py
       scripts/trcc_static_image.py
@@ -102,6 +103,7 @@ stop_user_unit "trofeo-backend.service"
 stop_user_unit "trofeo-lcd.service"
 
 log "nuke: kill repo processes..."
+kill_pattern_term_then_kill "${WORKDIR}/main.py"
 kill_pattern_term_then_kill "${WORKDIR}/trofeo_gui.py"
 kill_pattern_term_then_kill "${WORKDIR}/trofeo_backend.py"
 kill_pattern_term_then_kill "${WORKDIR}/trofeo_lcd.py"
@@ -127,5 +129,9 @@ if [[ "${#FINAL_PIDS[@]}" -gt 0 ]]; then
   log "uwaga: port ${PORT} nadal zajety przez PID: ${FINAL_PIDS[*]}"
   exit 1
 fi
+
+STATE_DIR="${HOME}/.local/state/open-trofeo-lcd"
+log "nuke: cleanup launcher state..."
+rm -f "${STATE_DIR}/launcher.lock" "${STATE_DIR}/launcher-backend.pid" >/dev/null 2>&1 || true
 
 log "OK: nuke complete"
