@@ -132,6 +132,7 @@ MUSIC_RELATED_IMAGE_SOURCES: frozenset[str] = frozenset({"media_cover", "media_v
 WEATHER_STAT_SOURCES: frozenset[str] = frozenset(source for source in KNOWN_STAT_SOURCES if source.startswith("weather_"))
 WEATHER_RELATED_IMAGE_SOURCES: frozenset[str] = frozenset({"weather_icon"})
 WEATHER_RELATED_PANEL_ID_PREFIXES: tuple[str, ...] = ("panel_weather",)
+VIDEO_BACKGROUND_EXTENSIONS: frozenset[str] = frozenset({".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v"})
 MUSIC_RELATED_PANEL_ID_PREFIXES: tuple[str, ...] = ("panel_media", "panel_volume", "panel_music_eq")
 MUSIC_VISUAL_STAT_DISPLAYS: frozenset[str] = frozenset({"equalizer"})
 DESIGNER_DOMAIN_MODES: tuple[tuple[str, str], ...] = (
@@ -5438,18 +5439,21 @@ class TrofeoGui(QMainWindow):
         self.weather_tool_wide_btn = QPushButton("Wide")
         self.weather_tool_hero_btn = QPushButton("Hero")
         self.weather_tool_forecast_btn = QPushButton("Weather 7D")
-        for btn in (self.weather_tool_current_btn, self.weather_tool_wide_btn, self.weather_tool_hero_btn, self.weather_tool_forecast_btn):
+        self.weather_tool_convert_legacy_btn = QPushButton("Convert legacy")
+        for btn in (self.weather_tool_current_btn, self.weather_tool_wide_btn, self.weather_tool_hero_btn, self.weather_tool_forecast_btn, self.weather_tool_convert_legacy_btn):
             btn.setObjectName("quickAddButton")
             btn.setMinimumHeight(24)
         self.weather_tool_current_btn.clicked.connect(self.add_weather_current_widget)
         self.weather_tool_wide_btn.clicked.connect(lambda: self.add_weather_current_widget("wide"))
         self.weather_tool_hero_btn.clicked.connect(lambda: self.add_weather_current_widget("hero"))
         self.weather_tool_forecast_btn.clicked.connect(self.add_weather_forecast_widget)
+        self.weather_tool_convert_legacy_btn.clicked.connect(self.convert_legacy_weather_widgets)
         weather_tools_row = wrap_row(
             self.weather_tool_current_btn,
             self.weather_tool_wide_btn,
             self.weather_tool_hero_btn,
             self.weather_tool_forecast_btn,
+            self.weather_tool_convert_legacy_btn,
         )
         self.row_weather_tools = make_label("Weather tools")
         self.inspector_weather_layout.addRow(self.row_weather_tools, weather_tools_row)
@@ -10520,11 +10524,11 @@ class TrofeoGui(QMainWindow):
                 return
         selected, _ = QFileDialog.getOpenFileNames(
             self,
-            self._tr("Choose animation frames or a TTCR container", "Wybierz klatki animacji lub kontener TTCR"),
+            self._tr("Choose animation frames, video, ZIP, or TTCR container", "Wybierz klatki animacji, wideo, ZIP lub kontener TTCR"),
             str(Path.cwd()),
             self._tr(
-                "Animation frames (*.zt *.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
-                "Animacje/ramki (*.zt *.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
+                "Animation media (*.zt *.zip *.jpg *.jpeg *.png *.webp *.bmp *.mp4 *.webm *.mov *.mkv *.avi *.m4v);;Video (*.mp4 *.webm *.mov *.mkv *.avi *.m4v);;Frames (*.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
+                "Animacje/media (*.zt *.zip *.jpg *.jpeg *.png *.webp *.bmp *.mp4 *.webm *.mov *.mkv *.avi *.m4v);;Wideo (*.mp4 *.webm *.mov *.mkv *.avi *.m4v);;Klatki (*.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
             ),
         )
         if not selected:
@@ -10539,6 +10543,12 @@ class TrofeoGui(QMainWindow):
         theme_stem = Path(self.theme_doc_path_edit.text() or "theme").stem or "theme"
         base_dir = self._theme_base_dir()
         self._set_animation_import_busy(True)
+        canvas = self.theme_doc_model.get("canvas", {}) if isinstance(self.theme_doc_model, dict) else {}
+        canvas_size = (
+            int(canvas.get("width", 1920) or 1920),
+            int(canvas.get("height", 462) or 462),
+        )
+        fps = float(self.bg_animation_fps_spin.value()) if hasattr(self, "bg_animation_fps_spin") else 12.0
         self.preview_info_label.setText(
             self._tr(
                 f"Preparing animation frames in background ({len(sources)} source file(s)).",
@@ -10553,6 +10563,8 @@ class TrofeoGui(QMainWindow):
                     target_dir=target_dir,
                     theme_stem=theme_stem,
                     base_dir=base_dir,
+                    fps=fps,
+                    canvas_size=canvas_size,
                 )
                 self.api_result.emit(
                     "animation-import",
@@ -10572,6 +10584,8 @@ class TrofeoGui(QMainWindow):
         target_dir: Path,
         theme_stem: str,
         base_dir: Path,
+        fps: float = 12.0,
+        canvas_size: tuple[int, int] = (1920, 462),
     ) -> dict[str, Any]:
         if len(sources) == 1 and sources[0].suffix.lower() == ".zip":
             return cls._collect_animation_zip_export_for_worker(
@@ -10580,6 +10594,15 @@ class TrofeoGui(QMainWindow):
                 theme_stem=theme_stem,
                 base_dir=base_dir,
             )
+        if any(source.suffix.lower() in VIDEO_BACKGROUND_EXTENSIONS for source in sources):
+            return cls._collect_animation_video_frames_for_worker(
+                sources,
+                target_dir=target_dir,
+                theme_stem=theme_stem,
+                base_dir=base_dir,
+                fps=fps,
+                canvas_size=canvas_size,
+            )
         copied_paths = cls._collect_animation_frame_paths_for_worker(
             sources,
             target_dir=target_dir,
@@ -10587,6 +10610,58 @@ class TrofeoGui(QMainWindow):
             base_dir=base_dir,
         )
         return {"frame_paths": copied_paths, "frame_durations_ms": []}
+
+    @classmethod
+    def _collect_animation_video_frames_for_worker(
+        cls,
+        sources: list[Path],
+        *,
+        target_dir: Path,
+        theme_stem: str,
+        base_dir: Path,
+        fps: float,
+        canvas_size: tuple[int, int],
+    ) -> dict[str, Any]:
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise RuntimeError("ffmpeg not found; video background import requires ffmpeg.")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        safe_stem = "".join(ch.lower() if ch.isalnum() else "_" for ch in theme_stem).strip("_") or "theme"
+        width = max(1, int(canvas_size[0]))
+        height = max(1, int(canvas_size[1]))
+        fps_value = max(1.0, min(30.0, float(fps or 12.0)))
+        max_frames = int(max(24, min(720, fps_value * 20.0)))
+        copied_paths: list[str] = []
+        durations: list[int] = []
+        for source_index, source in enumerate(sources):
+            if source.suffix.lower() not in VIDEO_BACKGROUND_EXTENSIONS:
+                continue
+            if not source.exists():
+                continue
+            prefix = target_dir / f"{safe_stem}_video_{source_index:02d}_%05d.png"
+            vf = f"fps={fps_value:.3f},scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
+            cmd = [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source),
+                "-vf",
+                vf,
+                "-frames:v",
+                str(max_frames),
+                str(prefix),
+            ]
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or f"ffmpeg failed for {source}")
+            frames = sorted(target_dir.glob(f"{safe_stem}_video_{source_index:02d}_*.png"))
+            for frame in frames:
+                copied_paths.append(cls._display_path_for_base(frame, base_dir))
+                durations.append(max(1, int(round(1000.0 / fps_value))))
+        return {"frame_paths": copied_paths, "frame_durations_ms": durations[: len(copied_paths)]}
 
     @classmethod
     def _collect_animation_zip_export_for_worker(
@@ -13484,6 +13559,126 @@ class TrofeoGui(QMainWindow):
         self.preview_info_label.setText("Dodano kompletny widget Weather 7D Forecast.")
         self.schedule_preview_theme_doc()
 
+    @staticmethod
+    def _item_rect_bounds(item: dict[str, Any], collection: str) -> tuple[int, int, int, int] | None:
+        try:
+            if collection in {"images", "widgets"}:
+                x, y, w, h = [int(v) for v in item.get("rect", [])]
+                return x, y, x + w, y + h
+            if collection == "panels":
+                x, y, w, h = [int(v) for v in item.get("rect", [])]
+                return x, y, x + w, y + h
+            if collection == "stats":
+                x = int(item.get("x", 0))
+                y = int(item.get("y", 0))
+                w = max(1, int(item.get("box_width", 0) or 180))
+                h = max(1, int(item.get("box_height", 0) or int(item.get("font_size", 18)) + 8))
+                return x, y, x + w, y + h
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def _union_bounds(bounds: list[tuple[int, int, int, int]]) -> list[int]:
+        x1 = min(b[0] for b in bounds)
+        y1 = min(b[1] for b in bounds)
+        x2 = max(b[2] for b in bounds)
+        y2 = max(b[3] for b in bounds)
+        pad = 16
+        x1 = max(0, x1 - pad)
+        y1 = max(0, y1 - pad)
+        return [x1, y1, max(120, x2 - x1 + pad), max(60, y2 - y1 + pad)]
+
+    def _legacy_weather_groups(self) -> tuple[list[tuple[str, int, dict[str, Any]]], list[tuple[str, int, dict[str, Any]]]]:
+        current: list[tuple[str, int, dict[str, Any]]] = []
+        forecast: list[tuple[str, int, dict[str, Any]]] = []
+        if self.theme_doc_model is None:
+            return current, forecast
+        panels = self.theme_doc_model.get("background", {}).get("panels", [])
+        for idx, item in enumerate(panels if isinstance(panels, list) else []):
+            if not isinstance(item, dict):
+                continue
+            ident = str(item.get("id", "")).strip().lower()
+            if any(ident.startswith(prefix) for prefix in WEATHER_RELATED_PANEL_ID_PREFIXES):
+                current.append(("panels", idx, item))
+        for collection in ("images", "stats"):
+            items = self.theme_doc_model.get(collection, [])
+            for idx, item in enumerate(items if isinstance(items, list) else []):
+                if not isinstance(item, dict):
+                    continue
+                source = str(item.get("source", "")).strip()
+                ident = str(item.get("id", "")).strip().lower()
+                label = str(item.get("label", "")).strip().lower()
+                if source.startswith("weather_day_"):
+                    forecast.append((collection, idx, item))
+                elif source in WEATHER_STAT_SOURCES or source in WEATHER_RELATED_IMAGE_SOURCES or "weather" in ident or "pogoda" in label:
+                    current.append((collection, idx, item))
+        return current, forecast
+
+    def convert_legacy_weather_widgets(self) -> None:
+        if self.theme_doc_model is None:
+            self.reload_designer_from_json()
+        if self.theme_doc_model is None:
+            return
+        current, forecast = self._legacy_weather_groups()
+        if not current and not forecast:
+            QMessageBox.information(
+                self,
+                self._tr("Weather", "Pogoda"),
+                self._tr("No split weather elements found in this theme.", "Nie znaleziono rozbitych elementów pogody w tym motywie."),
+            )
+            return
+        self.push_designer_history()
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+
+        def first_panel_fill(items: list[tuple[str, int, dict[str, Any]]], fallback: list[int]) -> list[int]:
+            for collection, _idx, item in items:
+                if collection == "panels" and isinstance(item.get("fill"), list):
+                    return list(item.get("fill", fallback))
+            return fallback
+
+        if current:
+            bounds = [b for collection, _idx, item in current if (b := self._item_rect_bounds(item, collection)) is not None]
+            widget = self._make_weather_widget("weather_current", "wide")
+            if bounds:
+                widget["rect"] = self._union_bounds(bounds)
+            widget.setdefault("settings", {})["panel_fill"] = first_panel_fill(current, [8, 14, 24, 205])
+            widget["id"] = self._next_item_id("widgets", "widget_weather_current_migrated")
+            widgets.append(widget)
+        if forecast:
+            bounds = [b for collection, _idx, item in forecast if (b := self._item_rect_bounds(item, collection)) is not None]
+            widget = self._make_weather_widget("weather_forecast_7d", "forecast")
+            if bounds:
+                widget["rect"] = self._union_bounds(bounds)
+            widget.setdefault("settings", {})["panel_fill"] = first_panel_fill(forecast, [8, 14, 24, 190])
+            widget["id"] = self._next_item_id("widgets", "widget_weather_forecast_migrated")
+            widgets.append(widget)
+
+        remove_by_collection: dict[str, set[int]] = {"images": set(), "stats": set(), "panels": set()}
+        for collection, idx, _item in current + forecast:
+            remove_by_collection.setdefault(collection, set()).add(idx)
+        for collection in ("images", "stats"):
+            items = self.theme_doc_model.get(collection, [])
+            if isinstance(items, list) and remove_by_collection.get(collection):
+                self.theme_doc_model[collection] = [item for idx, item in enumerate(items) if idx not in remove_by_collection[collection]]
+        panels = self.theme_doc_model.get("background", {}).get("panels", [])
+        if isinstance(panels, list) and remove_by_collection.get("panels"):
+            self.theme_doc_model.setdefault("background", {})["panels"] = [item for idx, item in enumerate(panels) if idx not in remove_by_collection["panels"]]
+
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        combo_index = self.designer_kind_combo.findData("widgets")
+        if combo_index >= 0:
+            self.designer_kind_combo.setCurrentIndex(combo_index)
+            self.designer_element_list.setCurrentRow(max(0, len(widgets) - 1))
+        self.preview_info_label.setText(
+            self._tr(
+                f"Converted split weather elements into {int(bool(current)) + int(bool(forecast))} composite widget(s).",
+                f"Przekonwertowano rozbite elementy pogody na {int(bool(current)) + int(bool(forecast))} kompletne widgety.",
+            )
+        )
+        self.schedule_preview_theme_doc()
+
     def add_analog_clock_widget(self, style: str = "classic") -> None:
         if self.theme_doc_model is None:
             self.reload_designer_from_json()
@@ -16193,9 +16388,9 @@ class TrofeoGui(QMainWindow):
     def browse_background_path(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
             self,
-            "Wybierz obraz tła",
+            "Wybierz obraz lub wideo tła",
             str(Path.cwd()),
-            "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif);;All files (*)",
+            "Background media (*.png *.jpg *.jpeg *.bmp *.webp *.gif *.mp4 *.webm *.mov *.mkv *.avi *.m4v);;Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif);;Video (*.mp4 *.webm *.mov *.mkv *.avi *.m4v);;All files (*)",
         )
         if selected:
             source = Path(selected).expanduser()
@@ -16207,6 +16402,12 @@ class TrofeoGui(QMainWindow):
                     self._tr("Theme error", "Błąd motywu"),
                     self._tr("Load a valid theme in the designer first.", "Najpierw wczytaj poprawny motyw w projektancie."),
                 )
+                return
+            if source.suffix.lower() in VIDEO_BACKGROUND_EXTENSIONS:
+                self._start_animation_frame_import([source], mode="replace")
+                self.bg_animation_enabled_chk.setChecked(True)
+                self.bg_animation_use_bg_chk.setChecked(True)
+                self.preview_info_label.setText(self._tr("Importing video background frames...", "Importuję klatki tła wideo..."))
                 return
             if source.exists() and self._image_tools_available():
                 prepared_path = self._run_theme_image_import(source, asset_kind="background", button_text="Importuj tło")
