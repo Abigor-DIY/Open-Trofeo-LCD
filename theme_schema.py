@@ -31,12 +31,29 @@ KNOWN_STAT_SOURCES = [
     "gpu_name", "gpu_temp", "gpu_load", "vram_used_mb", "vram_total_mb", "vram_percent",
     "uptime_human",
     "media_title", "media_artist", "media_app", "media_state",
+    "weather_location", "weather_temp_c", "weather_feels_like_c",
+    "weather_humidity_percent", "weather_wind_kph", "weather_precip_mm",
+    "weather_cloud_percent", "weather_code", "weather_condition",
+    "weather_icon", "weather_icon_path", "weather_is_day", "weather_daily_json",
+    "weather_day_0_label", "weather_day_0_condition", "weather_day_0_icon", "weather_day_0_temp_min_c", "weather_day_0_temp_max_c", "weather_day_0_precip_mm",
+    "weather_day_1_label", "weather_day_1_condition", "weather_day_1_icon", "weather_day_1_temp_min_c", "weather_day_1_temp_max_c", "weather_day_1_precip_mm",
+    "weather_day_2_label", "weather_day_2_condition", "weather_day_2_icon", "weather_day_2_temp_min_c", "weather_day_2_temp_max_c", "weather_day_2_precip_mm",
+    "weather_day_3_label", "weather_day_3_condition", "weather_day_3_icon", "weather_day_3_temp_min_c", "weather_day_3_temp_max_c", "weather_day_3_precip_mm",
+    "weather_day_4_label", "weather_day_4_condition", "weather_day_4_icon", "weather_day_4_temp_min_c", "weather_day_4_temp_max_c", "weather_day_4_precip_mm",
+    "weather_day_5_label", "weather_day_5_condition", "weather_day_5_icon", "weather_day_5_temp_min_c", "weather_day_5_temp_max_c", "weather_day_5_precip_mm",
+    "weather_day_6_label", "weather_day_6_condition", "weather_day_6_icon", "weather_day_6_temp_min_c", "weather_day_6_temp_max_c", "weather_day_6_precip_mm",
 ]
 
 KNOWN_ALIGN = {"left", "center", "right"}
 KNOWN_FIT = {"contain", "cover", "stretch"}
 KNOWN_BACKGROUND_KIND = {"generated", "image", "color"}
-KNOWN_IMAGE_SOURCES = {"media_cover", "media_video_frame", "analog_clock"}
+KNOWN_IMAGE_SOURCES = {
+    "media_cover",
+    "media_video_frame",
+    "analog_clock",
+    "weather_icon",
+    *(f"weather_day_{idx}_icon" for idx in range(7)),
+}
 KNOWN_CLOCK_STYLE = {"classic", "modern", "nordic"}
 KNOWN_STAT_DISPLAY = {"text", "progress", "gauge", "sparkline", "equalizer"}
 KNOWN_GAUGE_VALUE_LAYOUT = frozenset({"center", "below", "beside"})

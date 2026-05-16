@@ -11,6 +11,8 @@ Important bundled/runtime dependencies include:
 - OpenCV Python Headless: Apache-2.0.
 - PyUSB: BSD-style license.
 - trcc-linux and its transitive dependencies: their upstream package licenses.
+- Meteocons bundled weather SVG subset: MIT, copyright Bas Milius. See
+  `assets/weather/icons/meteocons/LICENSE`.
 
 Before publishing a stable binary package, generate a complete dependency
 license report from the exact Flatpak build environment and ship it with the

@@ -231,6 +231,44 @@ def _parse_numeric_stat_value(value: str) -> float | None:
         return None
 
 
+def _looks_like_percent_source(source: object, value: object) -> bool:
+    source_text = str(source or "").strip().lower()
+    value_text = str(value or "").strip()
+    return (
+        "%" in value_text
+        or source_text.endswith("_percent")
+        or source_text in {
+            "cpu_usage_percent",
+            "cpu_core_avg_percent",
+            "cpu_core_max_percent",
+            "gpu_load",
+            "mem_percent",
+            "disk_percent",
+            "vram_percent",
+            "volume_percent",
+        }
+    )
+
+
+def _coerce_stat_range(item: dict[str, Any], value: object) -> tuple[float, float]:
+    min_value = float(item.get("min_value", 0.0))
+    max_value = float(item.get("max_value", 100.0))
+    if max_value <= min_value:
+        return 0.0, 100.0
+    # Percent-like sources must remain 0..100. Older themes or manual edits can
+    # leave a 0..1 range, which clamps 2%, 9%, 64% to the top/end of the widget.
+    if _looks_like_percent_source(item.get("source", ""), value) and max_value <= 1.0:
+        return 0.0, 100.0
+    return min_value, max_value
+
+
+def _stat_ratio(numeric_value: float, min_value: float, max_value: float) -> float:
+    span = max_value - min_value
+    if span <= 0:
+        return 0.0
+    return max(0.0, min(1.0, (float(numeric_value) - min_value) / span))
+
+
 _GAUGE_ANGLE_SMOOTH: dict[str, float] = {}
 _SPARKLINE_HISTORY: dict[str, list[float]] = {}
 
@@ -333,8 +371,7 @@ def _draw_stat_progress(
     bar_height = max(10, min(24, box_height - label_height))
     radius = max(5, min(12, bar_height // 2))
     draw.rounded_rectangle((bar_left, bar_top, bar_left + bar_width, bar_top + bar_height), radius=radius, fill=track_fill)
-    span = max_value - min_value
-    ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
+    ratio = _stat_ratio(numeric_value, min_value, max_value)
     fill_width = int(round(bar_width * ratio))
     if fill_width > 0:
         draw.rounded_rectangle(
@@ -692,13 +729,10 @@ def _draw_stat_sparkline(
 
     if not history:
         return
-    span = max_value - min_value
-    if span <= 0:
-        span = 1.0
     normalized: list[tuple[float, float]] = []
     count = max(1, len(history))
     for idx, raw in enumerate(history):
-        ratio = max(0.0, min(1.0, (raw - min_value) / span))
+        ratio = _stat_ratio(raw, min_value, max_value)
         px = plot_left if count == 1 else plot_left + ((plot_right - plot_left) * idx / (count - 1))
         py = plot_bottom - ratio * max(1, plot_bottom - plot_top)
         normalized.append((px, py))
@@ -786,8 +820,7 @@ def _draw_stat_equalizer(
         vb = draw.textbbox((0, 0), value_text, font=value_font)
         vx = plot_right - (vb[2] - vb[0])
         _draw_styled_text(draw, (vx, y + pad_y), value_text, font=value_font, fill=value_fill, bold=True, underline=False)
-    span = max_value - min_value
-    ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
+    ratio = _stat_ratio(numeric_value, min_value, max_value)
     media_state = str(snapshot.get("media_state", "")).strip().lower()
     is_playing = media_state == "playing"
     is_paused = media_state == "paused"
@@ -1169,6 +1202,17 @@ def render_images(canvas: Image.Image, theme: ThemeDocument, base_dir: Path, sna
         x, y, w, h = item["rect"]
         if source == "analog_clock":
             fitted = _render_analog_clock(item, snapshot, w, h)
+        elif source == "weather_icon" or (source.startswith("weather_day_") and source.endswith("_icon")):
+            icon_path_key = "weather_icon_path" if source == "weather_icon" else f"{source}_path"
+            icon_path = str(snapshot.get(icon_path_key, "")).strip()
+            if not icon_path:
+                continue
+            src_path = _resolve_asset_path(base_dir, icon_path)
+            if not src_path.exists():
+                continue
+            src = Image.open(src_path).convert("RGBA")
+            src = _apply_crop_box(src, item.get("crop_box"))
+            fitted = _fit_image(src, w, h, item["fit"])
         elif source in {"media_cover", "media_video_frame"}:
             cover_path = ""
             if source == "media_video_frame":
@@ -1299,8 +1343,7 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
         marquee = bool(item.get("marquee", False))
         numeric_value = _parse_numeric_stat_value(value)
         if display in {"progress", "gauge", "sparkline", "equalizer"} and numeric_value is not None:
-            min_value = float(item.get("min_value", 0.0))
-            max_value = float(item.get("max_value", 100.0))
+            min_value, max_value = _coerce_stat_range(item, value)
             if display == "progress":
                 _draw_stat_progress(
                     canvas,
@@ -1316,8 +1359,7 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
                     fill_color=fill_color,
                 )
             elif display == "gauge":
-                span = max_value - min_value
-                target_ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
+                target_ratio = _stat_ratio(numeric_value, min_value, max_value)
                 cache_key = f"{item.get('id', 'stat')}::{item.get('source', '')}"
                 smooth_f = float(item.get("gauge_smooth", 0.32))
                 display_ratio = _smooth_gauge_ratio(cache_key, target_ratio, smooth_f)

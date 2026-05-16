@@ -81,6 +81,320 @@ class StatsProvider:
             os.path.expanduser("~/.local/state/open-trofeo-lcd/runtime"),
             "media-covers",
         )
+        state_home = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+        self._weather_runtime_dir = os.path.join(state_home, "open-trofeo-lcd", "weather")
+        self._weather_cache_path = os.path.join(self._weather_runtime_dir, "open-meteo.json")
+        self._weather_icon_map = self._load_weather_icon_map()
+        self._weather_lat = self._weather_float(os.environ.get("OPEN_TROFEO_WEATHER_LAT", ""))
+        self._weather_lon = self._weather_float(os.environ.get("OPEN_TROFEO_WEATHER_LON", ""))
+        self._weather_location = os.environ.get("OPEN_TROFEO_WEATHER_LOCATION", "").strip()
+        self._weather_refresh_s = self._parse_weather_refresh_s(os.environ.get("OPEN_TROFEO_WEATHER_REFRESH_S", "900"))
+        self._last_weather_snapshot = self._default_weather_snapshot()
+        self._last_weather_at = 0.0
+        self._last_weather_error = ""
+        self._last_weather_source = "none"
+
+    @staticmethod
+    def _parse_weather_refresh_s(value: object) -> float:
+        try:
+            return max(300.0, float(value or 900))
+        except (TypeError, ValueError):
+            return 900.0
+
+    def weather_config(self) -> dict[str, object]:
+        return {
+            "lat": self._weather_lat,
+            "lon": self._weather_lon,
+            "location": self._weather_location,
+            "refresh_s": self._weather_refresh_s,
+            "enabled": self._weather_lat is not None and self._weather_lon is not None,
+        }
+
+    def weather_status(self) -> dict[str, object]:
+        cached = self._read_weather_cache()
+        cached_at = 0.0
+        if cached:
+            try:
+                cached_at = float(cached.get("fetched_at", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                cached_at = 0.0
+        now = time.time()
+        snapshot = self._last_weather_snapshot or self._default_weather_snapshot()
+        return {
+            **self.weather_config(),
+            "cache_path": self._weather_cache_path,
+            "cache_exists": bool(cached),
+            "cache_age_s": round(now - cached_at, 1) if cached_at > 0 else None,
+            "last_update_age_s": round(now - self._last_weather_at, 1) if self._last_weather_at > 0 else None,
+            "last_source": self._last_weather_source,
+            "last_error": self._last_weather_error,
+            "condition": snapshot.get("weather_condition", "N/A"),
+            "temperature": snapshot.get("weather_temp_c", "N/A"),
+            "location_label": snapshot.get("weather_location", self._weather_location or "N/A"),
+        }
+
+    def set_weather_config(
+        self,
+        *,
+        lat: float | None = None,
+        lon: float | None = None,
+        location: str | None = None,
+        refresh_s: float | None = None,
+    ) -> dict[str, object]:
+        self._weather_lat = lat
+        self._weather_lon = lon
+        if location is not None:
+            self._weather_location = str(location).strip()
+        if refresh_s is not None:
+            self._weather_refresh_s = self._parse_weather_refresh_s(refresh_s)
+        self._last_weather_at = 0.0
+        self._last_weather_snapshot = self._default_weather_snapshot()
+        self._last_weather_error = ""
+        self._last_weather_source = "config"
+        return self.weather_config()
+
+    def _load_weather_icon_map(self) -> dict[str, object]:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "weather", "open_meteo_icon_map.json")
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _weather_float(value: str) -> float | None:
+        text = str(value or "").strip().replace(",", ".")
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _format_weather_number(value: object, suffix: str = "", digits: int = 0) -> str:
+        if value is None:
+            return "N/A"
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return "N/A"
+        if digits <= 0:
+            text = f"{number:.0f}"
+        else:
+            text = f"{number:.{digits}f}"
+        return f"{text}{suffix}"
+
+    @staticmethod
+    def _default_weather_snapshot() -> dict[str, str]:
+        out = {
+            "weather_location": "N/A",
+            "weather_temp_c": "N/A",
+            "weather_feels_like_c": "N/A",
+            "weather_humidity_percent": "N/A",
+            "weather_wind_kph": "N/A",
+            "weather_precip_mm": "N/A",
+            "weather_cloud_percent": "N/A",
+            "weather_code": "N/A",
+            "weather_condition": "N/A",
+            "weather_icon": "not-available.svg",
+            "weather_icon_path": "",
+            "weather_is_day": "N/A",
+            "weather_daily_json": "[]",
+        }
+        for idx in range(7):
+            out.update(
+                {
+                    f"weather_day_{idx}_label": "N/A",
+                    f"weather_day_{idx}_condition": "N/A",
+                    f"weather_day_{idx}_icon": "not-available.svg",
+                    f"weather_day_{idx}_icon_path": "",
+                    f"weather_day_{idx}_temp_min_c": "N/A",
+                    f"weather_day_{idx}_temp_max_c": "N/A",
+                    f"weather_day_{idx}_precip_mm": "N/A",
+                }
+            )
+        return out
+
+    def _weather_icon_for_code(self, code: object, is_day: bool = True) -> tuple[str, str]:
+        fallback = self._weather_icon_map.get("fallback", {}) if isinstance(self._weather_icon_map, dict) else {}
+        fallback_name = "not-available.svg"
+        if isinstance(fallback, dict):
+            fallback_name = str(fallback.get("day" if is_day else "night") or fallback.get("day") or fallback_name)
+        codes = self._weather_icon_map.get("codes", {}) if isinstance(self._weather_icon_map, dict) else {}
+        entry = codes.get(str(code)) if isinstance(codes, dict) else None
+        if not isinstance(entry, dict):
+            return "N/A", fallback_name
+        label = str(entry.get("label") or "N/A")
+        icon_name = str(entry.get("day" if is_day else "night") or entry.get("day") or fallback_name)
+        return label, icon_name
+
+    @staticmethod
+    def _weekday_label(date_text: str) -> str:
+        try:
+            parsed = time.strptime(date_text, "%Y-%m-%d")
+            return time.strftime("%a", parsed)
+        except Exception:
+            return str(date_text or "N/A")
+
+    def _weather_icon_path(self, icon_name: str) -> str:
+        name = os.path.basename(str(icon_name or ""))
+        if not name:
+            return ""
+        root = os.path.dirname(os.path.abspath(__file__))
+        preferred_dir = "png" if name.lower().endswith(".png") else "fill"
+        candidates = [
+            os.path.join(root, "assets", "weather", "icons", "meteocons", preferred_dir, name),
+            os.path.join(root, "assets", "weather", "icons", "meteocons", "png", os.path.splitext(name)[0] + ".png"),
+            os.path.join(root, "assets", "weather", "icons", "meteocons", "fill", os.path.splitext(name)[0] + ".svg"),
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return ""
+
+    def _read_weather_cache(self) -> dict[str, object] | None:
+        try:
+            if not os.path.exists(self._weather_cache_path):
+                return None
+            with open(self._weather_cache_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _write_weather_cache(self, data: dict[str, object]) -> None:
+        try:
+            os.makedirs(self._weather_runtime_dir, exist_ok=True)
+            tmp_path = f"{self._weather_cache_path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, ensure_ascii=False)
+            os.replace(tmp_path, self._weather_cache_path)
+        except Exception:
+            pass
+
+    def _normalize_weather_response(self, data: dict[str, object], location: str) -> dict[str, str]:
+        out = self._default_weather_snapshot()
+        out["weather_location"] = location or "N/A"
+
+        current = data.get("current", {})
+        if not isinstance(current, dict):
+            current = {}
+        code = current.get("weather_code")
+        is_day = str(current.get("is_day", "1")) != "0"
+        condition, icon_name = self._weather_icon_for_code(code, is_day=is_day)
+        out.update(
+            {
+                "weather_temp_c": self._format_weather_number(current.get("temperature_2m"), "°C"),
+                "weather_feels_like_c": self._format_weather_number(current.get("apparent_temperature"), "°C"),
+                "weather_humidity_percent": self._format_weather_number(current.get("relative_humidity_2m"), "%"),
+                "weather_wind_kph": self._format_weather_number(current.get("wind_speed_10m"), " km/h"),
+                "weather_precip_mm": self._format_weather_number(current.get("precipitation"), " mm", digits=1),
+                "weather_cloud_percent": self._format_weather_number(current.get("cloud_cover"), "%"),
+                "weather_code": "N/A" if code is None else str(code),
+                "weather_condition": condition,
+                "weather_icon": icon_name,
+                "weather_icon_path": self._weather_icon_path(icon_name),
+                "weather_is_day": "1" if is_day else "0",
+            }
+        )
+
+        daily = data.get("daily", {})
+        forecast: list[dict[str, object]] = []
+        if isinstance(daily, dict):
+            dates = daily.get("time") if isinstance(daily.get("time"), list) else []
+            codes = daily.get("weather_code") if isinstance(daily.get("weather_code"), list) else []
+            mins = daily.get("temperature_2m_min") if isinstance(daily.get("temperature_2m_min"), list) else []
+            maxs = daily.get("temperature_2m_max") if isinstance(daily.get("temperature_2m_max"), list) else []
+            precips = daily.get("precipitation_sum") if isinstance(daily.get("precipitation_sum"), list) else []
+            winds = daily.get("wind_speed_10m_max") if isinstance(daily.get("wind_speed_10m_max"), list) else []
+            for idx in range(min(7, len(dates))):
+                day_code = codes[idx] if idx < len(codes) else None
+                day_condition, day_icon = self._weather_icon_for_code(day_code, is_day=True)
+                row = {
+                    "date": str(dates[idx]),
+                    "weekday": self._weekday_label(str(dates[idx])),
+                    "code": day_code,
+                    "condition": day_condition,
+                    "icon": day_icon,
+                    "temp_min_c": mins[idx] if idx < len(mins) else None,
+                    "temp_max_c": maxs[idx] if idx < len(maxs) else None,
+                    "precip_mm": precips[idx] if idx < len(precips) else None,
+                    "wind_kph": winds[idx] if idx < len(winds) else None,
+                }
+                forecast.append(row)
+                out.update(
+                    {
+                        f"weather_day_{idx}_label": str(row["weekday"]),
+                        f"weather_day_{idx}_condition": str(row["condition"]),
+                        f"weather_day_{idx}_icon": day_icon,
+                        f"weather_day_{idx}_icon_path": self._weather_icon_path(day_icon),
+                        f"weather_day_{idx}_temp_min_c": self._format_weather_number(row["temp_min_c"], "°C"),
+                        f"weather_day_{idx}_temp_max_c": self._format_weather_number(row["temp_max_c"], "°C"),
+                        f"weather_day_{idx}_precip_mm": self._format_weather_number(row["precip_mm"], " mm", digits=1),
+                    }
+                )
+        out["weather_daily_json"] = json.dumps(forecast, ensure_ascii=False, separators=(",", ":"))
+        return out
+
+    def read_weather_stats(self) -> dict[str, str]:
+        lat = self._weather_lat
+        lon = self._weather_lon
+        if lat is None or lon is None:
+            self._last_weather_source = "disabled"
+            return self._default_weather_snapshot()
+
+        now = time.time()
+        refresh_s = self._weather_refresh_s
+        if now - self._last_weather_at < refresh_s:
+            self._last_weather_source = "memory"
+            return dict(self._last_weather_snapshot)
+
+        cached = self._read_weather_cache()
+        if cached and isinstance(cached.get("normalized"), dict):
+            cached_at = float(cached.get("fetched_at", 0.0) or 0.0)
+            if now - cached_at < refresh_s:
+                self._last_weather_snapshot = {str(k): str(v) for k, v in cached["normalized"].items()}  # type: ignore[index]
+                self._last_weather_at = now
+                self._last_weather_error = ""
+                self._last_weather_source = "cache"
+                return dict(self._last_weather_snapshot)
+
+        params = {
+            "latitude": f"{lat:.5f}",
+            "longitude": f"{lon:.5f}",
+            "current": "temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation,weather_code,cloud_cover,wind_speed_10m",
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,sunrise,sunset",
+            "forecast_days": "7",
+            "timezone": "auto",
+            "wind_speed_unit": "kmh",
+        }
+        location = self._weather_location or f"{lat:.3f},{lon:.3f}"
+        url = "https://api.open-meteo.com/v1/forecast?" + urlencode(params)
+        try:
+            req = Request(url, headers={"User-Agent": "OpenTrofeoLCD/1.0"})
+            with urlopen(req, timeout=2.5) as response:
+                payload = response.read()
+            data = json.loads(payload.decode("utf-8"))
+            if not isinstance(data, dict):
+                raise RuntimeError("invalid-weather-payload")
+            normalized = self._normalize_weather_response(data, location)
+            self._last_weather_snapshot = normalized
+            self._last_weather_at = now
+            self._last_weather_error = ""
+            self._last_weather_source = "open-meteo"
+            self._write_weather_cache({"fetched_at": now, "provider": "open-meteo", "raw": data, "normalized": normalized})
+            return dict(normalized)
+        except Exception as exc:
+            self._last_weather_error = str(exc)
+            if cached and isinstance(cached.get("normalized"), dict):
+                self._last_weather_snapshot = {str(k): str(v) for k, v in cached["normalized"].items()}  # type: ignore[index]
+                self._last_weather_at = now
+                self._last_weather_source = "cache-fallback"
+                return dict(self._last_weather_snapshot)
+            self._last_weather_source = "error"
+            return self._default_weather_snapshot()
 
     @staticmethod
     def _default_media_snapshot() -> dict[str, str]:
@@ -1121,6 +1435,7 @@ class StatsProvider:
         volume = self.read_volume_stats()
         gpu = self.read_gpu_stats()
         media = self._read_media_now_playing()
+        weather = self.read_weather_stats()
 
         values = {
             "hostname": os.uname().nodename if hasattr(os, "uname") else "unknown",
@@ -1146,5 +1461,6 @@ class StatsProvider:
             "uptime_human": "N/A" if uptime is None else f"{uptime[0]}h {uptime[1]}m",
             **gpu,
             **media,
+            **weather,
         }
         return StatsSnapshot(values=values)

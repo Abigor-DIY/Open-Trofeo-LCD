@@ -302,6 +302,14 @@ File: `.trofeo-backend.env`
 - `THEMES_FILE` (default: `.trofeo-themes.json`)
 - `PLAYLIST_FILE` (default: `.trofeo-playlist.json`)
 - `AUTOSTART=1` starts replay immediately when the backend starts
+- optional weather data for widgets:
+  - `OPEN_TROFEO_WEATHER_LAT`
+  - `OPEN_TROFEO_WEATHER_LON`
+  - `OPEN_TROFEO_WEATHER_LOCATION`
+  - `OPEN_TROFEO_WEATHER_REFRESH_S` (default: `900`)
+
+Weather uses Open-Meteo by default and does not require an API key. Leave
+latitude/longitude empty to keep weather sources disabled.
 
 ## Stage 2.3: Qt GUI Client
 

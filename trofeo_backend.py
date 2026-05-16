@@ -8,6 +8,7 @@ Local HTTP/JSON control plane for the LCD runtime.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import random
@@ -154,6 +155,11 @@ class ReplayController:
         fd, tmp_name = tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=str(self.runtime_dir))
         os.close(fd)
         return Path(tmp_name)
+
+    def _preview_runtime_dir(self) -> Path:
+        preview_dir = self.runtime_dir / "previews"
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        return preview_dir
 
     def _theme_live_staging_dir(self) -> Path:
         """Fixed paths for live theme PNGs so quick theme switches do not orphan TRCC workers."""
@@ -441,7 +447,7 @@ class ReplayController:
             os.replace(tmp_target, target)
             out_file = target
         else:
-            fd, tmp_name = tempfile.mkstemp(prefix="trofeo-theme-", suffix=".png")
+            fd, tmp_name = tempfile.mkstemp(prefix="trofeo-theme-", suffix=".png", dir=str(self._preview_runtime_dir()))
             os.close(fd)
             out_file = Path(tmp_name)
             image.save(out_file)
@@ -469,8 +475,21 @@ class ReplayController:
                 values[str(key)] = str(value)
         return values
 
-    def render_theme_preview(self, path: str | None = None, document: dict[str, Any] | None = None) -> dict[str, Any]:
-        return self._render_theme_doc_to_file(path=path, document=document)
+    def render_theme_preview(
+        self,
+        path: str | None = None,
+        document: dict[str, Any] | None = None,
+        include_image_base64: bool = False,
+    ) -> dict[str, Any]:
+        result = self._render_theme_doc_to_file(path=path, document=document)
+        if include_image_base64:
+            try:
+                image_path = Path(str(result.get("image_path", "")))
+                if image_path.exists():
+                    result["image_base64"] = base64.b64encode(image_path.read_bytes()).decode("ascii")
+            except Exception:
+                pass
+        return result
 
     def _theme_animation_spec(
         self,
@@ -2306,11 +2325,33 @@ class ReplayController:
             if "connect_retry_delay" in payload:
                 self.cfg.connect_retry_delay = max(0.0, float(payload["connect_retry_delay"]))
                 restart_required = True
+            if any(key in payload for key in ("weather_lat", "weather_lon", "weather_location", "weather_refresh_s")):
+                lat_raw = payload.get("weather_lat")
+                lon_raw = payload.get("weather_lon")
+
+                def _opt_float(value: object) -> float | None:
+                    text = str(value or "").strip().replace(",", ".")
+                    if not text:
+                        return None
+                    try:
+                        return float(text)
+                    except ValueError:
+                        return None
+
+                self.stats_provider.set_weather_config(
+                    lat=_opt_float(lat_raw),
+                    lon=_opt_float(lon_raw),
+                    location=str(payload.get("weather_location", "")).strip(),
+                    refresh_s=float(payload.get("weather_refresh_s", 900) or 900),
+                )
+            if bool(payload.get("weather_refresh_now", False)):
+                self.stats_provider._last_weather_at = 0.0
+                self.stats_provider.read_weather_stats()
 
             self.scan_capture()
             if restart_required and self.proc is not None and self.proc.poll() is None:
                 return self.restart_loop()
-            return {"running": self.is_running(), "config": self.cfg.as_json()}
+            return {"running": self.is_running(), "config": {**self.cfg.as_json(), "weather": self.stats_provider.weather_status()}}
 
     def send_image(
         self,
@@ -2368,7 +2409,7 @@ class ReplayController:
                 "frame_count": self.frame_count,
                 "last_capture_scan_at": self.last_capture_scan_at,
                 "theme_count": len(self.themes),
-                "config": self.cfg.as_json(),
+                "config": {**self.cfg.as_json(), "weather": self.stats_provider.weather_status()},
             }
 
 
@@ -2550,6 +2591,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 result = ctl.render_theme_preview(
                     path=None if not theme_path else str(theme_path),
                     document=document if isinstance(document, dict) else None,
+                    include_image_base64=bool(body.get("include_image_base64", False)),
                 )
                 self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
                 return

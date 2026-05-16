@@ -7,6 +7,7 @@ Ten skrypt automatycznie uruchamia backend i GUI, dbając o ich współpracę.
 
 import argparse
 import fcntl
+import json
 import os
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import time
 import urllib.request
 import urllib.error
 from pathlib import Path
+from collections import deque
 
 WORKDIR = Path(__file__).parent.resolve()
 BACKEND_PORT = 18777
@@ -31,6 +33,25 @@ def is_backend_running() -> bool:
         return False
     except Exception:
         return False
+
+def backend_workdir() -> str:
+    """Returns backend-reported workdir, or an empty string if status is unavailable."""
+    try:
+        with urllib.request.urlopen(f"{BACKEND_URL}/v1/status", timeout=1.5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        cfg = data.get("config", {}) if isinstance(data, dict) else {}
+        return str(cfg.get("workdir", "")).strip() if isinstance(cfg, dict) else ""
+    except Exception:
+        return ""
+
+def backend_matches_workdir() -> bool:
+    reported = backend_workdir()
+    if not reported:
+        return False
+    try:
+        return Path(reported).resolve() == WORKDIR
+    except Exception:
+        return reported == str(WORKDIR)
 
 def _read_managed_backend_pid() -> int | None:
     try:
@@ -106,8 +127,17 @@ def start_backend(force_replace: bool = False):
             if is_backend_running():
                 print("[-] Nie udało się wyłączyć starego backendu launchera.")
                 return None
+        elif not backend_matches_workdir():
+            reported = backend_workdir() or "nieznany"
+            print(f"[-] Backend działa z innego katalogu: {reported}")
+            print("[+] Zamykam obcy backend i uruchamiam lokalny z workspace.")
+            stop_backend()
+            time.sleep(0.8)
+            if is_backend_running() and not backend_matches_workdir():
+                print("[-] Nie udało się wyłączyć obcego backendu. Zamknij Flatpaka/usługę i uruchom ponownie.")
+                return None
         else:
-            print("[-] Backend już działa (prawdopodobnie jako usługa systemowa).")
+            print("[-] Backend już działa dla tego workspace.")
             return None
 
     print("[+] Uruchamiam backend...")
@@ -185,16 +215,34 @@ def run_gui():
     """Uruchamia GUI i czeka na jego zakończenie."""
     print("[+] Uruchamiam GUI...")
     python_bin = get_venv_python(".venv-gui")
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    gui_log = STATE_DIR / "gui.log"
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
     
     try:
         # Ten proces będzie trwał dopóki użytkownik nie wybierze 'Quit' z tray'a
-        subprocess.run(
-            [python_bin, str(WORKDIR / "trofeo_gui.py"), "--url", BACKEND_URL],
-            cwd=WORKDIR,
-            check=True
-        )
+        with open(gui_log, "a", encoding="utf-8") as log:
+            log.write(f"\n[{time.strftime('%Y-%m-%dT%H:%M:%S%z')}] start GUI\n")
+            log.flush()
+            subprocess.run(
+                [python_bin, str(WORKDIR / "trofeo_gui.py"), "--url", BACKEND_URL],
+                cwd=WORKDIR,
+                check=True,
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+            )
     except subprocess.CalledProcessError as e:
         print(f"[-] GUI zakończone błędem: {e}")
+        print(f"[-] Log GUI: {gui_log}")
+        try:
+            with open(gui_log, "r", encoding="utf-8", errors="replace") as log:
+                tail = deque(log, maxlen=80)
+            print("[-] Ostatnie linie GUI:")
+            print("".join(tail).rstrip())
+        except Exception:
+            pass
     except KeyboardInterrupt:
         pass
 
