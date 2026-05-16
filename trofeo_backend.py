@@ -2649,7 +2649,18 @@ class ReplayController:
                 self.stats_provider._last_weather_at = 0.0
                 self.stats_provider.read_weather_stats(blocking=True, force=True)
             if "audio_eq_input" in payload:
-                self.stats_provider.set_audio_eq_config(input_method=payload.get("audio_eq_input"), restart=True)
+                self.stats_provider.set_audio_eq_config(
+                    input_method=payload.get("audio_eq_input"),
+                    profile=payload.get("audio_eq_profile"),
+                    sensitivity=payload.get("audio_eq_sensitivity"),
+                    restart=True,
+                )
+            elif any(key in payload for key in ("audio_eq_profile", "audio_eq_sensitivity")):
+                self.stats_provider.set_audio_eq_config(
+                    profile=payload.get("audio_eq_profile"),
+                    sensitivity=payload.get("audio_eq_sensitivity"),
+                    restart=False,
+                )
 
             self.scan_capture()
             if restart_required and self.proc is not None and self.proc.poll() is None:

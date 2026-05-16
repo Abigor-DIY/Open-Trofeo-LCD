@@ -96,6 +96,8 @@ class StatsProvider:
         self._audio_eq_thread_started = False
         self._audio_eq_cava_bin = self._local_or_host_cmd("cava")
         self._audio_eq_input_method = self._normalize_audio_eq_input(os.environ.get("OPEN_TROFEO_CAVA_INPUT", "pulse"))
+        self._audio_eq_profile = self._normalize_audio_eq_profile(os.environ.get("OPEN_TROFEO_AUDIO_EQ_PROFILE", "balanced"))
+        self._audio_eq_sensitivity = self._parse_audio_eq_sensitivity(os.environ.get("OPEN_TROFEO_AUDIO_EQ_SENSITIVITY", "1.0"))
         self._weather_runtime_dir = os.path.join(state_home, "open-trofeo-lcd", "weather")
         self._weather_cache_path = os.path.join(self._weather_runtime_dir, "open-meteo.json")
         self._weather_icon_map = self._load_weather_icon_map()
@@ -131,9 +133,42 @@ class StatsProvider:
             return "pulse"
         return method
 
-    def set_audio_eq_config(self, *, input_method: object | None = None, restart: bool = True) -> dict[str, object]:
+    @staticmethod
+    def _normalize_audio_eq_profile(value: object) -> str:
+        profile = str(value or "balanced").strip().lower() or "balanced"
+        if profile not in {"responsive", "balanced", "smooth"}:
+            return "balanced"
+        return profile
+
+    @staticmethod
+    def _parse_audio_eq_sensitivity(value: object) -> float:
+        try:
+            return max(0.35, min(2.5, float(value)))
+        except (TypeError, ValueError):
+            return 1.0
+
+    @staticmethod
+    def _audio_eq_profile_settings(profile: str) -> dict[str, float]:
+        if profile == "responsive":
+            return {"attack": 0.018, "release": 0.095, "gate": 0.012, "gamma": 0.66, "blend": 0.07}
+        if profile == "smooth":
+            return {"attack": 0.045, "release": 0.220, "gate": 0.022, "gamma": 0.78, "blend": 0.16}
+        return {"attack": 0.030, "release": 0.145, "gate": 0.018, "gamma": 0.72, "blend": 0.11}
+
+    def set_audio_eq_config(
+        self,
+        *,
+        input_method: object | None = None,
+        profile: object | None = None,
+        sensitivity: object | None = None,
+        restart: bool = True,
+    ) -> dict[str, object]:
         if input_method is not None:
             self._audio_eq_input_method = self._normalize_audio_eq_input(input_method)
+        if profile is not None:
+            self._audio_eq_profile = self._normalize_audio_eq_profile(profile)
+        if sensitivity is not None:
+            self._audio_eq_sensitivity = self._parse_audio_eq_sensitivity(sensitivity)
         if restart:
             with self._audio_eq_lock:
                 self._audio_eq_bars = [0.0] * 32
@@ -229,22 +264,26 @@ class StatsProvider:
         raw = self._resample_audio_eq_levels(levels, 32)
         previous = self._audio_eq_bars if len(self._audio_eq_bars) == 32 else [0.0] * 32
         dt = max(1.0 / 120.0, min(0.25, now - self._audio_eq_last_shape_at)) if self._audio_eq_last_shape_at > 0 else 1.0 / 30.0
-        attack = 1.0 - math.exp(-dt / 0.030)
-        release = 1.0 - math.exp(-dt / 0.145)
+        settings = self._audio_eq_profile_settings(self._audio_eq_profile)
+        attack = 1.0 - math.exp(-dt / settings["attack"])
+        release = 1.0 - math.exp(-dt / settings["release"])
         shaped: list[float] = []
-        gate = 0.018
+        gate = settings["gate"]
+        gamma = settings["gamma"]
+        sensitivity = self._audio_eq_sensitivity
         for idx, value in enumerate(raw):
             if value <= gate:
                 target = 0.0
             else:
-                target = ((value - gate) / (1.0 - gate)) ** 0.72
+                target = min(1.0, (((value - gate) / (1.0 - gate)) ** gamma) * sensitivity)
             prev = previous[idx]
             alpha = attack if target >= prev else release
             shaped.append(prev + (target - prev) * alpha)
         if len(shaped) >= 3:
+            blend = settings["blend"]
             smoothed = list(shaped)
             for idx in range(1, len(shaped) - 1):
-                smoothed[idx] = shaped[idx] * 0.78 + shaped[idx - 1] * 0.11 + shaped[idx + 1] * 0.11
+                smoothed[idx] = shaped[idx] * (1.0 - blend * 2.0) + shaped[idx - 1] * blend + shaped[idx + 1] * blend
             shaped = smoothed
         self._audio_eq_raw_bars = raw
         self._audio_eq_last_shape_at = now
@@ -348,6 +387,8 @@ class StatsProvider:
             "raw_peak": round(max(raw_bars), 3) if raw_bars else 0.0,
             "cava_available": bool(self._audio_eq_cava_bin),
             "input_method": self._audio_eq_input_method,
+            "profile": self._audio_eq_profile,
+            "sensitivity": round(self._audio_eq_sensitivity, 3),
             "config_dir": self._audio_eq_runtime_dir,
         }
 
