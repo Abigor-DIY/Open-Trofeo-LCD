@@ -1483,6 +1483,10 @@ class ReplayController:
             local_now = time.localtime()
             values["time_hms"] = time.strftime("%H:%M:%S", local_now)
             values["date_ymd"] = time.strftime("%Y-%m-%d", local_now)
+            try:
+                values.update(self.stats_provider.read_audio_eq_stats())
+            except Exception:
+                pass
             values.update({str(key): str(value) for key, value in media_override.items()})
             return values
 

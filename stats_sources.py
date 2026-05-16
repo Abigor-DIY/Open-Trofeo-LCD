@@ -82,6 +82,15 @@ class StatsProvider:
             "media-covers",
         )
         state_home = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+        self._audio_eq_runtime_dir = os.path.join(state_home, "open-trofeo-lcd", "audio-eq")
+        self._audio_eq_lock = threading.Lock()
+        self._audio_eq_bars: list[float] = [0.0] * 32
+        self._audio_eq_updated_at = 0.0
+        self._audio_eq_status = "unavailable"
+        self._audio_eq_source = "none"
+        self._audio_eq_process: subprocess.Popen[bytes] | None = None
+        self._audio_eq_thread_started = False
+        self._audio_eq_cava_bin = self._local_or_host_cmd("cava")
         self._weather_runtime_dir = os.path.join(state_home, "open-trofeo-lcd", "weather")
         self._weather_cache_path = os.path.join(self._weather_runtime_dir, "open-meteo.json")
         self._weather_icon_map = self._load_weather_icon_map()
@@ -95,6 +104,119 @@ class StatsProvider:
         self._last_weather_source = "none"
         self._weather_lock = threading.Lock()
         self._weather_refresh_inflight = False
+        self._start_audio_eq_thread()
+
+    def _start_audio_eq_thread(self) -> None:
+        if self._audio_eq_thread_started:
+            return
+        if str(os.environ.get("OPEN_TROFEO_AUDIO_EQ", "")).strip().lower() in {"0", "false", "off", "no"}:
+            self._audio_eq_status = "disabled"
+            return
+        if not self._audio_eq_cava_bin:
+            self._audio_eq_status = "unavailable"
+            return
+        self._audio_eq_thread_started = True
+        thread = threading.Thread(target=self._audio_eq_worker, name="trofeo-audio-eq", daemon=True)
+        thread.start()
+
+    def _audio_eq_config_path(self) -> str:
+        os.makedirs(self._audio_eq_runtime_dir, exist_ok=True)
+        path = os.path.join(self._audio_eq_runtime_dir, "cava.conf")
+        content = "\n".join(
+            [
+                "[general]",
+                "bars = 32",
+                "framerate = 30",
+                "autosens = 1",
+                "",
+                "[output]",
+                "method = raw",
+                "data_format = ascii",
+                "ascii_max_range = 1000",
+                "channels = mono",
+                "",
+            ]
+        )
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(content)
+        except Exception:
+            pass
+        return path
+
+    @staticmethod
+    def _parse_audio_eq_line(raw: bytes) -> list[float]:
+        if not raw:
+            return []
+        text = raw.decode("utf-8", errors="ignore").strip()
+        numbers = [float(match) for match in re.findall(r"-?\d+(?:\.\d+)?", text)]
+        if numbers:
+            peak = max(1.0, max(numbers))
+            scale = 1000.0 if peak <= 1000.0 else peak
+            return [max(0.0, min(1.0, value / scale)) for value in numbers[:64]]
+        values = [byte for byte in raw.strip() if byte not in (10, 13, 59, 32, 9)]
+        if not values:
+            return []
+        peak = max(1, max(values))
+        return [max(0.0, min(1.0, value / peak)) for value in values[:64]]
+
+    def _audio_eq_worker(self) -> None:
+        while True:
+            config_path = self._audio_eq_config_path()
+            try:
+                with self._audio_eq_lock:
+                    self._audio_eq_status = "starting"
+                    self._audio_eq_source = "cava"
+                process = subprocess.Popen(
+                    [*self._audio_eq_cava_bin, "-p", config_path],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+                self._audio_eq_process = process
+                with self._audio_eq_lock:
+                    self._audio_eq_status = "running"
+                    self._audio_eq_source = "cava"
+                assert process.stdout is not None
+                for line in iter(process.stdout.readline, b""):
+                    levels = self._parse_audio_eq_line(line)
+                    if not levels:
+                        continue
+                    with self._audio_eq_lock:
+                        self._audio_eq_bars = levels
+                        self._audio_eq_updated_at = time.time()
+                        self._audio_eq_status = "running"
+                        self._audio_eq_source = "cava"
+                process.wait(timeout=1.0)
+            except Exception as exc:
+                with self._audio_eq_lock:
+                    self._audio_eq_status = f"error:{type(exc).__name__}"
+                    self._audio_eq_source = "cava"
+            finally:
+                process = self._audio_eq_process
+                self._audio_eq_process = None
+                if process is not None and process.poll() is None:
+                    try:
+                        process.terminate()
+                    except Exception:
+                        pass
+            time.sleep(5.0)
+
+    def read_audio_eq_stats(self) -> dict[str, str]:
+        now = time.time()
+        with self._audio_eq_lock:
+            bars = list(self._audio_eq_bars)
+            updated_at = float(self._audio_eq_updated_at or 0.0)
+            status = str(self._audio_eq_status or "unavailable")
+            source = str(self._audio_eq_source or "none")
+        age_ms = int((now - updated_at) * 1000) if updated_at > 0 else -1
+        if status == "running" and age_ms > 1800:
+            status = "stale"
+        return {
+            "audio_eq_bars": json.dumps(bars, separators=(",", ":")),
+            "audio_eq_source": source,
+            "audio_eq_status": status,
+            "audio_eq_age_ms": "N/A" if age_ms < 0 else str(age_ms),
+        }
 
     @staticmethod
     def _parse_weather_refresh_s(value: object) -> float:
@@ -1483,6 +1605,7 @@ class StatsProvider:
         disk = self.read_disk_usage()
         dl_speed, ul_speed = self.read_net_speeds()
         volume = self.read_volume_stats()
+        audio_eq = self.read_audio_eq_stats()
         gpu = self.read_gpu_stats()
         media = self._read_media_now_playing()
         weather = self.read_weather_stats()
@@ -1508,6 +1631,7 @@ class StatsProvider:
             "net_dl_kbps": f"{dl_speed:.1f} KB/s",
             "net_ul_kbps": f"{ul_speed:.1f} KB/s",
             **volume,
+            **audio_eq,
             "uptime_human": "N/A" if uptime is None else f"{uptime[0]}h {uptime[1]}m",
             **gpu,
             **media,

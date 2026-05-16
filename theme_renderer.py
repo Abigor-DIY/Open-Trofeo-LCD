@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+import json
 import math
 from pathlib import Path
 import re
@@ -760,6 +761,42 @@ def _draw_stat_sparkline(
         draw.ellipse((end_x - dot_r, end_y - dot_r, end_x + dot_r, end_y + dot_r), fill=value_fill)
 
 
+def _resampled_audio_eq_levels(snapshot: dict[str, str], count: int) -> list[float]:
+    raw = snapshot.get("audio_eq_bars")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(str(raw))
+    except Exception:
+        parsed = []
+    if not isinstance(parsed, list):
+        return []
+    levels: list[float] = []
+    for value in parsed:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        levels.append(max(0.0, min(1.0, number)))
+    if not levels:
+        return []
+    target = max(1, int(count))
+    if len(levels) == target:
+        return levels
+    if target == 1:
+        return [max(levels)]
+    if len(levels) == 1:
+        return [levels[0]] * target
+    out: list[float] = []
+    for idx in range(target):
+        pos = (idx / float(target - 1)) * (len(levels) - 1)
+        left = int(math.floor(pos))
+        right = min(len(levels) - 1, left + 1)
+        frac = pos - left
+        out.append(levels[left] * (1.0 - frac) + levels[right] * frac)
+    return out
+
+
 def _draw_stat_equalizer(
     canvas: Image.Image,
     item: dict[str, Any],
@@ -831,22 +868,30 @@ def _draw_stat_equalizer(
     total_w = bar_width * bars + gap * (bars - 1)
     start_x = plot_left + max(0, (content_w - total_w) // 2)
     mid_y = plot_top + plot_h / 2.0
+    live_levels = _resampled_audio_eq_levels(snapshot, bars)
     seed = (sum(ord(ch) for ch in str(item.get("id", "eq"))) % 31) / 7.0
     phase_t = time.time() * (3.6 if is_playing else 1.2)
     for idx in range(bars):
         px = start_x + idx * (bar_width + gap)
-        phase = phase_t + seed + idx * 0.63
-        slow = (math.sin(phase) + 1.0) * 0.5
-        fast = (math.sin(phase * 1.93 + 0.7) + 1.0) * 0.5
-        pulse = (math.sin(phase * 0.47 + 1.8) + 1.0) * 0.5
-        combined = slow * 0.46 + fast * 0.36 + pulse * 0.18
-        weight = 0.62 + 0.38 * math.sin(((idx + 1) / float(bars + 1)) * math.pi)
-        if is_playing:
-            level = min(1.0, 0.10 + combined * ((0.28 + ratio * 0.64) * weight))
-        elif is_paused:
-            level = min(0.34, 0.05 + combined * 0.16 * weight)
+        if live_levels:
+            level = live_levels[idx]
+            if is_paused:
+                level = min(0.34, level * 0.35)
+            elif not is_playing:
+                level = min(0.16, level * 0.16)
         else:
-            level = 0.06 + combined * 0.06 * weight
+            phase = phase_t + seed + idx * 0.63
+            slow = (math.sin(phase) + 1.0) * 0.5
+            fast = (math.sin(phase * 1.93 + 0.7) + 1.0) * 0.5
+            pulse = (math.sin(phase * 0.47 + 1.8) + 1.0) * 0.5
+            combined = slow * 0.46 + fast * 0.36 + pulse * 0.18
+            weight = 0.62 + 0.38 * math.sin(((idx + 1) / float(bars + 1)) * math.pi)
+            if is_playing:
+                level = min(1.0, 0.10 + combined * ((0.28 + ratio * 0.64) * weight))
+            elif is_paused:
+                level = min(0.34, 0.05 + combined * 0.16 * weight)
+            else:
+                level = 0.06 + combined * 0.06 * weight
         bar_fill = _lerp_rgba(fill_color, value_fill, max(0.0, min(1.0, level)) * 0.72)
         if mirror:
             half_h = max(2, int(round((plot_h * 0.48) * level)))

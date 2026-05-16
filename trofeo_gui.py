@@ -122,6 +122,9 @@ MUSIC_AUDIO_STAT_SOURCES: frozenset[str] = frozenset(
     {
         "volume_percent",
         "volume_state",
+        "audio_eq_status",
+        "audio_eq_source",
+        "audio_eq_age_ms",
         "media_title",
         "media_artist",
         "media_app",
@@ -1994,6 +1997,10 @@ class TrofeoGui(QMainWindow):
             "net_ul_kbps": "Network Upload (kbps)",
             "volume_percent": "Audio Volume (%)",
             "volume_state": "Audio Volume State",
+            "audio_eq_bars": "Audio EQ Bars",
+            "audio_eq_source": "Audio EQ Source",
+            "audio_eq_status": "Audio EQ Status",
+            "audio_eq_age_ms": "Audio EQ Age (ms)",
             "media_title": "Now Playing: Title",
             "media_artist": "Now Playing: Artist",
             "media_app": "Now Playing: App",
@@ -2030,6 +2037,7 @@ class TrofeoGui(QMainWindow):
         music_groups = [
             ("Music / Now Playing", ["media_title", "media_artist", "media_app", "media_state"]),
             ("Audio / Volume", ["volume_percent", "volume_state"]),
+            ("Audio / EQ", ["audio_eq_status", "audio_eq_source", "audio_eq_age_ms"]),
         ]
         system_groups = [
             ("System", ["hostname", "ip_local", "time_hms", "date_ymd", "uptime_human"]),
@@ -8420,15 +8428,15 @@ class TrofeoGui(QMainWindow):
         if n >= ANIMATION_FRAMES_SOFT_WARN:
             parts.append(
                 self._tr(
-                    f"{n} frames: high count for TRCC (each bitmap is kept in memory and sent over USB).",
-                    f"{n} klatek: dużo dla TRCC (każda bitmapa w pamięci i przez USB).",
+                    f"{n} frames: higher LCD cost (each RGB bitmap uses memory and USB bandwidth).",
+                    f"{n} klatek: wyższy koszt LCD (każda bitmapa RGB używa pamięci i transferu USB).",
                 )
             )
         if n >= ANIMATION_FRAMES_EXTREME_WARN:
             parts.append(
                 self._tr(
-                    f"Strongly consider ≤{ANIMATION_FRAMES_STRONG_WARN} frames for reliable playback.",
-                    f"Rozważ ≤{ANIMATION_FRAMES_STRONG_WARN} klatek dla stabilnego odtwarzania.",
+                    "This can still work, but verify loop smoothness on the LCD and avoid heavy live overlays.",
+                    "To nadal może działać, ale sprawdź płynność pętli na LCD i unikaj ciężkich nakładek live.",
                 )
             )
         has_eq = False
@@ -9227,12 +9235,10 @@ class TrofeoGui(QMainWindow):
                 self,
                 title,
                 self._tr(
-                    f"You have {count} frames. The LCD driver keeps each bitmap in memory and sends full frames over USB — "
-                    f"counts above ~{ANIMATION_FRAMES_STRONG_WARN} often cause stutter, long applies, or device errors. "
-                    f"Consider fewer frames, lower resolution, or merging holds.",
-                    f"Masz {count} klatek. Sterownik LCD trzyma każdą bitmapę w pamięci i wysyła pełne klatki po USB — "
-                    f"powyżej ~{ANIMATION_FRAMES_STRONG_WARN} często są przycięcia, długie „Zastosuj” lub błędy urządzenia. "
-                    f"Rozważ mniej klatek, niższą rozdzielczość lub dłuższe ujęcia statyczne.",
+                    f"You have {count} frames. This is allowed, but the LCD path keeps RGB frames in memory and sends them over USB. "
+                    "Check real playback, loop continuity, frame size, and live overlay cost.",
+                    f"Masz {count} klatek. To jest dozwolone, ale tor LCD trzyma klatki RGB w pamięci i wysyła je po USB. "
+                    "Sprawdź realne odtwarzanie, ciągłość pętli, rozmiar ramek i koszt nakładek live.",
                 ),
             )
         elif count >= ANIMATION_FRAMES_STRONG_WARN:
@@ -9240,8 +9246,8 @@ class TrofeoGui(QMainWindow):
                 self,
                 title,
                 self._tr(
-                    f"{count} frames is heavy for many LCD setups. If playback stutters, reduce frame count or slow timing.",
-                    f"{count} klatek to dużo dla wielu konfiguracji LCD. Jeśli odtwarzanie się przycina, zmniejsz liczbę klatek lub wydłuż czasy.",
+                    f"{count} frames increases LCD memory and USB transfer cost. If playback stutters, lower FPS, slow timing, or simplify overlays.",
+                    f"{count} klatek zwiększa koszt pamięci LCD i transferu USB. Jeśli odtwarzanie się przycina, obniż FPS, wydłuż czasy albo uprość nakładki.",
                 ),
             )
 
@@ -13177,7 +13183,7 @@ class TrofeoGui(QMainWindow):
         return len(frame_paths)
 
     def _designer_is_heavy_preview(self) -> bool:
-        return self._designer_animation_frame_count() >= 40
+        return self._designer_animation_frame_count() >= ANIMATION_FRAMES_SOFT_WARN
 
     def _animation_edit_mode_enabled(self) -> bool:
         return bool(hasattr(self, "designer_animation_mode_btn") and self.designer_animation_mode_btn.isChecked())
@@ -13211,21 +13217,21 @@ class TrofeoGui(QMainWindow):
 
     def _designer_preview_delay_ms(self) -> int:
         frame_count = self._designer_animation_frame_count()
-        if frame_count >= 200:
+        if frame_count >= ANIMATION_FRAMES_EXTREME_WARN:
             return 2200
-        if frame_count >= 80:
+        if frame_count >= ANIMATION_FRAMES_STRONG_WARN:
             return 1600
-        if frame_count >= 40:
+        if frame_count >= ANIMATION_FRAMES_SOFT_WARN:
             return 1000
         return 300
 
     def _designer_preview_timeout_s(self) -> float:
         frame_count = self._designer_animation_frame_count()
-        if frame_count >= 200:
+        if frame_count >= ANIMATION_FRAMES_EXTREME_WARN:
             return 180.0
-        if frame_count >= 80:
+        if frame_count >= ANIMATION_FRAMES_STRONG_WARN:
             return 120.0
-        if frame_count >= 40:
+        if frame_count >= ANIMATION_FRAMES_SOFT_WARN:
             return 75.0
         return 45.0
 
