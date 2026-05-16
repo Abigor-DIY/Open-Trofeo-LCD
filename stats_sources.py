@@ -15,6 +15,7 @@ import hashlib
 import json
 import mimetypes
 import tempfile
+import math
 from urllib.parse import unquote, urlparse, urlencode
 from urllib.request import Request, urlopen
 from dataclasses import dataclass
@@ -86,6 +87,8 @@ class StatsProvider:
         self._audio_eq_runtime_dir = os.path.join(state_home, "open-trofeo-lcd", "audio-eq")
         self._audio_eq_lock = threading.Lock()
         self._audio_eq_bars: list[float] = [0.0] * 32
+        self._audio_eq_raw_bars: list[float] = [0.0] * 32
+        self._audio_eq_last_shape_at = 0.0
         self._audio_eq_updated_at = 0.0
         self._audio_eq_status = "unavailable"
         self._audio_eq_source = "none"
@@ -134,6 +137,8 @@ class StatsProvider:
         if restart:
             with self._audio_eq_lock:
                 self._audio_eq_bars = [0.0] * 32
+                self._audio_eq_raw_bars = [0.0] * 32
+                self._audio_eq_last_shape_at = 0.0
                 self._audio_eq_updated_at = 0.0
                 self._audio_eq_status = "restarting" if self._audio_eq_cava_bin else "unavailable"
                 self._audio_eq_source = "cava" if self._audio_eq_cava_bin else "none"
@@ -202,6 +207,49 @@ class StatsProvider:
         peak = max(1, max(values))
         return [max(0.0, min(1.0, value / peak)) for value in values[:64]]
 
+    @staticmethod
+    def _resample_audio_eq_levels(levels: list[float], count: int = 32) -> list[float]:
+        clean = [max(0.0, min(1.0, float(value))) for value in levels if isinstance(value, (int, float))]
+        if not clean:
+            return [0.0] * count
+        if len(clean) == count:
+            return clean
+        if len(clean) == 1:
+            return [clean[0]] * count
+        out: list[float] = []
+        for idx in range(count):
+            pos = (idx / float(max(1, count - 1))) * (len(clean) - 1)
+            left = int(math.floor(pos))
+            right = min(len(clean) - 1, left + 1)
+            frac = pos - left
+            out.append(clean[left] * (1.0 - frac) + clean[right] * frac)
+        return out
+
+    def _shape_audio_eq_levels_locked(self, levels: list[float], now: float) -> list[float]:
+        raw = self._resample_audio_eq_levels(levels, 32)
+        previous = self._audio_eq_bars if len(self._audio_eq_bars) == 32 else [0.0] * 32
+        dt = max(1.0 / 120.0, min(0.25, now - self._audio_eq_last_shape_at)) if self._audio_eq_last_shape_at > 0 else 1.0 / 30.0
+        attack = 1.0 - math.exp(-dt / 0.030)
+        release = 1.0 - math.exp(-dt / 0.145)
+        shaped: list[float] = []
+        gate = 0.018
+        for idx, value in enumerate(raw):
+            if value <= gate:
+                target = 0.0
+            else:
+                target = ((value - gate) / (1.0 - gate)) ** 0.72
+            prev = previous[idx]
+            alpha = attack if target >= prev else release
+            shaped.append(prev + (target - prev) * alpha)
+        if len(shaped) >= 3:
+            smoothed = list(shaped)
+            for idx in range(1, len(shaped) - 1):
+                smoothed[idx] = shaped[idx] * 0.78 + shaped[idx - 1] * 0.11 + shaped[idx + 1] * 0.11
+            shaped = smoothed
+        self._audio_eq_raw_bars = raw
+        self._audio_eq_last_shape_at = now
+        return [max(0.0, min(1.0, value)) for value in shaped]
+
     def _audio_eq_worker(self) -> None:
         while True:
             try:
@@ -223,9 +271,10 @@ class StatsProvider:
                     levels = self._parse_audio_eq_line(line)
                     if not levels:
                         continue
+                    now = time.time()
                     with self._audio_eq_lock:
-                        self._audio_eq_bars = levels
-                        self._audio_eq_updated_at = time.time()
+                        self._audio_eq_bars = self._shape_audio_eq_levels_locked(levels, now)
+                        self._audio_eq_updated_at = now
                         self._audio_eq_status = "running"
                         self._audio_eq_source = "cava"
                 return_code = process.wait(timeout=1.0)
@@ -251,6 +300,7 @@ class StatsProvider:
         now = time.time()
         with self._audio_eq_lock:
             bars = list(self._audio_eq_bars)
+            raw_bars = list(self._audio_eq_raw_bars)
             updated_at = float(self._audio_eq_updated_at or 0.0)
             status = str(self._audio_eq_status or "unavailable")
             source = str(self._audio_eq_source or "none")
@@ -259,6 +309,7 @@ class StatsProvider:
             status = "stale"
         return {
             "audio_eq_bars": json.dumps(bars, separators=(",", ":")),
+            "audio_eq_raw_bars": json.dumps(raw_bars, separators=(",", ":")),
             "audio_eq_source": source,
             "audio_eq_status": status,
             "audio_eq_age_ms": "N/A" if age_ms < 0 else str(age_ms),
@@ -267,6 +318,7 @@ class StatsProvider:
     def audio_eq_status(self) -> dict[str, object]:
         stats = self.read_audio_eq_stats()
         bars: list[float] = []
+        raw_bars: list[float] = []
         try:
             parsed = json.loads(stats.get("audio_eq_bars", "[]"))
             if isinstance(parsed, list):
@@ -277,12 +329,23 @@ class StatsProvider:
                         continue
         except Exception:
             bars = []
+        try:
+            parsed_raw = json.loads(stats.get("audio_eq_raw_bars", "[]"))
+            if isinstance(parsed_raw, list):
+                for value in parsed_raw:
+                    try:
+                        raw_bars.append(max(0.0, min(1.0, float(value))))
+                    except (TypeError, ValueError):
+                        continue
+        except Exception:
+            raw_bars = []
         return {
             "status": stats.get("audio_eq_status", "unavailable"),
             "source": stats.get("audio_eq_source", "none"),
             "age_ms": stats.get("audio_eq_age_ms", "N/A"),
             "bar_count": len(bars),
             "peak": round(max(bars), 3) if bars else 0.0,
+            "raw_peak": round(max(raw_bars), 3) if raw_bars else 0.0,
             "cava_available": bool(self._audio_eq_cava_bin),
             "input_method": self._audio_eq_input_method,
             "config_dir": self._audio_eq_runtime_dir,

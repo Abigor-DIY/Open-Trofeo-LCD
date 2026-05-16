@@ -1998,6 +1998,7 @@ class TrofeoGui(QMainWindow):
             "volume_percent": "Audio Volume (%)",
             "volume_state": "Audio Volume State",
             "audio_eq_bars": "Audio EQ Bars",
+            "audio_eq_raw_bars": "Audio EQ Raw Bars",
             "audio_eq_source": "Audio EQ Source",
             "audio_eq_status": "Audio EQ Status",
             "audio_eq_age_ms": "Audio EQ Age (ms)",
@@ -11383,6 +11384,7 @@ class TrofeoGui(QMainWindow):
             age = str(audio_eq_cfg.get("age_ms") or "N/A")
             bar_count = str(audio_eq_cfg.get("bar_count") or 0)
             peak = str(audio_eq_cfg.get("peak") or 0.0)
+            raw_peak = str(audio_eq_cfg.get("raw_peak") or 0.0)
             available = bool(audio_eq_cfg.get("cava_available", False))
             parts = [
                 f"status: {status_text}",
@@ -11390,6 +11392,7 @@ class TrofeoGui(QMainWindow):
                 f"source: {source}",
                 f"bars: {bar_count}",
                 f"peak: {peak}",
+                f"raw: {raw_peak}",
                 f"age: {age} ms",
             ]
             if not available:
