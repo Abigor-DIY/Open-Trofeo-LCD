@@ -3551,6 +3551,7 @@ class TrofeoGui(QMainWindow):
         theme_browser_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         theme_browser_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         theme_browser_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        theme_browser_scroll.viewport().installEventFilter(self)
         self.library_theme_cards_container = QWidget()
         self.library_theme_cards_layout = QGridLayout(self.library_theme_cards_container)
         self.library_theme_cards_layout.setContentsMargins(0, 0, 0, 0)
@@ -9105,6 +9106,11 @@ class TrofeoGui(QMainWindow):
                 row = self.bg_animation_list.currentRow()
                 self.select_animation_frame(min(self.bg_animation_list.count() - 1, row + 1))
                 return True
+        if (
+            watched is getattr(getattr(self, "theme_browser_scroll", None), "viewport", lambda: None)()
+            and event.type() == QEvent.Type.Resize
+        ):
+            self._schedule_library_theme_browser_rebuild()
         return super().eventFilter(watched, event)
 
     def _refresh_animation_frame_list(self, *, preserve_selection: bool = True) -> None:
@@ -11474,6 +11480,34 @@ class TrofeoGui(QMainWindow):
             self.runtime_theme_cards_layout.addWidget(card)
         self.runtime_theme_cards_layout.addStretch(1)
 
+    def _library_theme_browser_width(self) -> int:
+        viewport_width = 0
+        if hasattr(self, "theme_browser_scroll"):
+            try:
+                viewport_width = self.theme_browser_scroll.viewport().width()
+            except Exception:
+                viewport_width = 0
+        if viewport_width <= 0 and hasattr(self, "library_theme_cards_container"):
+            viewport_width = self.library_theme_cards_container.width()
+        return max(260, int(viewport_width or 960))
+
+    def _schedule_library_theme_browser_rebuild(self) -> None:
+        if not hasattr(self, "library_theme_cards_layout"):
+            return
+        width = self._library_theme_browser_width()
+        if width == getattr(self, "_library_theme_browser_last_width", 0):
+            return
+        self._library_theme_browser_last_width = width
+        if getattr(self, "_library_theme_browser_rebuild_pending", False):
+            return
+        self._library_theme_browser_rebuild_pending = True
+
+        def _run() -> None:
+            self._library_theme_browser_rebuild_pending = False
+            self._rebuild_library_theme_browser()
+
+        QTimer.singleShot(0, _run)
+
     def _rebuild_library_theme_browser(self) -> None:
         if not hasattr(self, "library_theme_cards_layout"):
             return
@@ -11526,43 +11560,39 @@ class TrofeoGui(QMainWindow):
                 self.theme_browser_box.setMinimumHeight(212)
                 self.theme_browser_box.setMaximumHeight(212)
             return
-        viewport_width = 0
-        if hasattr(self, "theme_browser_scroll"):
-            try:
-                viewport_width = self.theme_browser_scroll.viewport().width()
-            except Exception:
-                viewport_width = 0
-        container_width = max(
-            720,
-            viewport_width or (self.library_theme_cards_container.width() if hasattr(self, "library_theme_cards_container") else 960),
-        )
-        if container_width >= 1450:
-            columns = 4
-        elif container_width >= 1040:
-            columns = 3
-        elif container_width >= 720:
-            columns = 2
-        else:
-            columns = 1
+        viewport_width = self._library_theme_browser_width()
+        spacing = self.library_theme_cards_layout.horizontalSpacing()
+        available_width = max(260, viewport_width - 4)
+        min_card_width = 300
+        columns = max(1, min(4, (available_width + spacing) // (min_card_width + spacing)))
+        card_width = max(260, int((available_width - ((columns - 1) * spacing)) / columns))
+        compact_cards = card_width < 430
+        card_height = 260 if compact_cards else 228
+        if hasattr(self, "library_theme_cards_container"):
+            self.library_theme_cards_container.setMinimumWidth(0)
+            self.library_theme_cards_container.setMaximumWidth(viewport_width)
         for idx, (name, item) in enumerate(items):
             asset_count, animation_count = self._theme_card_stats(item)
             category = self._theme_card_category(item)
             card = AnimatedCardFrame("libraryCard")
             card.setObjectName("libraryCard")
-            card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            card.setMinimumHeight(228)
-            card.setMaximumHeight(228)
+            card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            card.setFixedWidth(card_width)
+            card.setMinimumHeight(card_height)
+            card.setMaximumHeight(card_height)
             layout = QVBoxLayout(card)
             layout.setContentsMargins(10, 10, 10, 10)
             layout.setSpacing(6)
             thumb = QLabel()
             thumb.setObjectName("templateCardThumb")
-            thumb.setMinimumSize(220, 92)
+            thumb.setMinimumSize(0, 92)
             thumb.setMaximumHeight(92)
+            thumb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             thumb.setAlignment(Qt.AlignCenter)
+            thumb_size = QSize(max(1, card_width - 20), 92)
             thumb.setPixmap(
-                self._runtime_theme_card_pixmap(item, thumb.size()).scaled(
-                    thumb.size(),
+                self._runtime_theme_card_pixmap(item, thumb_size).scaled(
+                    thumb_size,
                     Qt.KeepAspectRatio,
                     Qt.SmoothTransformation,
                 )
@@ -11576,6 +11606,7 @@ class TrofeoGui(QMainWindow):
             category_badge.setObjectName("layerBadgeLabel")
             modified = QLabel(self._theme_modified_label(item))
             modified.setObjectName("libraryCardMeta")
+            modified.setMinimumWidth(0)
             menu_btn = QPushButton("...")
             menu_btn.setMinimumSize(34, 28)
             menu_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item, btn=menu_btn: self._show_library_theme_card_menu(theme_name, theme_item, btn))
@@ -11618,8 +11649,6 @@ class TrofeoGui(QMainWindow):
             startup_row.addWidget(startup_chk)
             startup_row.addStretch(1)
             layout.addLayout(startup_row)
-            actions = QHBoxLayout()
-            actions.setSpacing(6)
             select_btn = QPushButton(self._tr("Edit", "Edytuj") if str(item.get("type", "")) == "theme-doc" else self._tr("Select", "Wybierz"))
             preview_btn = QPushButton(self._tr("Preview", "Podgląd"))
             apply_btn = QPushButton(self._tr("Apply", "Zastosuj"))
@@ -11628,26 +11657,44 @@ class TrofeoGui(QMainWindow):
             apply_btn.setObjectName("primaryButton" if name == current else "secondaryAccentButton")
             for btn in (select_btn, preview_btn, apply_btn, duplicate_btn, remove_btn):
                 btn.setMinimumHeight(28)
+                btn.setMinimumWidth(0)
                 btn.setCursor(Qt.PointingHandCursor)
+                btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             select_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item: self._library_select_theme(theme_name, theme_item))
             preview_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item: self._open_theme_preview_dialog(theme_name, theme_item))
             apply_btn.clicked.connect(lambda _checked=False, theme_name=name: self._apply_runtime_theme_card(theme_name))
             duplicate_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item: self._duplicate_theme_card(theme_name, theme_item))
             remove_btn.clicked.connect(lambda _checked=False, theme_name=name: self._remove_runtime_theme_card(theme_name))
-            actions.addWidget(select_btn, 2)
-            actions.addWidget(preview_btn, 1)
-            actions.addWidget(apply_btn, 2)
-            actions.addWidget(duplicate_btn, 1)
-            actions.addWidget(remove_btn, 1)
-            layout.addLayout(actions)
+            if compact_cards:
+                compact_actions = QGridLayout()
+                compact_actions.setHorizontalSpacing(6)
+                compact_actions.setVerticalSpacing(6)
+                compact_actions.addWidget(select_btn, 0, 0)
+                compact_actions.addWidget(preview_btn, 0, 1)
+                compact_actions.addWidget(apply_btn, 0, 2)
+                compact_actions.addWidget(duplicate_btn, 1, 0, 1, 2)
+                compact_actions.addWidget(remove_btn, 1, 2)
+                for action_col in range(3):
+                    compact_actions.setColumnStretch(action_col, 1)
+                layout.addLayout(compact_actions)
+            else:
+                actions = QHBoxLayout()
+                actions.setSpacing(6)
+                actions.addWidget(select_btn, 2)
+                actions.addWidget(preview_btn, 1)
+                actions.addWidget(apply_btn, 2)
+                actions.addWidget(duplicate_btn, 1)
+                actions.addWidget(remove_btn, 1)
+                layout.addLayout(actions)
             row = idx // columns
             col = idx % columns
             self.library_theme_cards_layout.addWidget(card, row, col)
+        for col in range(4):
+            self.library_theme_cards_layout.setColumnStretch(col, 0)
         for col in range(columns):
             self.library_theme_cards_layout.setColumnStretch(col, 1)
         row_count = max(1, (len(items) + columns - 1) // columns)
         visible_rows = min(row_count, 3)
-        card_height = 228
         row_gap = self.library_theme_cards_layout.verticalSpacing()
         viewport_height = 14 + (visible_rows * card_height) + (max(0, visible_rows - 1) * row_gap) + 10
         if hasattr(self, "theme_browser_scroll"):
