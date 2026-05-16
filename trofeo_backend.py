@@ -2589,7 +2589,14 @@ class ReplayController:
             self.scan_capture()
             if restart_required and self.proc is not None and self.proc.poll() is None:
                 return self.restart_loop()
-            return {"running": self.is_running(), "config": {**self.cfg.as_json(), "weather": self.stats_provider.weather_status()}}
+            return {
+                "running": self.is_running(),
+                "config": {
+                    **self.cfg.as_json(),
+                    "weather": self.stats_provider.weather_status(),
+                    "audio_eq": self.stats_provider.audio_eq_status(),
+                },
+            }
 
     def send_image(
         self,
@@ -2652,7 +2659,11 @@ class ReplayController:
                 "live_theme_metrics": live_metrics,
                 "last_capture_scan_at": self.last_capture_scan_at,
                 "theme_count": len(self.themes),
-                "config": {**self.cfg.as_json(), "weather": self.stats_provider.weather_status()},
+                "config": {
+                    **self.cfg.as_json(),
+                    "weather": self.stats_provider.weather_status(),
+                    "audio_eq": self.stats_provider.audio_eq_status(),
+                },
             }
 
 

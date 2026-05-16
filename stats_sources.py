@@ -14,6 +14,7 @@ import threading
 import hashlib
 import json
 import mimetypes
+import tempfile
 from urllib.parse import unquote, urlparse, urlencode
 from urllib.request import Request, urlopen
 from dataclasses import dataclass
@@ -120,14 +121,25 @@ class StatsProvider:
         thread.start()
 
     def _audio_eq_config_path(self) -> str:
-        os.makedirs(self._audio_eq_runtime_dir, exist_ok=True)
-        path = os.path.join(self._audio_eq_runtime_dir, "cava.conf")
+        runtime_dir = self._audio_eq_runtime_dir
+        try:
+            os.makedirs(runtime_dir, exist_ok=True)
+        except OSError:
+            runtime_dir = os.path.join(tempfile.gettempdir(), "open-trofeo-lcd", "audio-eq")
+            os.makedirs(runtime_dir, exist_ok=True)
+        path = os.path.join(runtime_dir, "cava.conf")
+        input_method = str(os.environ.get("OPEN_TROFEO_CAVA_INPUT", "pulse")).strip().lower() or "pulse"
+        if input_method not in {"pulse", "pipewire", "alsa", "fifo", "sndio", "oss", "portaudio"}:
+            input_method = "pulse"
         content = "\n".join(
             [
                 "[general]",
                 "bars = 32",
                 "framerate = 30",
                 "autosens = 1",
+                "",
+                "[input]",
+                f"method = {input_method}",
                 "",
                 "[output]",
                 "method = raw",
@@ -148,22 +160,28 @@ class StatsProvider:
     def _parse_audio_eq_line(raw: bytes) -> list[float]:
         if not raw:
             return []
+        if raw.startswith(b"\x1b]") or raw.startswith(b"\x1b["):
+            return []
         text = raw.decode("utf-8", errors="ignore").strip()
+        if re.search(r"[A-Za-z]", text):
+            return []
         numbers = [float(match) for match in re.findall(r"-?\d+(?:\.\d+)?", text)]
-        if numbers:
+        if len(numbers) >= 2:
             peak = max(1.0, max(numbers))
             scale = 1000.0 if peak <= 1000.0 else peak
             return [max(0.0, min(1.0, value / scale)) for value in numbers[:64]]
         values = [byte for byte in raw.strip() if byte not in (10, 13, 59, 32, 9)]
         if not values:
             return []
+        if len(values) < 2:
+            return []
         peak = max(1, max(values))
         return [max(0.0, min(1.0, value / peak)) for value in values[:64]]
 
     def _audio_eq_worker(self) -> None:
         while True:
-            config_path = self._audio_eq_config_path()
             try:
+                config_path = self._audio_eq_config_path()
                 with self._audio_eq_lock:
                     self._audio_eq_status = "starting"
                     self._audio_eq_source = "cava"
@@ -186,7 +204,11 @@ class StatsProvider:
                         self._audio_eq_updated_at = time.time()
                         self._audio_eq_status = "running"
                         self._audio_eq_source = "cava"
-                process.wait(timeout=1.0)
+                return_code = process.wait(timeout=1.0)
+                if return_code:
+                    with self._audio_eq_lock:
+                        self._audio_eq_status = f"error:cava-exit-{return_code}"
+                        self._audio_eq_source = "cava"
             except Exception as exc:
                 with self._audio_eq_lock:
                     self._audio_eq_status = f"error:{type(exc).__name__}"
@@ -216,6 +238,29 @@ class StatsProvider:
             "audio_eq_source": source,
             "audio_eq_status": status,
             "audio_eq_age_ms": "N/A" if age_ms < 0 else str(age_ms),
+        }
+
+    def audio_eq_status(self) -> dict[str, object]:
+        stats = self.read_audio_eq_stats()
+        bars: list[float] = []
+        try:
+            parsed = json.loads(stats.get("audio_eq_bars", "[]"))
+            if isinstance(parsed, list):
+                for value in parsed:
+                    try:
+                        bars.append(max(0.0, min(1.0, float(value))))
+                    except (TypeError, ValueError):
+                        continue
+        except Exception:
+            bars = []
+        return {
+            "status": stats.get("audio_eq_status", "unavailable"),
+            "source": stats.get("audio_eq_source", "none"),
+            "age_ms": stats.get("audio_eq_age_ms", "N/A"),
+            "bar_count": len(bars),
+            "peak": round(max(bars), 3) if bars else 0.0,
+            "cava_available": bool(self._audio_eq_cava_bin),
+            "config_dir": self._audio_eq_runtime_dir,
         }
 
     @staticmethod
