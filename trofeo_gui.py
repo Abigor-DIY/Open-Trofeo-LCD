@@ -2313,6 +2313,8 @@ class TrofeoGui(QMainWindow):
         self.apply_ui_chrome()
         if hasattr(self, "cfg_weather_lat_edit"):
             self.apply_weather_config()
+        if hasattr(self, "cfg_audio_eq_input_combo"):
+            self.apply_audio_eq_config()
         self._save_ui_state()
         self.append_log("[config] Zastosowano ustawienia interfejsu.")
 
@@ -2350,6 +2352,19 @@ class TrofeoGui(QMainWindow):
         payload["weather_refresh_now"] = True
         self.api_call("config", "POST", "/v1/config", payload)
         self.append_log("[weather] Forced weather refresh.")
+
+    def _audio_eq_config_payload(self) -> dict[str, object]:
+        combo = getattr(self, "cfg_audio_eq_input_combo", None)
+        method = str(combo.currentData() if combo is not None else "pulse").strip() or "pulse"
+        return {"audio_eq_input": method}
+
+    def apply_audio_eq_config(self) -> None:
+        if not hasattr(self, "cfg_audio_eq_input_combo"):
+            return
+        self.api_call("config", "POST", "/v1/config", self._audio_eq_config_payload())
+        self._audio_eq_config_dirty = False
+        self._save_ui_state()
+        self.append_log("[audio-eq] Applied CAVA input configuration.")
 
     def _start_weather_city_search(self, query: str, target: str) -> None:
         self._weather_search_target = target
@@ -3366,6 +3381,25 @@ class TrofeoGui(QMainWindow):
         weather_form.addRow("", weather_actions_row)
         weather_form.addRow("Status:", self.cfg_weather_status_label)
         config_grid.addWidget(weather_box, 2, 0, 1, 2)
+
+        audio_eq_box = QGroupBox("Audio EQ")
+        self.audio_eq_box = audio_eq_box
+        audio_eq_box.setObjectName("configCardBox")
+        audio_eq_form = QFormLayout(audio_eq_box)
+        self.cfg_audio_eq_input_combo = QComboBox()
+        self.cfg_audio_eq_input_combo.addItem("PulseAudio / PipeWire Pulse", "pulse")
+        self.cfg_audio_eq_input_combo.addItem("PipeWire native", "pipewire")
+        self.cfg_audio_eq_input_combo.addItem("ALSA", "alsa")
+        self.cfg_audio_eq_input_combo.activated.connect(lambda _idx: setattr(self, "_audio_eq_config_dirty", True))
+        self.cfg_audio_eq_apply_btn = QPushButton("Apply EQ")
+        self.cfg_audio_eq_status_label = QLabel("EQ: waiting for backend status")
+        self.cfg_audio_eq_status_label.setWordWrap(True)
+        self.cfg_audio_eq_status_label.setObjectName("selectionSummaryLabel")
+        self.cfg_audio_eq_apply_btn.clicked.connect(self.apply_audio_eq_config)
+        audio_eq_form.addRow("CAVA input:", self.cfg_audio_eq_input_combo)
+        audio_eq_form.addRow("", self.cfg_audio_eq_apply_btn)
+        audio_eq_form.addRow("Status:", self.cfg_audio_eq_status_label)
+        config_grid.addWidget(audio_eq_box, 2, 2, 1, 2)
 
         quick_cfg_box = QGroupBox("Quick Actions")
         self.quick_cfg_box = quick_cfg_box
@@ -7553,6 +7587,10 @@ class TrofeoGui(QMainWindow):
             self.appearance_box.setTitle(self._tr("App Appearance", "Wygląd Aplikacji"))
         if hasattr(self, "paths_box"):
             self.paths_box.setTitle(self._tr("Paths and Integration", "Ścieżki i Integracja"))
+        if hasattr(self, "audio_eq_box"):
+            self.audio_eq_box.setTitle(self._tr("Audio EQ", "Korektor audio"))
+        if hasattr(self, "cfg_audio_eq_apply_btn"):
+            self.cfg_audio_eq_apply_btn.setText(self._tr("Apply EQ", "Zastosuj EQ"))
         if hasattr(self, "quick_cfg_box"):
             self.quick_cfg_box.setTitle(self._tr("Quick Actions", "Szybkie Akcje"))
         if hasattr(self, "automation_tools_box"):
@@ -7651,6 +7689,10 @@ class TrofeoGui(QMainWindow):
                     self.cfg_weather_refresh_spin.setValue(int(payload.get("weather_refresh_s", 900) or 900))
                 except Exception:
                     self.cfg_weather_refresh_spin.setValue(900)
+            if hasattr(self, "cfg_audio_eq_input_combo"):
+                idx = self.cfg_audio_eq_input_combo.findData(str(payload.get("audio_eq_input", "pulse") or "pulse"))
+                if idx >= 0:
+                    self.cfg_audio_eq_input_combo.setCurrentIndex(idx)
             for attr, key, default in (
                 ("cfg_start_with_system_chk", "cfg_start_with_system", True),
                 ("cfg_minimize_to_tray_chk", "cfg_minimize_to_tray", True),
@@ -7690,6 +7732,8 @@ class TrofeoGui(QMainWindow):
             payload["weather_lon"] = self.cfg_weather_lon_edit.text().strip()
             payload["weather_location"] = self.cfg_weather_location_edit.text().strip()
             payload["weather_refresh_s"] = int(self.cfg_weather_refresh_spin.value())
+        if hasattr(self, "cfg_audio_eq_input_combo"):
+            payload["audio_eq_input"] = str(self.cfg_audio_eq_input_combo.currentData() or "pulse")
         for attr, key in (
             ("cfg_start_with_system_chk", "cfg_start_with_system"),
             ("cfg_minimize_to_tray_chk", "cfg_minimize_to_tray"),
@@ -11323,6 +11367,34 @@ class TrofeoGui(QMainWindow):
                 if error:
                     parts.append(f"error: {error[:100]}")
                 self.cfg_weather_status_label.setText(" | ".join(parts))
+        audio_eq_cfg = cfg.get("audio_eq", {}) if isinstance(cfg, dict) else {}
+        if isinstance(audio_eq_cfg, dict) and hasattr(self, "cfg_audio_eq_status_label"):
+            method = str(audio_eq_cfg.get("input_method") or "").strip()
+            if method and hasattr(self, "cfg_audio_eq_input_combo") and not bool(getattr(self, "_audio_eq_config_dirty", False)):
+                idx = self.cfg_audio_eq_input_combo.findData(method)
+                if idx >= 0 and self.cfg_audio_eq_input_combo.currentIndex() != idx:
+                    self.cfg_audio_eq_input_combo.blockSignals(True)
+                    try:
+                        self.cfg_audio_eq_input_combo.setCurrentIndex(idx)
+                    finally:
+                        self.cfg_audio_eq_input_combo.blockSignals(False)
+            status_text = str(audio_eq_cfg.get("status") or "unknown")
+            source = str(audio_eq_cfg.get("source") or "none")
+            age = str(audio_eq_cfg.get("age_ms") or "N/A")
+            bar_count = str(audio_eq_cfg.get("bar_count") or 0)
+            peak = str(audio_eq_cfg.get("peak") or 0.0)
+            available = bool(audio_eq_cfg.get("cava_available", False))
+            parts = [
+                f"status: {status_text}",
+                f"input: {method or 'pulse'}",
+                f"source: {source}",
+                f"bars: {bar_count}",
+                f"peak: {peak}",
+                f"age: {age} ms",
+            ]
+            if not available:
+                parts.append("cava not found")
+            self.cfg_audio_eq_status_label.setText(" | ".join(parts))
 
         if hasattr(self, "system_api_status_value"):
             is_ok = bool(status.get("ok", False))
@@ -11456,6 +11528,8 @@ class TrofeoGui(QMainWindow):
         }
         if hasattr(self, "cfg_weather_lat_edit"):
             payload.update(self._weather_config_payload())
+        if hasattr(self, "cfg_audio_eq_input_combo"):
+            payload.update(self._audio_eq_config_payload())
         self.api_call("config", "POST", "/v1/config", payload)
 
     def browse_image(self) -> None:

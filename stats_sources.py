@@ -92,6 +92,7 @@ class StatsProvider:
         self._audio_eq_process: subprocess.Popen[bytes] | None = None
         self._audio_eq_thread_started = False
         self._audio_eq_cava_bin = self._local_or_host_cmd("cava")
+        self._audio_eq_input_method = self._normalize_audio_eq_input(os.environ.get("OPEN_TROFEO_CAVA_INPUT", "pulse"))
         self._weather_runtime_dir = os.path.join(state_home, "open-trofeo-lcd", "weather")
         self._weather_cache_path = os.path.join(self._weather_runtime_dir, "open-meteo.json")
         self._weather_icon_map = self._load_weather_icon_map()
@@ -120,6 +121,31 @@ class StatsProvider:
         thread = threading.Thread(target=self._audio_eq_worker, name="trofeo-audio-eq", daemon=True)
         thread.start()
 
+    @staticmethod
+    def _normalize_audio_eq_input(value: object) -> str:
+        method = str(value or "pulse").strip().lower() or "pulse"
+        if method not in {"pulse", "pipewire", "alsa", "fifo", "sndio", "oss", "portaudio"}:
+            return "pulse"
+        return method
+
+    def set_audio_eq_config(self, *, input_method: object | None = None, restart: bool = True) -> dict[str, object]:
+        if input_method is not None:
+            self._audio_eq_input_method = self._normalize_audio_eq_input(input_method)
+        if restart:
+            with self._audio_eq_lock:
+                self._audio_eq_bars = [0.0] * 32
+                self._audio_eq_updated_at = 0.0
+                self._audio_eq_status = "restarting" if self._audio_eq_cava_bin else "unavailable"
+                self._audio_eq_source = "cava" if self._audio_eq_cava_bin else "none"
+            proc = self._audio_eq_process
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            self._start_audio_eq_thread()
+        return self.audio_eq_status()
+
     def _audio_eq_config_path(self) -> str:
         runtime_dir = self._audio_eq_runtime_dir
         try:
@@ -128,9 +154,7 @@ class StatsProvider:
             runtime_dir = os.path.join(tempfile.gettempdir(), "open-trofeo-lcd", "audio-eq")
             os.makedirs(runtime_dir, exist_ok=True)
         path = os.path.join(runtime_dir, "cava.conf")
-        input_method = str(os.environ.get("OPEN_TROFEO_CAVA_INPUT", "pulse")).strip().lower() or "pulse"
-        if input_method not in {"pulse", "pipewire", "alsa", "fifo", "sndio", "oss", "portaudio"}:
-            input_method = "pulse"
+        input_method = self._normalize_audio_eq_input(self._audio_eq_input_method)
         content = "\n".join(
             [
                 "[general]",
@@ -260,6 +284,7 @@ class StatsProvider:
             "bar_count": len(bars),
             "peak": round(max(bars), 3) if bars else 0.0,
             "cava_available": bool(self._audio_eq_cava_bin),
+            "input_method": self._audio_eq_input_method,
             "config_dir": self._audio_eq_runtime_dir,
         }
 
