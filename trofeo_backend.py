@@ -42,6 +42,7 @@ from theme_schema import (
 
 DEFAULT_LIVE_REFRESH_INTERVAL_S = 1.0
 FAST_VISUAL_REFRESH_INTERVAL_S = 0.25
+FAST_AUDIO_EQ_REFRESH_INTERVAL_S = 0.10
 MIN_LIVE_REFRESH_INTERVAL_S = 0.15
 FAST_VISUAL_FULL_STATS_INTERVAL_S = 1.5
 LIVE_REFRESH_LOG_INTERVAL_S = 5.0
@@ -1222,6 +1223,48 @@ class ReplayController:
                     return True
         return False
 
+    def _theme_has_audio_eq_visual(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for entry in document.get("stats", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("display", "")).strip().lower() == "equalizer":
+                return True
+        for entry in document.get("widgets", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("kind", "")).strip().lower() != "media_now_playing":
+                continue
+            settings = entry.get("settings", {})
+            if not isinstance(settings, dict) or bool(settings.get("equalizer_enabled", True)):
+                return True
+        return False
+
+    @staticmethod
+    def _audio_eq_signature(stats: dict[str, str]) -> tuple[int, ...] | None:
+        status = str(stats.get("audio_eq_status", "")).strip().lower()
+        if status not in {"running", "stale"}:
+            return None
+        try:
+            parsed = json.loads(str(stats.get("audio_eq_bars", "[]")))
+        except Exception:
+            return None
+        if not isinstance(parsed, list) or len(parsed) < 2:
+            return None
+        values: list[int] = []
+        peak = 0.0
+        for raw in parsed[:32]:
+            try:
+                value = max(0.0, min(1.0, float(raw)))
+            except (TypeError, ValueError):
+                value = 0.0
+            peak = max(peak, value)
+            values.append(int(round(value * 24.0)))
+        if peak < 0.015:
+            return None
+        return tuple(values)
+
     def _theme_live_refresh_interval(self, document: dict[str, Any] | None) -> float:
         if self._theme_has_fast_visual_live_refresh(document):
             return FAST_VISUAL_REFRESH_INTERVAL_S
@@ -1286,6 +1329,7 @@ class ReplayController:
         playerctl_available = playerctl_cmd is not None
         periodic_live_refresh = self._theme_needs_periodic_live_refresh(document) or self._theme_needs_periodic_live_refresh(overlay_document)
         fast_visual_refresh = self._theme_has_fast_visual_live_refresh(document) or self._theme_has_fast_visual_live_refresh(overlay_document)
+        audio_eq_visual = self._theme_has_audio_eq_visual(document) or self._theme_has_audio_eq_visual(overlay_document)
         marquee_motion = self._theme_has_marquee_motion(document) or self._theme_has_marquee_motion(overlay_document)
         overlay_sources: set[str] = set()
         if isinstance(overlay_document, dict):
@@ -1309,7 +1353,7 @@ class ReplayController:
         heavy_overlay = self._theme_has_heavy_live_overlay(overlay_document)
         if cheap_overlay_mode:
             if fast_visual_refresh:
-                fallback_interval_s = 0.20 if animated_theme else FAST_VISUAL_REFRESH_INTERVAL_S
+                fallback_interval_s = 0.16 if animated_theme and audio_eq_visual else (0.20 if animated_theme else FAST_VISUAL_REFRESH_INTERVAL_S)
             else:
                 fallback_interval_s = 300.0
         elif fast_visual_refresh:
@@ -1331,7 +1375,7 @@ class ReplayController:
         else:
             probe_interval_s = 0.45 if cheap_overlay_mode else (0.25 if fast_file_refresh_mode else max(0.7, min(2.0, interval_s)))
         if cheap_overlay_mode and fast_visual_refresh:
-            min_refresh_gap_s = 0.20 if animated_theme else 0.07
+            min_refresh_gap_s = 0.12 if animated_theme and audio_eq_visual else (0.20 if animated_theme else 0.07)
         elif cheap_overlay_mode:
             min_refresh_gap_s = 0.15 if heavy_overlay else 0.10
         else:
@@ -1475,6 +1519,8 @@ class ReplayController:
             stats_cache = self._merge_live_stats(media_cache)
         except Exception:
             stats_cache = dict(media_cache)
+        last_audio_eq_sig = self._audio_eq_signature(stats_cache) if audio_eq_visual else None
+        last_audio_eq_probe = 0.0
         last_full_stats_at = time.time()
         full_stats_interval_s = FAST_VISUAL_FULL_STATS_INTERVAL_S if fast_visual_refresh else max(1.0, interval_s)
 
@@ -1689,6 +1735,19 @@ class ReplayController:
                 except Exception:
                     pass
 
+            if audio_eq_visual and not event and now - last_audio_eq_probe >= FAST_AUDIO_EQ_REFRESH_INTERVAL_S:
+                last_audio_eq_probe = now
+                try:
+                    audio_eq_stats = self.stats_provider.read_audio_eq_stats()
+                    audio_eq_sig = self._audio_eq_signature(audio_eq_stats)
+                    if audio_eq_sig is not None and audio_eq_sig != last_audio_eq_sig:
+                        last_audio_eq_sig = audio_eq_sig
+                        event = True
+                        refresh_reason = "eq"
+                        last_event_at = time.time()
+                except Exception:
+                    pass
+
             if now - last_fallback >= fallback_interval_s:
                 event = True
                 if not refresh_reason:
@@ -1752,7 +1811,11 @@ class ReplayController:
                             keep_live_refresh_running=True,
                         )
                     last_refresh = time.time()
-                    delay_ms = int(max(0.0, last_refresh - last_event_at) * 1000) if refresh_reason == "media" and last_event_at > 0 else None
+                    delay_ms = (
+                        int(max(0.0, last_refresh - last_event_at) * 1000)
+                        if refresh_reason in {"media", "eq"} and last_event_at > 0
+                        else None
+                    )
                     self._record_live_theme_metrics(
                         reason=refresh_reason,
                         media_cache=media_cache,
