@@ -271,12 +271,41 @@ class ReplayController:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
-                name = str(raw.get("name") or raw.get("title") or "").strip()
+                meta = raw.get("meta", {})
+                meta_name = meta.get("name") if isinstance(meta, dict) else ""
+                name = str(meta_name or raw.get("name") or raw.get("title") or "").strip()
                 if name:
                     return name
         except Exception:
             pass
         return path.stem.replace("_", " ").replace("-", " ").title()
+
+    def _repair_theme_paths_from_directory_locked(self) -> bool:
+        themes_dir = self.cfg.workdir / "themes"
+        if not themes_dir.exists() or not self.themes:
+            return False
+        repaired = False
+        by_name: dict[str, Path] = {}
+        for path in sorted(themes_dir.glob("*.json")):
+            by_name.setdefault(self._theme_name_from_file(path), path)
+        for name, item in list(self.themes.items()):
+            local_path = by_name.get(name)
+            if local_path is None:
+                continue
+            current = to_abs(self.cfg.workdir, str(item.get("path", ""))).expanduser()
+            try:
+                current_resolved = current.resolve()
+                workdir_resolved = self.cfg.workdir.resolve()
+                is_inside_workdir = current_resolved == workdir_resolved or workdir_resolved in current_resolved.parents
+            except Exception:
+                is_inside_workdir = False
+            if current.exists() and is_inside_workdir:
+                continue
+            rel_path = local_path.relative_to(self.cfg.workdir).as_posix()
+            if item.get("path") != rel_path:
+                item["path"] = rel_path
+                repaired = True
+        return repaired
 
     def _unique_theme_name_locked(self, name: str) -> str:
         base = str(name).strip() or "Theme"
@@ -290,6 +319,8 @@ class ReplayController:
     def _seed_themes_from_directory(self) -> None:
         with self.lock:
             if self.themes:
+                if self._repair_theme_paths_from_directory_locked():
+                    self._save_themes()
                 return
             themes_dir = self.cfg.workdir / "themes"
             if not themes_dir.exists():

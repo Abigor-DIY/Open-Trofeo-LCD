@@ -1531,6 +1531,39 @@ def _weather_icon_image(source: str, snapshot: dict[str, str], base_dir: Path, s
         return None
 
 
+def _animate_weather_icon(icon: Image.Image, source: str, snapshot: dict[str, str], settings: dict[str, Any]) -> Image.Image:
+    if not bool(settings.get("animate_icons", True)):
+        return icon
+    phase = time.time() * float(settings.get("icon_animation_speed", 1.0) or 1.0)
+    text = " ".join(
+        str(snapshot.get(key, ""))
+        for key in (
+            source,
+            "weather_condition",
+            "weather_icon",
+        )
+    ).lower()
+    w, h = icon.size
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    if any(token in text for token in ("rain", "drizzle", "sleet", "snow", "hail")):
+        offset = int((phase * 10) % max(1, h // 5))
+        out.alpha_composite(icon, (0, offset - max(1, h // 10)))
+        faded = icon.copy()
+        faded.putalpha(faded.getchannel("A").point(lambda a: int(a * 0.38)))
+        out.alpha_composite(faded, (0, offset + max(1, h // 12)))
+        return out
+    if any(token in text for token in ("cloud", "fog", "overcast")):
+        offset = int(round(math.sin(phase * 1.8) * max(1, w * 0.035)))
+        out.alpha_composite(icon, (offset, 0))
+        return out
+    angle = math.sin(phase * 1.5) * 3.0
+    scale = 1.0 + 0.035 * math.sin(phase * 2.0)
+    resized = icon.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
+    rotated = resized.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True)
+    out.alpha_composite(rotated, ((w - rotated.width) // 2, (h - rotated.height) // 2))
+    return out
+
+
 def _render_weather_current_widget(canvas: Image.Image, item: dict[str, Any], base_dir: Path, snapshot: dict[str, str]) -> None:
     x, y, w, h = [int(v) for v in item["rect"]]
     settings = item.get("settings", {}) if isinstance(item.get("settings", {}), dict) else {}
@@ -1539,12 +1572,14 @@ def _render_weather_current_widget(canvas: Image.Image, item: dict[str, Any], ba
     panel = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     pdraw = ImageDraw.Draw(panel)
     fill = _rgba(settings.get("panel_fill", [8, 14, 24, 205]))
-    pdraw.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(4, int(22 * scale)), fill=(fill[0], fill[1], fill[2], int(fill[3] * opacity)))
+    if bool(settings.get("panel_enabled", True)) and fill[3] > 0:
+        pdraw.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(4, int(22 * scale)), fill=(fill[0], fill[1], fill[2], int(fill[3] * opacity)))
     icon_size = max(42, min(int(h * 0.62), int(w * 0.22)))
     icon_x = int(24 * scale)
     icon_y = max(8, (h - icon_size) // 2)
     icon = _weather_icon_image("weather_icon", snapshot, base_dir, (icon_size, icon_size))
     if icon is not None:
+        icon = _animate_weather_icon(icon, "weather_icon", snapshot, settings)
         panel.alpha_composite(icon, (icon_x, icon_y))
     text_x = icon_x + icon_size + int(18 * scale)
     right_x = max(text_x + int(180 * scale), int(w * 0.63))
@@ -1567,7 +1602,8 @@ def _render_weather_forecast_widget(canvas: Image.Image, item: dict[str, Any], b
     panel = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     pdraw = ImageDraw.Draw(panel)
     fill = _rgba(settings.get("panel_fill", [8, 14, 24, 190]))
-    pdraw.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(4, int(18 * scale)), fill=(fill[0], fill[1], fill[2], int(fill[3] * opacity)))
+    if bool(settings.get("panel_enabled", True)) and fill[3] > 0:
+        pdraw.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(4, int(18 * scale)), fill=(fill[0], fill[1], fill[2], int(fill[3] * opacity)))
     font_family = str(settings.get("font_family", "DejaVu Sans"))
     _draw_widget_text(pdraw, (int(26 * scale), int(10 * scale)), snapshot.get("weather_location", "N/A"), font=_scaled_font(int(settings.get("location_font_size", 18)), scale, bold=True, font_family=font_family), fill=_rgba(settings.get("location_color", [235, 246, 255])), max_width=w - int(52 * scale))
     label_font = _scaled_font(int(settings.get("day_font_size", 17)), scale, bold=True, font_family=font_family)
@@ -1582,6 +1618,7 @@ def _render_weather_forecast_widget(canvas: Image.Image, item: dict[str, Any], b
         _draw_widget_text(pdraw, (dx, top), snapshot.get(f"weather_day_{idx}_label", "N/A"), font=label_font, fill=_rgba(settings.get("day_color", [160, 196, 232])), max_width=day_w - 4)
         icon = _weather_icon_image(f"weather_day_{idx}_icon", snapshot, base_dir, (icon_size, icon_size))
         if icon is not None:
+            icon = _animate_weather_icon(icon, f"weather_day_{idx}_icon", snapshot, settings)
             panel.alpha_composite(icon, (dx, top + int(24 * scale)))
         _draw_widget_text(pdraw, (dx + icon_size + int(6 * scale), top + int(23 * scale)), snapshot.get(f"weather_day_{idx}_temp_max_c", "N/A"), font=hi_font, fill=_rgba(settings.get("temp_max_color", [246, 231, 152])), max_width=day_w - icon_size - 6)
         _draw_widget_text(pdraw, (dx + icon_size + int(48 * scale), top + int(29 * scale)), snapshot.get(f"weather_day_{idx}_temp_min_c", "N/A"), font=lo_font, fill=_rgba(settings.get("temp_min_color", [180, 206, 232])), max_width=day_w - icon_size - 48)

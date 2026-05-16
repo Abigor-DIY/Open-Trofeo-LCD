@@ -3838,6 +3838,9 @@ class TrofeoGui(QMainWindow):
         self.weather_widget_body_color_edit = QLineEdit()
         self.weather_widget_detail_color_edit = QLineEdit()
         self.weather_widget_panel_color_edit = QLineEdit()
+        self.weather_widget_transparent_bg_chk = QCheckBox("Transparent background")
+        self.weather_widget_animate_icons_chk = QCheckBox("Animated icons")
+        self.weather_widget_animate_icons_chk.setChecked(True)
         self.designer_theme_gauge_style_combo = QComboBox()
         self._populate_designer_theme_gauge_style_combo()
         self.designer_font_bold_chk = QCheckBox("B")
@@ -4325,6 +4328,8 @@ class TrofeoGui(QMainWindow):
             (self.weather_widget_body_color_edit, "textChanged"),
             (self.weather_widget_detail_color_edit, "textChanged"),
             (self.weather_widget_panel_color_edit, "textChanged"),
+            (self.weather_widget_transparent_bg_chk, "toggled"),
+            (self.weather_widget_animate_icons_chk, "toggled"),
             (self.bg_kind_combo, "currentTextChanged"), (self.bg_path_edit, "textChanged")
         ]:
             try: getattr(widget, signal).connect(self.on_designer_field_changed)
@@ -5491,6 +5496,8 @@ class TrofeoGui(QMainWindow):
         self.row_weather_widget_temp_color = make_label("Temp color")
         self.row_weather_widget_detail_color = make_label("Detail color")
         self.row_weather_widget_panel_color = make_label("Panel color")
+        self.row_weather_widget_transparent_bg = make_label("Background")
+        self.row_weather_widget_animate_icons = make_label("Icon motion")
         self.weather_widget_title_color_row, _ = add_color_row(self.weather_widget_title_color_edit)
         self.weather_widget_body_color_row, _ = add_color_row(self.weather_widget_body_color_edit)
         self.weather_widget_detail_color_row, _ = add_color_row(self.weather_widget_detail_color_edit)
@@ -5502,6 +5509,8 @@ class TrofeoGui(QMainWindow):
         self.inspector_weather_layout.addRow(self.row_weather_widget_temp_color, self.weather_widget_body_color_row)
         self.inspector_weather_layout.addRow(self.row_weather_widget_detail_color, self.weather_widget_detail_color_row)
         self.inspector_weather_layout.addRow(self.row_weather_widget_panel_color, self.weather_widget_panel_color_row)
+        self.inspector_weather_layout.addRow(self.row_weather_widget_transparent_bg, self.weather_widget_transparent_bg_chk)
+        self.inspector_weather_layout.addRow(self.row_weather_widget_animate_icons, self.weather_widget_animate_icons_chk)
         self.weather_source_combo.currentIndexChanged.connect(self._on_weather_source_changed)
         self.weather_format_combo.currentIndexChanged.connect(self._on_weather_format_changed)
         self._populate_weather_source_combo()
@@ -13171,7 +13180,10 @@ class TrofeoGui(QMainWindow):
             "kind": kind,
             "style": style_key,
             "rect": rect,
-            "settings": {},
+            "settings": {
+                "panel_enabled": True,
+                "animate_icons": True,
+            },
             "opacity": 1.0,
             "z_index": 210,
             "visible": True,
@@ -15070,6 +15082,8 @@ class TrofeoGui(QMainWindow):
             (self.row_weather_widget_temp_color, self.weather_widget_body_color_row),
             (self.row_weather_widget_detail_color, self.weather_widget_detail_color_row),
             (self.row_weather_widget_panel_color, self.weather_widget_panel_color_row),
+            (self.row_weather_widget_transparent_bg, self.weather_widget_transparent_bg_chk),
+            (self.row_weather_widget_animate_icons, self.weather_widget_animate_icons_chk),
         ):
             self._set_form_row_visible(weather_layout, row_label, widget, show_weather_widget_fields)
         if show_stat_fields and hasattr(self, "weather_source_combo"):
@@ -15507,6 +15521,10 @@ class TrofeoGui(QMainWindow):
                 self.weather_widget_body_color_edit.setText(json.dumps(settings.get("temp_color", settings.get("temp_max_color", [246, 231, 152])), ensure_ascii=False))
                 self.weather_widget_detail_color_edit.setText(json.dumps(settings.get("detail_color", settings.get("condition_color", [210, 224, 240])), ensure_ascii=False))
                 self.weather_widget_panel_color_edit.setText(json.dumps(settings.get("panel_fill", [8, 14, 24, 205]), ensure_ascii=False))
+                panel_fill = settings.get("panel_fill", [8, 14, 24, 205])
+                panel_alpha = panel_fill[3] if isinstance(panel_fill, list) and len(panel_fill) > 3 else 255
+                self.weather_widget_transparent_bg_chk.setChecked(not bool(settings.get("panel_enabled", panel_alpha > 0)))
+                self.weather_widget_animate_icons_chk.setChecked(bool(settings.get("animate_icons", True)))
             elif kind == "media_now_playing":
                 style = str(item.get("style", "standard")).strip().lower()
                 self.widget_title_font_spin.setValue(int(settings.get("title_font_size", 32 if style == "hero" else 20 if style == "mini" else 28)))
@@ -15527,6 +15545,8 @@ class TrofeoGui(QMainWindow):
             item["settings"] = settings
         if kind.startswith("weather_"):
             settings["panel_fill"] = self._parse_color_line(self.weather_widget_panel_color_edit.text(), settings.get("panel_fill", [8, 14, 24, 205]))
+            settings["panel_enabled"] = not bool(self.weather_widget_transparent_bg_chk.isChecked())
+            settings["animate_icons"] = bool(self.weather_widget_animate_icons_chk.isChecked())
             if kind == "weather_forecast_7d":
                 settings["location_font_size"] = int(self.weather_widget_title_font_spin.value())
                 settings["day_font_size"] = int(self.weather_widget_title_font_spin.value())
