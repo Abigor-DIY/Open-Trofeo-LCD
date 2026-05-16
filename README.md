@@ -124,7 +124,7 @@ After each packet, the host reads a 512-byte ACK from EP1 IN.
 
 ```bash
 # Kubuntu / Ubuntu / Debian
-sudo apt install python3-venv python3-pip python3-usb python3-pil playerctl
+sudo apt install python3-venv python3-pip python3-usb python3-pil playerctl ffmpeg cava
 
 # Python dependencies used by the backend, renderer and GUI
 python3 -m venv .venv-gui
@@ -136,6 +136,9 @@ scripts/setup_gui_venv.sh
 # Optional but recommended for "Now Playing" widget (MPRIS metadata)
 # (Spotify / Chromium / YT Music web / etc.)
 playerctl -v
+
+# Optional but recommended for real-time EQ bars in Now Playing / Graphic EQ
+cava -v
 ```
 
 Python packages are tracked in `requirements.txt`:

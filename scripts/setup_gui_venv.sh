@@ -30,6 +30,16 @@ Zainstaluj:
 EOF
 fi
 
+if ! command -v cava >/dev/null 2>&1; then
+  cat <<EOF
+UWAGA: Nie znaleziono 'cava'.
+Realne pasma EQ w widżetach Now Playing / Graphic EQ wymagają cava.
+Bez cava aplikacja użyje syntetycznego fallbacku EQ.
+Zainstaluj:
+  sudo apt install cava
+EOF
+fi
+
 cat <<EOF
 GUI venv gotowy:
   ${VENV_DIR}

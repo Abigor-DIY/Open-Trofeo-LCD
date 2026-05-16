@@ -62,6 +62,15 @@ stable public Flatpak release, this should be replaced with generated source
 entries and hashes, for example with `flatpak-pip-generator`, so builds do not
 depend on live PyPI resolution.
 
+## Host Runtime Helpers
+
+Some live widgets use host binaries when available:
+
+- `playerctl` for MPRIS Now Playing metadata from host desktop players.
+- `ffmpeg` for extracting preview frames from local video media.
+- `cava` for real-time Graphic EQ / Now Playing EQ bars. Without host `cava`,
+  the app keeps using the synthetic EQ fallback.
+
 ## USB Notes
 
 The LCD identifies as `0416:5408`. For source launches, install the udev rule
