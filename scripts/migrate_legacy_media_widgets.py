@@ -128,8 +128,16 @@ def convert_document(document: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         "title_color": _color(title_item, "value_color", [244, 248, 255]),
         "artist_color": _color(artist_item, "value_color", [210, 224, 240]),
         "detail_color": _color(detail_item, "value_color", [160, 196, 232]),
+        "cover_enabled": True,
+        "backdrop_enabled": True,
         "panel_fill": [8, 14, 24, 188 if has_backdrop else 210],
-        "backdrop_opacity": 0.24 if has_backdrop else 0.0,
+        "backdrop_opacity": 0.30 if has_backdrop else 0.24,
+        "title_marquee": True,
+        "title_marquee_speed": 55.0,
+        "equalizer_enabled": True,
+        "equalizer_bars": 24 if style == "hero" else 20,
+        "equalizer_gap": 4,
+        "equalizer_mirror": False,
     }
     widget = {
         "id": _next_widget_id(document),

@@ -736,6 +736,8 @@ class ReplayController:
         live_item_ids: set[str] = set()
         live_images: list[dict[str, Any]] = []
         base_images: list[dict[str, Any]] = []
+        live_widgets: list[dict[str, Any]] = []
+        base_widgets: list[dict[str, Any]] = []
 
         for item in document.get("stats", []):
             if not isinstance(item, dict):
@@ -763,13 +765,28 @@ class ReplayController:
             else:
                 base_images.append(item_copy)
 
-        if not live_stats and not live_images:
+        for item in document.get("widgets", []):
+            if not isinstance(item, dict):
+                continue
+            item_copy = deepcopy(item)
+            kind = str(item.get("kind", "")).strip().lower()
+            if kind in {"weather_current", "weather_forecast_7d", "media_now_playing"}:
+                live_widgets.append(item_copy)
+                item_id = str(item.get("id", "")).strip()
+                if item_id:
+                    live_item_ids.add(item_id)
+            else:
+                base_widgets.append(item_copy)
+
+        if not live_stats and not live_images and not live_widgets:
             return base_doc, None
 
         base_doc["stats"] = base_stats
         base_doc["images"] = base_images
+        base_doc["widgets"] = base_widgets
         overlay_doc["stats"] = live_stats
         overlay_doc["images"] = live_images
+        overlay_doc["widgets"] = live_widgets
         overlay_doc["texts"] = []
         overlay_doc["background"] = {
             "kind": "color",
@@ -887,6 +904,11 @@ class ReplayController:
             if not isinstance(item, dict):
                 continue
             if str(item.get("source", "")).strip() in {"analog_clock", "media_cover", "media_video_frame"}:
+                return True
+        for item in document.get("widgets", []):
+            if not isinstance(item, dict) or not bool(item.get("visible", True)):
+                continue
+            if str(item.get("kind", "")).strip().lower() == "media_now_playing":
                 return True
         return False
 
@@ -1113,6 +1135,11 @@ class ReplayController:
             source = str(entry.get("source", "")).strip()
             if source in {"media_cover", "media_video_frame"}:
                 return True
+        for entry in document.get("widgets", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("kind", "")).strip().lower() == "media_now_playing":
+                return True
         return False
 
     def _theme_has_live_sources(self, document: dict[str, Any] | None) -> bool:
@@ -1128,6 +1155,12 @@ class ReplayController:
                 continue
             source = str(entry.get("source", "")).strip()
             if source in {"analog_clock", "media_cover", "media_video_frame"}:
+                return True
+        for entry in document.get("widgets", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            kind = str(entry.get("kind", "")).strip().lower()
+            if kind in {"weather_current", "weather_forecast_7d", "media_now_playing"}:
                 return True
         for entry in document.get("texts", []):
             if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
@@ -1152,6 +1185,12 @@ class ReplayController:
                 continue
             if str(entry.get("source", "")).strip() == "analog_clock":
                 return True
+        for entry in document.get("widgets", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            kind = str(entry.get("kind", "")).strip().lower()
+            if kind in {"weather_current", "weather_forecast_7d", "media_now_playing"}:
+                return True
         for entry in document.get("texts", []):
             if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
                 continue
@@ -1174,6 +1213,13 @@ class ReplayController:
                 continue
             if str(entry.get("source", "")).strip() == "analog_clock":
                 return True
+        for entry in document.get("widgets", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("kind", "")).strip().lower() == "media_now_playing":
+                settings = entry.get("settings", {})
+                if not isinstance(settings, dict) or bool(settings.get("equalizer_enabled", True)) or bool(settings.get("title_marquee", True)):
+                    return True
         return False
 
     def _theme_live_refresh_interval(self, document: dict[str, Any] | None) -> float:
@@ -1190,6 +1236,14 @@ class ReplayController:
                     continue
                 if bool(entry.get("marquee", False)) and str(entry.get("align", "left")).strip().lower() == "left":
                     return True
+        for entry in document.get("widgets", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("kind", "")).strip().lower() != "media_now_playing":
+                continue
+            settings = entry.get("settings", {})
+            if not isinstance(settings, dict) or bool(settings.get("title_marquee", True)):
+                return True
         return False
 
     def _theme_has_background_animation(self, document: dict[str, Any] | None) -> bool:
@@ -1247,6 +1301,11 @@ class ReplayController:
                 source = str(item.get("source", "")).strip()
                 if source:
                     overlay_sources.add(source)
+            for item in overlay_document.get("widgets", []):
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("kind", "")).strip().lower() == "media_now_playing":
+                    overlay_sources.update({"media_title", "media_artist", "media_app", "media_state", "media_cover", "media_video_frame"})
         heavy_overlay = self._theme_has_heavy_live_overlay(overlay_document)
         if cheap_overlay_mode:
             if fast_visual_refresh:

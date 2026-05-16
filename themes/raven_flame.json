@@ -839,7 +839,15 @@
           24,
           188
         ],
-        "backdrop_opacity": 0.24
+        "backdrop_opacity": 0.30,
+        "cover_enabled": true,
+        "backdrop_enabled": true,
+        "title_marquee": true,
+        "title_marquee_speed": 55.0,
+        "equalizer_enabled": true,
+        "equalizer_bars": 24,
+        "equalizer_gap": 4,
+        "equalizer_mirror": false
       },
       "opacity": 1.0,
       "z_index": 208,
