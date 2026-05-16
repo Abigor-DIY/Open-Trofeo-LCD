@@ -2358,7 +2358,7 @@ class TrofeoGui(QMainWindow):
         input_combo = getattr(self, "cfg_audio_eq_input_combo", None)
         profile_combo = getattr(self, "cfg_audio_eq_profile_combo", None)
         sensitivity_spin = getattr(self, "cfg_audio_eq_sensitivity_spin", None)
-        method = str(input_combo.currentData() if input_combo is not None else "pulse").strip() or "pulse"
+        method = str(input_combo.currentData() if input_combo is not None else "auto").strip() or "auto"
         profile = str(profile_combo.currentData() if profile_combo is not None else "balanced").strip() or "balanced"
         sensitivity = float(sensitivity_spin.value()) / 100.0 if sensitivity_spin is not None else 1.0
         return {"audio_eq_input": method, "audio_eq_profile": profile, "audio_eq_sensitivity": sensitivity}
@@ -3392,6 +3392,7 @@ class TrofeoGui(QMainWindow):
         audio_eq_box.setObjectName("configCardBox")
         audio_eq_form = QFormLayout(audio_eq_box)
         self.cfg_audio_eq_input_combo = QComboBox()
+        self.cfg_audio_eq_input_combo.addItem("Auto: Pulse -> PipeWire -> ALSA", "auto")
         self.cfg_audio_eq_input_combo.addItem("PulseAudio / PipeWire Pulse", "pulse")
         self.cfg_audio_eq_input_combo.addItem("PipeWire native", "pipewire")
         self.cfg_audio_eq_input_combo.addItem("ALSA", "alsa")
@@ -7708,7 +7709,7 @@ class TrofeoGui(QMainWindow):
                 except Exception:
                     self.cfg_weather_refresh_spin.setValue(900)
             if hasattr(self, "cfg_audio_eq_input_combo"):
-                idx = self.cfg_audio_eq_input_combo.findData(str(payload.get("audio_eq_input", "pulse") or "pulse"))
+                idx = self.cfg_audio_eq_input_combo.findData(str(payload.get("audio_eq_input", "auto") or "auto"))
                 if idx >= 0:
                     self.cfg_audio_eq_input_combo.setCurrentIndex(idx)
             if hasattr(self, "cfg_audio_eq_profile_combo"):
@@ -7760,7 +7761,7 @@ class TrofeoGui(QMainWindow):
             payload["weather_location"] = self.cfg_weather_location_edit.text().strip()
             payload["weather_refresh_s"] = int(self.cfg_weather_refresh_spin.value())
         if hasattr(self, "cfg_audio_eq_input_combo"):
-            payload["audio_eq_input"] = str(self.cfg_audio_eq_input_combo.currentData() or "pulse")
+            payload["audio_eq_input"] = str(self.cfg_audio_eq_input_combo.currentData() or "auto")
         if hasattr(self, "cfg_audio_eq_profile_combo"):
             payload["audio_eq_profile"] = str(self.cfg_audio_eq_profile_combo.currentData() or "balanced")
         if hasattr(self, "cfg_audio_eq_sensitivity_spin"):
@@ -11401,6 +11402,7 @@ class TrofeoGui(QMainWindow):
         audio_eq_cfg = cfg.get("audio_eq", {}) if isinstance(cfg, dict) else {}
         if isinstance(audio_eq_cfg, dict) and hasattr(self, "cfg_audio_eq_status_label"):
             method = str(audio_eq_cfg.get("input_method") or "").strip()
+            active_input = str(audio_eq_cfg.get("active_input") or "none").strip()
             profile = str(audio_eq_cfg.get("profile") or "balanced").strip()
             sensitivity = audio_eq_cfg.get("sensitivity", 1.0)
             if not bool(getattr(self, "_audio_eq_config_dirty", False)):
@@ -11439,7 +11441,8 @@ class TrofeoGui(QMainWindow):
             available = bool(audio_eq_cfg.get("cava_available", False))
             parts = [
                 f"status: {status_text}",
-                f"input: {method or 'pulse'}",
+                f"input: {method or 'auto'}",
+                f"active: {active_input}",
                 f"profile: {profile or 'balanced'}",
                 f"sens: {int(round(float(sensitivity or 1.0) * 100.0))}%",
                 f"source: {source}",

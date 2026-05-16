@@ -95,7 +95,8 @@ class StatsProvider:
         self._audio_eq_process: subprocess.Popen[bytes] | None = None
         self._audio_eq_thread_started = False
         self._audio_eq_cava_bin = self._local_or_host_cmd("cava")
-        self._audio_eq_input_method = self._normalize_audio_eq_input(os.environ.get("OPEN_TROFEO_CAVA_INPUT", "pulse"))
+        self._audio_eq_input_method = self._normalize_audio_eq_input(os.environ.get("OPEN_TROFEO_CAVA_INPUT", "auto"))
+        self._audio_eq_active_input_method = "none"
         self._audio_eq_profile = self._normalize_audio_eq_profile(os.environ.get("OPEN_TROFEO_AUDIO_EQ_PROFILE", "balanced"))
         self._audio_eq_sensitivity = self._parse_audio_eq_sensitivity(os.environ.get("OPEN_TROFEO_AUDIO_EQ_SENSITIVITY", "1.0"))
         self._weather_runtime_dir = os.path.join(state_home, "open-trofeo-lcd", "weather")
@@ -128,10 +129,16 @@ class StatsProvider:
 
     @staticmethod
     def _normalize_audio_eq_input(value: object) -> str:
-        method = str(value or "pulse").strip().lower() or "pulse"
-        if method not in {"pulse", "pipewire", "alsa", "fifo", "sndio", "oss", "portaudio"}:
+        method = str(value or "auto").strip().lower() or "auto"
+        if method not in {"auto", "pulse", "pipewire", "alsa", "fifo", "sndio", "oss", "portaudio"}:
             return "pulse"
         return method
+
+    def _audio_eq_input_candidates(self) -> list[str]:
+        method = self._normalize_audio_eq_input(self._audio_eq_input_method)
+        if method == "auto":
+            return ["pulse", "pipewire", "alsa"]
+        return [method]
 
     @staticmethod
     def _normalize_audio_eq_profile(value: object) -> str:
@@ -177,6 +184,7 @@ class StatsProvider:
                 self._audio_eq_updated_at = 0.0
                 self._audio_eq_status = "restarting" if self._audio_eq_cava_bin else "unavailable"
                 self._audio_eq_source = "cava" if self._audio_eq_cava_bin else "none"
+                self._audio_eq_active_input_method = "none"
             proc = self._audio_eq_process
             if proc is not None and proc.poll() is None:
                 try:
@@ -186,7 +194,7 @@ class StatsProvider:
             self._start_audio_eq_thread()
         return self.audio_eq_status()
 
-    def _audio_eq_config_path(self) -> str:
+    def _audio_eq_config_path(self, input_method: str | None = None) -> str:
         runtime_dir = self._audio_eq_runtime_dir
         try:
             os.makedirs(runtime_dir, exist_ok=True)
@@ -194,7 +202,9 @@ class StatsProvider:
             runtime_dir = os.path.join(tempfile.gettempdir(), "open-trofeo-lcd", "audio-eq")
             os.makedirs(runtime_dir, exist_ok=True)
         path = os.path.join(runtime_dir, "cava.conf")
-        input_method = self._normalize_audio_eq_input(self._audio_eq_input_method)
+        input_method = self._normalize_audio_eq_input(input_method or self._audio_eq_input_method)
+        if input_method == "auto":
+            input_method = "pulse"
         content = "\n".join(
             [
                 "[general]",
@@ -290,26 +300,33 @@ class StatsProvider:
         return [max(0.0, min(1.0, value)) for value in shaped]
 
     def _audio_eq_worker(self) -> None:
+        input_attempt = 0
         while True:
             try:
-                config_path = self._audio_eq_config_path()
+                candidates = self._audio_eq_input_candidates()
+                active_input = candidates[input_attempt % len(candidates)]
+                config_path = self._audio_eq_config_path(active_input)
                 with self._audio_eq_lock:
                     self._audio_eq_status = "starting"
                     self._audio_eq_source = "cava"
+                    self._audio_eq_active_input_method = active_input
                 process = subprocess.Popen(
                     [*self._audio_eq_cava_bin, "-p", config_path],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                 )
                 self._audio_eq_process = process
+                levels_seen = False
                 with self._audio_eq_lock:
                     self._audio_eq_status = "running"
                     self._audio_eq_source = "cava"
+                    self._audio_eq_active_input_method = active_input
                 assert process.stdout is not None
                 for line in iter(process.stdout.readline, b""):
                     levels = self._parse_audio_eq_line(line)
                     if not levels:
                         continue
+                    levels_seen = True
                     now = time.time()
                     with self._audio_eq_lock:
                         self._audio_eq_bars = self._shape_audio_eq_levels_locked(levels, now)
@@ -317,6 +334,10 @@ class StatsProvider:
                         self._audio_eq_status = "running"
                         self._audio_eq_source = "cava"
                 return_code = process.wait(timeout=1.0)
+                if levels_seen:
+                    input_attempt = 0
+                elif self._audio_eq_input_method == "auto":
+                    input_attempt += 1
                 if return_code:
                     with self._audio_eq_lock:
                         self._audio_eq_status = f"error:cava-exit-{return_code}"
@@ -325,6 +346,8 @@ class StatsProvider:
                 with self._audio_eq_lock:
                     self._audio_eq_status = f"error:{type(exc).__name__}"
                     self._audio_eq_source = "cava"
+                if self._audio_eq_input_method == "auto":
+                    input_attempt += 1
             finally:
                 process = self._audio_eq_process
                 self._audio_eq_process = None
@@ -343,6 +366,7 @@ class StatsProvider:
             updated_at = float(self._audio_eq_updated_at or 0.0)
             status = str(self._audio_eq_status or "unavailable")
             source = str(self._audio_eq_source or "none")
+            active_input = str(self._audio_eq_active_input_method or "none")
         age_ms = int((now - updated_at) * 1000) if updated_at > 0 else -1
         if status == "running" and age_ms > 1800:
             status = "stale"
@@ -352,6 +376,7 @@ class StatsProvider:
             "audio_eq_source": source,
             "audio_eq_status": status,
             "audio_eq_age_ms": "N/A" if age_ms < 0 else str(age_ms),
+            "audio_eq_active_input": active_input,
         }
 
     def audio_eq_status(self) -> dict[str, object]:
@@ -387,6 +412,7 @@ class StatsProvider:
             "raw_peak": round(max(raw_bars), 3) if raw_bars else 0.0,
             "cava_available": bool(self._audio_eq_cava_bin),
             "input_method": self._audio_eq_input_method,
+            "active_input": stats.get("audio_eq_active_input", "none"),
             "profile": self._audio_eq_profile,
             "sensitivity": round(self._audio_eq_sensitivity, 3),
             "config_dir": self._audio_eq_runtime_dir,
