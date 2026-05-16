@@ -1892,6 +1892,10 @@ class TrofeoGui(QMainWindow):
         self._preview_request_queued = False
         self._preview_request_seq = 0
         self._preview_request_active_seq = 0
+        self._runtime_theme_cards_dirty = True
+        self._library_theme_browser_dirty = True
+        self._asset_gallery_dirty = True
+        self._initial_theme_data_loaded = False
         self.preview_debounce = QTimer(self)
         self.preview_debounce.setSingleShot(True)
         self.preview_debounce.timeout.connect(self.preview_theme_doc)
@@ -1919,16 +1923,15 @@ class TrofeoGui(QMainWindow):
         self.status_timer.start(1500)
 
         self.refresh_status()
-        self.refresh_themes()
-        self.refresh_playlist()
-        self.refresh_theme_schema()
+        QTimer.singleShot(150, self.refresh_themes)
+        QTimer.singleShot(300, self.refresh_playlist)
+        QTimer.singleShot(450, self.refresh_theme_schema)
         self._load_layout_presets()
-        self._refresh_template_cards()
-        self._rebuild_theme_asset_gallery()
+        QTimer.singleShot(650, self._refresh_template_cards)
         self.suggest_new_theme_path_from_template()
         restored_autosave = self._restore_theme_autosave()
         if not restored_autosave and Path(self.theme_doc_path_edit.text().strip()).exists():
-            self.load_theme_doc()
+            QTimer.singleShot(850, self.load_theme_doc)
         # Always start on dashboard/system view.
         self._go_system()
         self._show_onboarding_once()
@@ -8116,6 +8119,7 @@ class TrofeoGui(QMainWindow):
             self.main_tabs.setCurrentIndex(1)
         if hasattr(self, "studio_sections_tabs"):
             self.studio_sections_tabs.setCurrentIndex(0)
+        self._maybe_rebuild_visible_theme_views()
         self._sync_shell_navigation()
 
     def _go_designer(self) -> None:
@@ -8128,6 +8132,7 @@ class TrofeoGui(QMainWindow):
     def _go_system(self) -> None:
         if hasattr(self, "main_tabs"):
             self.main_tabs.setCurrentIndex(0)
+        self._maybe_rebuild_visible_theme_views()
         self._sync_shell_navigation()
 
     def _go_logs(self) -> None:
@@ -11377,9 +11382,27 @@ class TrofeoGui(QMainWindow):
                 if names
                 else "Biblioteka jest pusta. Utwórz nowy motyw albo zaimportuj katalog TTCR."
             )
-        self._rebuild_runtime_theme_cards()
-        self._rebuild_library_theme_browser()
+        self._runtime_theme_cards_dirty = True
+        self._library_theme_browser_dirty = True
+        if getattr(self, "_initial_theme_data_loaded", False):
+            self._maybe_rebuild_visible_theme_views()
+        else:
+            self._initial_theme_data_loaded = True
         self._apply_startup_theme_if_needed()
+
+    def _maybe_rebuild_visible_theme_views(self) -> None:
+        if hasattr(self, "main_tabs") and self.main_tabs.currentIndex() == 0 and getattr(self, "_runtime_theme_cards_dirty", False):
+            self._runtime_theme_cards_dirty = False
+            self._rebuild_runtime_theme_cards()
+        if (
+            hasattr(self, "main_tabs")
+            and hasattr(self, "studio_sections_tabs")
+            and self.main_tabs.currentIndex() == 1
+            and self.studio_sections_tabs.currentIndex() == 0
+            and getattr(self, "_library_theme_browser_dirty", False)
+        ):
+            self._library_theme_browser_dirty = False
+            self._rebuild_library_theme_browser()
 
     def _update_playlist(self, playlist_payload: dict[str, Any]) -> None:
         items = playlist_payload.get("items", [])
@@ -11617,16 +11640,54 @@ class TrofeoGui(QMainWindow):
     def _runtime_theme_card_pixmap(self, item: dict[str, Any], size: QSize) -> QPixmap:
         path = str(item.get("path", "")).strip()
         theme_type = str(item.get("type", "image")).strip()
-        if theme_type == "theme-doc" and render_theme_file is not None and path:
-            pixmap = self._render_template_thumbnail(path)
-            if pixmap is not None and not pixmap.isNull():
-                return pixmap
+        if theme_type == "theme-doc" and path:
+            asset_path = self._theme_card_fast_preview_asset(path)
+            if asset_path:
+                pixmap = QPixmap(str(asset_path))
+                if not pixmap.isNull():
+                    return pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         if path:
             resolved = self._resolve_theme_asset_path(path)
             pixmap = QPixmap(str(resolved))
             if not pixmap.isNull():
                 return pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         return self._render_template_placeholder(str(item.get("name", "Theme")), "#5ec8ff", size)
+
+    def _theme_card_fast_preview_asset(self, raw_path: str) -> Path | None:
+        def _resolve_from_theme(theme_dir: Path, asset: str) -> Path:
+            candidate = Path(asset).expanduser()
+            if candidate.is_absolute():
+                return candidate.resolve()
+            theme_candidate = (theme_dir / candidate).resolve()
+            if theme_candidate.exists():
+                return theme_candidate
+            return (Path.cwd() / candidate).resolve()
+
+        try:
+            path = self._resolve_theme_asset_path(str(raw_path))
+            if not path.exists():
+                return None
+            raw = parse_theme_json_text(path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                return None
+            background = raw.get("background", {})
+            if isinstance(background, dict):
+                bg_path = str(background.get("path", "")).strip()
+                if bg_path:
+                    candidate = _resolve_from_theme(path.parent, bg_path)
+                    if candidate.exists():
+                        return candidate
+            effects = raw.get("effects", {})
+            animation = effects.get("animation", {}) if isinstance(effects, dict) else {}
+            frames = animation.get("frame_paths", []) if isinstance(animation, dict) else []
+            if isinstance(frames, list):
+                for frame in frames[:8]:
+                    candidate = _resolve_from_theme(path.parent, str(frame))
+                    if candidate.exists():
+                        return candidate
+        except Exception:
+            return None
+        return None
 
     def _render_theme_preview_pixmap(self, item: dict[str, Any], size: QSize) -> QPixmap:
         path = str(item.get("path", "")).strip()
@@ -11731,6 +11792,14 @@ class TrofeoGui(QMainWindow):
 
     def _schedule_library_theme_browser_rebuild(self) -> None:
         if not hasattr(self, "library_theme_cards_layout"):
+            return
+        if not (
+            hasattr(self, "main_tabs")
+            and hasattr(self, "studio_sections_tabs")
+            and self.main_tabs.currentIndex() == 1
+            and self.studio_sections_tabs.currentIndex() == 0
+        ):
+            self._library_theme_browser_dirty = True
             return
         width = self._library_theme_browser_width()
         if width == getattr(self, "_library_theme_browser_last_width", 0):
