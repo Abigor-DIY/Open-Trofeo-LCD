@@ -52,6 +52,7 @@ modules:
           - .venv
           - .venv-gui
           - .venv-trcc
+          - .codex-backups
           - .trofeo-backend.env
           - .trofeo-service.env
           - .trofeo-playlist.json
@@ -68,7 +69,13 @@ modules:
           - live_test_logs
           - reference_protocol_logs
           - reference_timing_logs
+          - dzis.pcapng
+          - Windows_Cap/trofeo_live_19808.pcap
+          - Windows_Cap/trofeo_live_38096.pcap
+          - Windows_Cap/trofeo_live_45188.pcap
+          - Windows_Cap/trofeo_live_9336.pcap
           - "*.pcapng"
+          - "*.pcap"
           - "*.pyc"
           - "*.pyo"
           - "*.log"
