@@ -57,6 +57,7 @@ KNOWN_IMAGE_SOURCES = {
 KNOWN_CLOCK_STYLE = {"classic", "modern", "nordic"}
 KNOWN_STAT_DISPLAY = {"text", "progress", "gauge", "sparkline", "equalizer"}
 KNOWN_GAUGE_VALUE_LAYOUT = frozenset({"center", "below", "beside"})
+KNOWN_WIDGET_KINDS = {"weather_current", "weather_forecast_7d"}
 
 class ThemeValidationError(RuntimeError):
     pass
@@ -421,6 +422,32 @@ def _normalize_image_item(raw: Any, idx: int) -> dict[str, Any]:
     }
 
 
+def _normalize_widget_item(raw: Any, idx: int) -> dict[str, Any]:
+    path = f"widgets[{idx}]"
+    data = _expect_dict(raw, path)
+    kind = _expect_str(data.get("kind", ""), f"{path}.kind").strip().lower()
+    if kind not in KNOWN_WIDGET_KINDS:
+        raise _fail(f"{path}.kind", f"must be one of {sorted(KNOWN_WIDGET_KINDS)}")
+    settings = data.get("settings", {})
+    if settings is None:
+        settings = {}
+    settings = _expect_dict(settings, f"{path}.settings")
+    opacity = float(_expect_number(data.get("opacity", 1.0), f"{path}.opacity"))
+    if not (0.0 <= opacity <= 1.0):
+        raise _fail(f"{path}.opacity", "must be in range 0.0..1.0")
+    return {
+        "id": str(data.get("id", f"widget_{idx}")).strip() or f"widget_{idx}",
+        "kind": kind,
+        "rect": _normalize_rect(data.get("rect"), f"{path}.rect"),
+        "style": str(data.get("style", "compact")).strip() or "compact",
+        "settings": deepcopy(settings),
+        "opacity": opacity,
+        "z_index": int(_expect_number(data.get("z_index", 210), f"{path}.z_index")),
+        "visible": bool(data.get("visible", True)),
+        "locked": bool(data.get("locked", False)),
+    }
+
+
 def _normalize_effects(raw: Any) -> dict[str, Any]:
     data = _expect_dict(raw, "effects")
     animation_raw = data.get("animation", {})
@@ -531,6 +558,7 @@ def normalize_theme_document(raw: dict[str, Any]) -> dict[str, Any]:
         merged = merge_gauge_preset(_expect_dict(item, f"stats[{idx}]"), meta)
         stats.append(_normalize_stat_item(merged, idx))
     images = [_normalize_image_item(item, idx) for idx, item in enumerate(_expect_list(data.get("images", []), "images"))]
+    widgets = [_normalize_widget_item(item, idx) for idx, item in enumerate(_expect_list(data.get("widgets", []), "widgets"))]
     effects = _normalize_effects(data.get("effects", {}))
 
     return {
@@ -541,6 +569,7 @@ def normalize_theme_document(raw: dict[str, Any]) -> dict[str, Any]:
         "texts": texts,
         "stats": stats,
         "images": images,
+        "widgets": widgets,
         "effects": effects,
     }
 

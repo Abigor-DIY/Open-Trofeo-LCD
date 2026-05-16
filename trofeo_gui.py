@@ -1900,6 +1900,7 @@ class TrofeoGui(QMainWindow):
         self.animation_preview_timer = QTimer(self)
         self.animation_preview_timer.timeout.connect(self._advance_animation_preview)
         self._animation_preview_active = False
+        self._weather_search_target = "config"
 
         self.client = BackendClient(base_url=base_url)
         self._build_ui(base_url)
@@ -2328,6 +2329,7 @@ class TrofeoGui(QMainWindow):
     def search_weather_city(self) -> None:
         if not hasattr(self, "cfg_weather_city_search_edit"):
             return
+        self._weather_search_target = "config"
         query = self.cfg_weather_city_search_edit.text().strip()
         if len(query) < 2:
             QMessageBox.information(
@@ -2359,18 +2361,42 @@ class TrofeoGui(QMainWindow):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _finish_weather_city_search(self, results: list[dict[str, object]], error: str = "") -> None:
-        if not hasattr(self, "cfg_weather_results_combo"):
+    def search_designer_weather_city(self) -> None:
+        if not hasattr(self, "weather_designer_city_search_edit"):
             return
-        self.cfg_weather_search_btn.setEnabled(True)
-        self.cfg_weather_search_btn.setText(self._tr("Search", "Szukaj"))
-        self.cfg_weather_results_combo.blockSignals(True)
-        self.cfg_weather_results_combo.clear()
+        query = self.weather_designer_city_search_edit.text().strip()
+        if len(query) < 2:
+            QMessageBox.information(
+                self,
+                self._tr("Weather", "Pogoda"),
+                self._tr("Type at least two characters.", "Wpisz co najmniej dwa znaki."),
+            )
+            return
+        if hasattr(self, "cfg_weather_city_search_edit"):
+            self.cfg_weather_city_search_edit.setText(query)
+        self.search_weather_city()
+        self._weather_search_target = "designer"
+        self.weather_designer_search_btn.setEnabled(False)
+        self.weather_designer_search_btn.setText(self._tr("Searching...", "Szukam..."))
+
+    def _finish_weather_city_search(self, results: list[dict[str, object]], error: str = "") -> None:
+        target = getattr(self, "_weather_search_target", "config")
+        results_combo = self.weather_designer_results_combo if target == "designer" and hasattr(self, "weather_designer_results_combo") else getattr(self, "cfg_weather_results_combo", None)
+        search_btn = self.weather_designer_search_btn if target == "designer" and hasattr(self, "weather_designer_search_btn") else getattr(self, "cfg_weather_search_btn", None)
+        if results_combo is None or search_btn is None:
+            return
+        search_btn.setEnabled(True)
+        search_btn.setText(self._tr("Search", "Szukaj"))
+        if target == "designer" and hasattr(self, "cfg_weather_search_btn"):
+            self.cfg_weather_search_btn.setEnabled(True)
+            self.cfg_weather_search_btn.setText(self._tr("Search", "Szukaj"))
+        results_combo.blockSignals(True)
+        results_combo.clear()
         if error:
-            self.cfg_weather_results_combo.addItem(self._tr("Search failed", "Wyszukiwanie nieudane"), None)
+            results_combo.addItem(self._tr("Search failed", "Wyszukiwanie nieudane"), None)
             self.append_log(f"[weather] geocoding error: {error}")
         elif not results:
-            self.cfg_weather_results_combo.addItem(self._tr("No results", "Brak wyników"), None)
+            results_combo.addItem(self._tr("No results", "Brak wyników"), None)
         else:
             for item in results:
                 name = str(item.get("name", "")).strip()
@@ -2381,11 +2407,14 @@ class TrofeoGui(QMainWindow):
                 label = ", ".join(part for part in (name, admin, country) if part)
                 if not label:
                     label = f"{lat}, {lon}"
-                self.cfg_weather_results_combo.addItem(label, item)
-        self.cfg_weather_results_combo.blockSignals(False)
+                results_combo.addItem(label, item)
+        results_combo.blockSignals(False)
         if results:
-            self.cfg_weather_results_combo.setCurrentIndex(0)
-            self._apply_selected_weather_city(0)
+            results_combo.setCurrentIndex(0)
+            if target == "designer":
+                self._apply_selected_designer_weather_city(0)
+            else:
+                self._apply_selected_weather_city(0)
 
     def _apply_selected_weather_city(self, index: int) -> None:
         if not hasattr(self, "cfg_weather_results_combo"):
@@ -2402,6 +2431,28 @@ class TrofeoGui(QMainWindow):
         self.cfg_weather_lat_edit.setText("" if lat is None else str(lat))
         self.cfg_weather_lon_edit.setText("" if lon is None else str(lon))
         self.cfg_weather_location_edit.setText(label)
+
+    def _apply_selected_designer_weather_city(self, index: int) -> None:
+        if not hasattr(self, "weather_designer_results_combo"):
+            return
+        item = self.weather_designer_results_combo.itemData(index)
+        if not isinstance(item, dict):
+            return
+        if hasattr(self, "cfg_weather_results_combo"):
+            self.cfg_weather_results_combo.blockSignals(True)
+            self.cfg_weather_results_combo.clear()
+            self.cfg_weather_results_combo.addItem(self.weather_designer_results_combo.currentText(), item)
+            self.cfg_weather_results_combo.setCurrentIndex(0)
+            self.cfg_weather_results_combo.blockSignals(False)
+            self._apply_selected_weather_city(0)
+
+    def apply_designer_weather_config(self) -> None:
+        self._apply_selected_designer_weather_city(self.weather_designer_results_combo.currentIndex())
+        self.apply_weather_config()
+
+    def refresh_designer_weather_now(self) -> None:
+        self._apply_selected_designer_weather_city(self.weather_designer_results_combo.currentIndex())
+        self.refresh_weather_now()
 
     def _reset_configuration_defaults(self) -> None:
         if hasattr(self, "cfg_ui_theme_combo"):
@@ -3681,6 +3732,7 @@ class TrofeoGui(QMainWindow):
         self.designer_kind_combo = QComboBox()
         self.designer_kind_combo.addItem("Teksty", "texts"); self.designer_kind_combo.addItem("Statystyki", "stats")
         self.designer_kind_combo.addItem("Obrazy", "images"); self.designer_kind_combo.addItem("Panele", "panels")
+        self.designer_kind_combo.addItem("Widgety", "widgets")
         self.designer_selection_label = QLabel("Zaznacz element")
         
         self.designer_id_edit = QLineEdit()
@@ -4752,7 +4804,7 @@ class TrofeoGui(QMainWindow):
                 next_y = 0
             elif mode == "bottom":
                 next_y = canvas_height - rect_h
-            if collection in {"images", "panels"}:
+            if collection in {"images", "panels", "widgets"}:
                 item["rect"] = [
                     self._snap_value(int(next_x)),
                     self._snap_value(int(next_y)),
@@ -5335,6 +5387,28 @@ class TrofeoGui(QMainWindow):
         )
         self.row_weather_tools = make_label("Weather tools")
         self.inspector_weather_layout.addRow(self.row_weather_tools, weather_tools_row)
+        self.weather_designer_city_search_edit = QLineEdit()
+        self.weather_designer_city_search_edit.setPlaceholderText("Search city, e.g. Warsaw")
+        self.weather_designer_search_btn = QPushButton("Search")
+        weather_designer_search_row = wrap_row(self.weather_designer_city_search_edit, self.weather_designer_search_btn, stretch_first=True)
+        self.weather_designer_search_row = weather_designer_search_row
+        self.weather_designer_results_combo = QComboBox()
+        self.weather_designer_results_combo.addItem("No city selected", None)
+        self.weather_designer_apply_btn = QPushButton("Apply city")
+        self.weather_designer_refresh_btn = QPushButton("Refresh weather")
+        weather_designer_actions = wrap_row(self.weather_designer_apply_btn, self.weather_designer_refresh_btn)
+        self.weather_designer_actions_row = weather_designer_actions
+        self.row_weather_city_search = make_label("City search")
+        self.row_weather_city_results = make_label("Results")
+        self.row_weather_city_actions = make_label("Weather config")
+        self.inspector_weather_layout.addRow(self.row_weather_city_search, weather_designer_search_row)
+        self.inspector_weather_layout.addRow(self.row_weather_city_results, self.weather_designer_results_combo)
+        self.inspector_weather_layout.addRow(self.row_weather_city_actions, weather_designer_actions)
+        self.weather_designer_search_btn.clicked.connect(self.search_designer_weather_city)
+        self.weather_designer_city_search_edit.returnPressed.connect(self.search_designer_weather_city)
+        self.weather_designer_results_combo.currentIndexChanged.connect(self._apply_selected_designer_weather_city)
+        self.weather_designer_apply_btn.clicked.connect(self.apply_designer_weather_config)
+        self.weather_designer_refresh_btn.clicked.connect(self.refresh_designer_weather_now)
         self.weather_source_combo = QComboBox()
         self.weather_format_combo = QComboBox()
         self.weather_format_combo.addItem("{value}", "{value}")
@@ -6800,6 +6874,7 @@ class TrofeoGui(QMainWindow):
                 (tr("Stats", "Statystyki"), "stats"),
                 (tr("Images", "Obrazy"), "images"),
                 (tr("Panels", "Panele"), "panels"),
+                (tr("Widgets", "Widgety"), "widgets"),
             ]
             current_kind = str(self.designer_kind_combo.currentData() or "texts")
             self.designer_kind_combo.blockSignals(True)
@@ -12988,6 +13063,8 @@ class TrofeoGui(QMainWindow):
                 "opacity": 1.0,
                 "z_index": 50,
             }
+        if collection == "widgets":
+            return self._make_weather_widget("weather_current", "compact")
         return {
             "id": f"image_{index}",
             "path": "reference_frame_trcc.jpg",
@@ -12996,6 +13073,30 @@ class TrofeoGui(QMainWindow):
             "opacity": 1.0,
             "rotation": 0,
             "z_index": 100,
+        }
+
+    def _make_weather_widget(self, kind: str, style: str = "compact") -> dict[str, Any]:
+        style_key = str(style or "compact").strip().lower()
+        if kind == "weather_forecast_7d":
+            rect = [246, 316, 1088, 112]
+            prefix = "widget_weather_forecast"
+        else:
+            prefix = "widget_weather_current"
+            rect = {
+                "compact": [1360, 270, 500, 152],
+                "wide": [980, 300, 820, 112],
+                "hero": [1160, 42, 650, 170],
+            }.get(style_key, [1360, 270, 500, 152])
+        return {
+            "id": self._next_item_id("widgets", prefix),
+            "kind": kind,
+            "style": style_key,
+            "rect": rect,
+            "settings": {},
+            "opacity": 1.0,
+            "z_index": 210,
+            "visible": True,
+            "locked": False,
         }
 
     def _next_item_id(self, collection: str, prefix: str) -> str:
@@ -13445,78 +13546,15 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         self.push_designer_history()
-        style_key = str(style or "compact").strip().lower()
-        presets = {
-            "compact": {
-                "panel": [1360, 270, 500, 152],
-                "icon": [1384, 292, 92, 92],
-                "entries": [
-                    ("weather_location", "", "{value}", 1492, 288, 330, 24, 18, True, [235, 246, 255], "left"),
-                    ("weather_temp_c", "", "{value}", 1492, 318, 180, 46, 38, True, [246, 231, 152], "left"),
-                    ("weather_condition", "", "{value}", 1492, 366, 330, 26, 20, False, [210, 224, 240], "left"),
-                    ("weather_wind_kph", "Wind", "{value}", 1684, 324, 150, 24, 18, False, [210, 224, 240], "left"),
-                    ("weather_humidity_percent", "Humidity", "{value}", 1684, 354, 150, 24, 18, False, [210, 224, 240], "left"),
-                ],
-            },
-            "wide": {
-                "panel": [980, 300, 820, 112],
-                "icon": [1006, 316, 72, 72],
-                "entries": [
-                    ("weather_location", "", "{value}", 1096, 314, 280, 28, 23, True, [235, 246, 255], "left"),
-                    ("weather_temp_c", "", "{value}", 1390, 306, 130, 44, 38, True, [246, 231, 152], "center"),
-                    ("weather_condition", "", "{value}", 1096, 348, 320, 24, 20, False, [210, 224, 240], "left"),
-                    ("weather_wind_kph", "Wind", "{value}", 1528, 322, 120, 24, 18, False, [210, 224, 240], "left"),
-                    ("weather_humidity_percent", "Humidity", "{value}", 1660, 322, 120, 24, 18, False, [210, 224, 240], "left"),
-                ],
-            },
-            "hero": {
-                "panel": [1160, 42, 650, 170],
-                "icon": [1192, 72, 108, 108],
-                "entries": [
-                    ("weather_location", "", "{value}", 1322, 66, 430, 34, 28, True, [255, 255, 255], "left"),
-                    ("weather_temp_c", "", "{value}", 1322, 100, 170, 60, 52, True, [246, 231, 152], "left"),
-                    ("weather_condition", "", "{value}", 1498, 114, 260, 28, 22, False, [225, 236, 245], "left"),
-                    ("weather_feels_like_c", "Feels", "{value}", 1322, 164, 150, 24, 18, False, [210, 224, 240], "left"),
-                    ("weather_wind_kph", "Wind", "{value}", 1498, 164, 150, 24, 18, False, [210, 224, 240], "left"),
-                ],
-            },
-        }
-        preset = presets.get(style_key, presets["compact"])
-        background = self.theme_doc_model.setdefault("background", {})
-        panels = background.setdefault("panels", [])
-        panels.append(
-            {
-                "id": self._next_item_id("panels", "panel_weather_current"),
-                "rect": preset["panel"],
-                "radius": 22,
-                "fill": [8, 14, 24, 205],
-                "opacity": 1.0,
-                "z_index": 96,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        images = self.theme_doc_model.setdefault("images", [])
-        images.append(
-            {
-                "id": self._next_item_id("images", "img_weather_icon"),
-                "path": "",
-                "source": "weather_icon",
-                "rect": preset["icon"],
-                "fit": "contain",
-                "opacity": 1.0,
-                "rotation": 0,
-                "z_index": 210,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        stats = self.theme_doc_model.setdefault("stats", [])
-        for source, label, fmt, x, y, w, h, size, bold, value_color, align in preset["entries"]:
-            stats.append(self._weather_stat_item(source, label, fmt, x, y, w, h, size, bold, value_color, align))
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+        widgets.append(self._make_weather_widget("weather_current", style))
         self.write_designer_to_json()
         self.refresh_designer_element_list()
-        self.preview_info_label.setText(f"Dodano widget Weather Current ({style_key}) z nazwą miasta.")
+        combo_index = self.designer_kind_combo.findData("widgets")
+        if combo_index >= 0:
+            self.designer_kind_combo.setCurrentIndex(combo_index)
+            self.designer_element_list.setCurrentRow(len(widgets) - 1)
+        self.preview_info_label.setText(f"Dodano kompletny widget Weather Current ({style}).")
         self.schedule_preview_theme_doc()
 
     def add_weather_forecast_widget(self) -> None:
@@ -13525,64 +13563,15 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         self.push_designer_history()
-        background = self.theme_doc_model.setdefault("background", {})
-        panels = background.setdefault("panels", [])
-        panels.append(
-            {
-                "id": self._next_item_id("panels", "panel_weather_forecast"),
-                "rect": [246, 316, 1088, 112],
-                "radius": 18,
-                "fill": [8, 14, 24, 190],
-                "opacity": 1.0,
-                "z_index": 95,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        stats = self.theme_doc_model.setdefault("stats", [])
-        images = self.theme_doc_model.setdefault("images", [])
-        stats.append(
-            self._weather_stat_item(
-                "weather_location",
-                "",
-                "{value}",
-                280,
-                326,
-                360,
-                22,
-                18,
-                True,
-                [235, 246, 255],
-                "left",
-            )
-        )
-        for idx in range(7):
-            x = 284 + idx * 144
-            images.append(
-                {
-                    "id": self._next_item_id("images", f"img_weather_day_{idx}_icon"),
-                    "path": "",
-                    "source": f"weather_day_{idx}_icon",
-                    "rect": [x, 382, 30, 30],
-                    "fit": "contain",
-                    "opacity": 1.0,
-                    "rotation": 0,
-                    "z_index": 212,
-                    "visible": True,
-                    "locked": False,
-                }
-            )
-            day_sources = [
-                (f"weather_day_{idx}_label", "", "{value}", x, 358, 112, 20, 17, True, [160, 196, 232]),
-                (f"weather_day_{idx}_temp_max_c", "", "{value}", x + 36, 380, 58, 26, 21, True, [246, 231, 152]),
-                (f"weather_day_{idx}_temp_min_c", "", "{value}", x + 88, 386, 52, 22, 16, False, [180, 206, 232]),
-                (f"weather_day_{idx}_condition", "", "{value}", x, 410, 132, 18, 13, False, [210, 224, 240]),
-            ]
-            for source, label, fmt, sx, sy, w, h, size, bold, value_color in day_sources:
-                stats.append(self._weather_stat_item(source, label, fmt, sx, sy, w, h, size, bold, value_color))
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+        widgets.append(self._make_weather_widget("weather_forecast_7d", "forecast"))
         self.write_designer_to_json()
         self.refresh_designer_element_list()
-        self.preview_info_label.setText("Dodano widget Weather 7D Forecast z nazwą miasta.")
+        combo_index = self.designer_kind_combo.findData("widgets")
+        if combo_index >= 0:
+            self.designer_kind_combo.setCurrentIndex(combo_index)
+            self.designer_element_list.setCurrentRow(len(widgets) - 1)
+        self.preview_info_label.setText("Dodano kompletny widget Weather 7D Forecast.")
         self.schedule_preview_theme_doc()
 
     def add_analog_clock_widget(self, style: str = "classic") -> None:
@@ -13953,7 +13942,7 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return []
         out: list[dict[str, Any]] = []
-        for collection in ("panels", "images", "texts", "stats"):
+        for collection in ("panels", "images", "texts", "stats", "widgets"):
             if collection == "panels":
                 items = self.theme_doc_model.get("background", {}).get("panels", [])
             else:
@@ -13963,7 +13952,7 @@ class TrofeoGui(QMainWindow):
             for idx, item in enumerate(items):
                 if not isinstance(item, dict):
                     continue
-                if collection in {"images", "panels"}:
+                if collection in {"images", "panels", "widgets"}:
                     rect = item.get("rect", [0, 0, 1, 1])
                     if not isinstance(rect, list) or len(rect) != 4:
                         continue
@@ -14201,6 +14190,7 @@ class TrofeoGui(QMainWindow):
             "stats": "STA",
             "images": "IMG",
             "panels": "PNL",
+            "widgets": "WID",
         }.get(collection, collection[:3].upper())
         prefix = f"[{type_tag}{':' + ''.join(flags) if flags else ''}] "
         if collection == "texts":
@@ -14218,6 +14208,13 @@ class TrofeoGui(QMainWindow):
             rect = item.get("rect", [0, 0, 0, 0])
             size = f"{rect[2]}x{rect[3]}" if isinstance(rect, list) and len(rect) == 4 else "panel"
             return f"{prefix}Panel {idx + 1} [{size}]"
+        if collection == "widgets":
+            kind = str(item.get("kind", "widget")).strip()
+            label = {
+                "weather_current": "Pogoda teraz",
+                "weather_forecast_7d": "Prognoza 7 dni",
+            }.get(kind, kind or "Widget")
+            return f"{prefix}{label[:40]}"
         source = str(item.get("source", "")).strip()
         if source == "media_cover":
             return f"{prefix}Okładka Now Playing"
@@ -14391,6 +14388,12 @@ class TrofeoGui(QMainWindow):
             rect = item.get("rect", [0, 0, 0, 0])
             if isinstance(rect, list) and len(rect) == 4:
                 return f"{rect[2]}×{rect[3]} • radius {int(item.get('radius', 0))}"
+        if collection == "widgets":
+            rect = item.get("rect", [0, 0, 0, 0])
+            style = str(item.get("style", "compact")).strip()
+            if isinstance(rect, list) and len(rect) == 4:
+                return f"{rect[2]}×{rect[3]} • {style}"
+            return style
         if collection == "texts":
             text = str(item.get("text", "")).strip()
             return f"{int(item.get('font_size', 24))} px • {str(item.get('align', 'left'))} • {text[:24]}"
@@ -14481,6 +14484,8 @@ class TrofeoGui(QMainWindow):
         ):
             return True
         if collection == "panels" and any(ident.startswith(prefix) for prefix in WEATHER_RELATED_PANEL_ID_PREFIXES):
+            return True
+        if collection == "widgets" and str(item.get("kind", "")).strip().lower().startswith("weather_"):
             return True
         return "weather" in ident or "pogoda" in label or "weather" in label
 
@@ -14740,7 +14745,7 @@ class TrofeoGui(QMainWindow):
         return True
 
     def _selected_item_rect(self, item: dict[str, Any], collection: str) -> tuple[int, int, int, int]:
-        if collection in {"images", "panels"}:
+        if collection in {"images", "panels", "widgets"}:
             rect = item.get("rect", [0, 0, 1, 1])
             if isinstance(rect, list) and len(rect) == 4:
                 return int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])
@@ -14787,7 +14792,7 @@ class TrofeoGui(QMainWindow):
         for selected_collection, _row, item in selected:
             if bool(item.get("locked", False)):
                 continue
-            if selected_collection in {"images", "panels"}:
+            if selected_collection in {"images", "panels", "widgets"}:
                 rect = item.get("rect", [0, 0, 1, 1])
                 if isinstance(rect, list) and len(rect) == 4:
                     item["rect"] = [
@@ -15101,9 +15106,26 @@ class TrofeoGui(QMainWindow):
             elif coll == "panels":
                 pid = str(item.get("id", "")).strip()
                 want_weather_tab = any(pid.startswith(prefix) for prefix in WEATHER_RELATED_PANEL_ID_PREFIXES)
+            elif coll == "widgets":
+                want_weather_tab = str(item.get("kind", "")).strip().lower().startswith("weather_")
         if weather_idx >= 0:
             self.inspector_tabs.setTabVisible(weather_idx, bool(want_weather_tab))
         show_stat_fields = bool(want_weather_tab and coll == "stats")
+        show_city_fields = bool(want_weather_tab and coll == "widgets")
+        for row_widget in (
+            getattr(self, "row_weather_city_search", None),
+            getattr(self, "weather_designer_search_row", None),
+            getattr(self, "weather_designer_city_search_edit", None),
+            getattr(self, "weather_designer_search_btn", None),
+            getattr(self, "row_weather_city_results", None),
+            getattr(self, "weather_designer_results_combo", None),
+            getattr(self, "row_weather_city_actions", None),
+            getattr(self, "weather_designer_actions_row", None),
+            getattr(self, "weather_designer_apply_btn", None),
+            getattr(self, "weather_designer_refresh_btn", None),
+        ):
+            if row_widget is not None:
+                row_widget.setVisible(show_city_fields)
         if hasattr(self, "weather_source_combo"):
             self.weather_source_combo.setVisible(show_stat_fields)
             self.row_weather_source.setVisible(show_stat_fields)
@@ -15133,7 +15155,8 @@ class TrofeoGui(QMainWindow):
         is_stat = collection == "stats"
         is_image = collection == "images"
         is_panel = collection == "panels"
-        supports_motion = collection in {"texts", "stats", "images", "panels"}
+        is_widget = collection == "widgets"
+        supports_motion = collection in {"texts", "stats", "images", "panels", "widgets"}
 
         self._set_tab_enabled_if_present(self.inspector_general, True)
         self._set_tab_enabled_if_present(self.inspector_content, is_text or is_stat)
@@ -15141,7 +15164,7 @@ class TrofeoGui(QMainWindow):
         self._set_tab_enabled_if_present(self.inspector_gauge, is_stat)
         self._set_tab_enabled_if_present(self.inspector_geometry, True)
         self._set_tab_enabled_if_present(self.inspector_image, is_image)
-        self._set_tab_enabled_if_present(self.inspector_weather, False)
+        self._set_tab_enabled_if_present(self.inspector_weather, is_widget)
 
         self._set_form_row_visible(inspector_content_layout := self.inspector_content.layout(), self.row_content_text, self.designer_text_edit, is_text)
         self._set_form_row_visible(inspector_content_layout, self.row_content_label, self.designer_label_edit, is_stat)
@@ -15163,7 +15186,7 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(appearance_layout, self.row_sparkline_fill_opacity, self.designer_sparkline_fill_opacity_spin, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_sparkline_show_points, self.designer_sparkline_show_points_chk, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_panel_fill, self.panel_fill_row, is_panel)
-        self._set_form_row_visible(appearance_layout, self.row_panel_opacity, self.panel_opacity_spin, is_panel)
+        self._set_form_row_visible(appearance_layout, self.row_panel_opacity, self.panel_opacity_spin, is_panel or is_widget)
         self._set_form_row_visible(appearance_layout, self.row_panel_radius, self.panel_radius_spin, is_panel)
 
         geometry_layout = self.inspector_geometry.layout()
@@ -15199,6 +15222,9 @@ class TrofeoGui(QMainWindow):
         elif collection == "panels":
             self.preview_info_label.setText("Panel: przeciągnij, aby przesunąć. Uchwyt w rogu zmienia rozmiar.")
             self.inspector_tabs.setCurrentWidget(self.inspector_appearance)
+        elif collection == "widgets":
+            self.preview_info_label.setText("Widget: przesuwasz i skalujesz całość, szczegóły ustawiasz w zakładce Weather.")
+            self.inspector_tabs.setCurrentWidget(self.inspector_weather)
         else:
             self.preview_info_label.setText("Obraz: kliknij na podglądzie, aby ustawić pozycję albo zmień parametry w zakładce Obraz.")
             self.inspector_tabs.setCurrentWidget(self.inspector_image)
@@ -15404,6 +15430,10 @@ class TrofeoGui(QMainWindow):
                 self.panel_fill_edit.setText(json.dumps(active_item.get("fill", [0, 0, 0]), ensure_ascii=False))
                 self.panel_opacity_spin.setValue(float(active_item.get("opacity", 1.0)))
                 self.panel_radius_spin.setValue(int(active_item.get("radius", 0)))
+            elif active_collection == "widgets":
+                self.panel_fill_edit.clear()
+                self.panel_opacity_spin.setValue(float(active_item.get("opacity", 1.0)))
+                self.panel_radius_spin.setValue(0)
             else:
                 self.panel_fill_edit.clear()
                 self.panel_opacity_spin.setValue(1.0)
@@ -15606,7 +15636,7 @@ class TrofeoGui(QMainWindow):
         tracks[:] = [track for track in tracks if not (isinstance(track, dict) and str(track.get("item_id", "")).strip() == item_id)]
 
     def _load_motion_track_fields(self, item: dict[str, Any] | None, collection: str) -> None:
-        enabled_types = {"texts", "stats", "images", "panels"}
+        enabled_types = {"texts", "stats", "images", "panels", "widgets"}
         item_id = "" if item is None else str(item.get("id", "")).strip()
         track = self._motion_track_for_item(item_id) if item_id else None
         base_x = 0 if item is None else int(item.get("x", item.get("rect", [0, 0, 1, 1])[0]))
@@ -15643,7 +15673,7 @@ class TrofeoGui(QMainWindow):
         if item is None:
             return
         collection = self._selected_collection()
-        if collection not in {"texts", "stats", "images", "panels"}:
+        if collection not in {"texts", "stats", "images", "panels", "widgets"}:
             return
         item_id = str(item.get("id", "")).strip()
         if not item_id:
@@ -15868,6 +15898,14 @@ class TrofeoGui(QMainWindow):
             item["fill"] = self._parse_color_line(self.panel_fill_edit.text(), item.get("fill", [0, 0, 0]))
             item["opacity"] = float(self.panel_opacity_spin.value())
             item["radius"] = int(self.panel_radius_spin.value())
+        elif collection == "widgets":
+            item["rect"] = [
+                self._snap_value(int(self.designer_x_spin.value())),
+                self._snap_value(int(self.designer_y_spin.value())),
+                self._snap_value(int(self.designer_w_spin.value())),
+                self._snap_value(int(self.designer_h_spin.value())),
+            ]
+            item["opacity"] = float(self.panel_opacity_spin.value())
 
         self._refresh_inspector_music_layout()
         self._refresh_inspector_weather_layout()
@@ -16297,7 +16335,7 @@ class TrofeoGui(QMainWindow):
                 for selected_collection, _row, selected_item in selected:
                     if bool(selected_item.get("locked", False)):
                         continue
-                    if selected_collection in {"images", "panels"}:
+                    if selected_collection in {"images", "panels", "widgets"}:
                         rect = selected_item.get("rect", [0, 0, 1, 1])
                         if isinstance(rect, list) and len(rect) == 4:
                             selected_item["rect"] = [
@@ -16312,7 +16350,7 @@ class TrofeoGui(QMainWindow):
             self.preview_label.set_temporary_guides(guides, f"Δx {delta_x:+d}  Δy {delta_y:+d}")
             self._sync_drag_editor_state(collection, index)
             return
-        if collection in {"images", "panels"}:
+        if collection in {"images", "panels", "widgets"}:
             rect = item.get("rect", [0, 0, 1, 1])
             if isinstance(rect, list) and len(rect) == 4:
                 snapped_x, snapped_y, guides = self._apply_canvas_element_snap(
@@ -16358,7 +16396,7 @@ class TrofeoGui(QMainWindow):
         item = items[index]
         if bool(item.get("locked", False)):
             return
-        if collection in {"images", "panels"}:
+        if collection in {"images", "panels", "widgets"}:
             item["rect"] = [
                 self._snap_value(int(x)),
                 self._snap_value(int(y)),
@@ -16451,7 +16489,7 @@ class TrofeoGui(QMainWindow):
         for selected_collection, _row, item in selected:
             if bool(item.get("locked", False)):
                 continue
-            if selected_collection in {"images", "panels"}:
+            if selected_collection in {"images", "panels", "widgets"}:
                 rect = item.get("rect", [0, 0, 1, 1])
                 item["rect"] = [
                     self._snap_value(int(rect[0]) + delta_x),
@@ -16514,6 +16552,14 @@ class TrofeoGui(QMainWindow):
                 }
                 for item in data.get("images", [])
             ],
+            "widgets": [
+                {
+                    "id": item.get("id"),
+                    "rect": deepcopy(item.get("rect")),
+                    "z_index": item.get("z_index"),
+                }
+                for item in data.get("widgets", [])
+            ],
         }
 
     def _apply_layout_snapshot(self, snapshot: dict[str, Any]) -> None:
@@ -16529,7 +16575,7 @@ class TrofeoGui(QMainWindow):
                     bg[key] = deepcopy(snapshot["background"][key])
         if "effects" in snapshot and isinstance(snapshot["effects"], dict):
             data.setdefault("effects", {}).update(snapshot["effects"])
-        for collection in ("texts", "stats", "images"):
+        for collection in ("texts", "stats", "images", "widgets"):
             items = data.get(collection, [])
             by_id = {str(item.get("id", "")): item for item in items if isinstance(item, dict)}
             for snap_item in snapshot.get(collection, []):

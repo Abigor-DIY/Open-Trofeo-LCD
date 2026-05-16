@@ -887,7 +887,7 @@ def _apply_motion_tracks(theme: ThemeDocument) -> ThemeDocument:
     frame_index = int(animation.get("current_frame", 0)) if isinstance(animation, dict) else 0
     data = deepcopy(theme.data)
     indexed: dict[str, dict[str, Any]] = {}
-    for key in ("texts", "stats", "images"):
+    for key in ("texts", "stats", "images", "widgets"):
         for item in data.get(key, []):
             if isinstance(item, dict):
                 indexed[str(item.get("id", "")).strip()] = item
@@ -1487,6 +1487,105 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
                 )
 
 
+def _scaled_font(size: int, scale: float, *, bold: bool = False, font_family: str = "DejaVu Sans") -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    return _load_font(max(8, int(round(size * scale))), bold=bold, font_family=font_family)
+
+
+def _draw_widget_text(
+    draw: ImageDraw.ImageDraw,
+    xy: tuple[int, int],
+    text: str,
+    *,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    fill: tuple[int, int, int, int],
+    max_width: int,
+) -> None:
+    draw.text(xy, _ellipsize_text(draw, str(text or "N/A"), font, max(1, max_width)), font=font, fill=fill)
+
+
+def _weather_icon_image(source: str, snapshot: dict[str, str], base_dir: Path, size: tuple[int, int]) -> Image.Image | None:
+    icon_path_key = "weather_icon_path" if source == "weather_icon" else f"{source}_path"
+    icon_path = str(snapshot.get(icon_path_key, "")).strip()
+    if not icon_path:
+        return None
+    src_path = _resolve_asset_path(base_dir, icon_path)
+    if not src_path.exists():
+        return None
+    try:
+        return _fit_image(Image.open(src_path).convert("RGBA"), size[0], size[1], "contain")
+    except Exception:
+        return None
+
+
+def _render_weather_current_widget(canvas: Image.Image, item: dict[str, Any], base_dir: Path, snapshot: dict[str, str]) -> None:
+    x, y, w, h = [int(v) for v in item["rect"]]
+    settings = item.get("settings", {}) if isinstance(item.get("settings", {}), dict) else {}
+    opacity = max(0.0, min(1.0, float(item.get("opacity", 1.0))))
+    scale = max(0.55, min(2.4, min(w / 500.0, h / 152.0)))
+    panel = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    pdraw = ImageDraw.Draw(panel)
+    fill = _rgba(settings.get("panel_fill", [8, 14, 24, 205]))
+    pdraw.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(4, int(22 * scale)), fill=(fill[0], fill[1], fill[2], int(fill[3] * opacity)))
+    icon_size = max(42, min(int(h * 0.62), int(w * 0.22)))
+    icon_x = int(24 * scale)
+    icon_y = max(8, (h - icon_size) // 2)
+    icon = _weather_icon_image("weather_icon", snapshot, base_dir, (icon_size, icon_size))
+    if icon is not None:
+        panel.alpha_composite(icon, (icon_x, icon_y))
+    text_x = icon_x + icon_size + int(18 * scale)
+    right_x = max(text_x + int(180 * scale), int(w * 0.63))
+    font_family = str(settings.get("font_family", "DejaVu Sans"))
+    _draw_widget_text(pdraw, (text_x, int(18 * scale)), snapshot.get("weather_location", "N/A"), font=_scaled_font(int(settings.get("location_font_size", 18)), scale, bold=True, font_family=font_family), fill=_rgba(settings.get("location_color", [235, 246, 255])), max_width=right_x - text_x - 8)
+    _draw_widget_text(pdraw, (text_x, int(44 * scale)), snapshot.get("weather_temp_c", "N/A"), font=_scaled_font(int(settings.get("temp_font_size", 38)), scale, bold=True, font_family=font_family), fill=_rgba(settings.get("temp_color", [246, 231, 152])), max_width=right_x - text_x - 8)
+    _draw_widget_text(pdraw, (text_x, int(98 * scale)), snapshot.get("weather_condition", "N/A"), font=_scaled_font(int(settings.get("condition_font_size", 20)), scale, font_family=font_family), fill=_rgba(settings.get("condition_color", [210, 224, 240])), max_width=right_x - text_x - 8)
+    detail_font = _scaled_font(int(settings.get("detail_font_size", 18)), scale, font_family=font_family)
+    detail_color = _rgba(settings.get("detail_color", [210, 224, 240]))
+    _draw_widget_text(pdraw, (right_x, int(48 * scale)), f"Wind {snapshot.get('weather_wind_kph', 'N/A')}", font=detail_font, fill=detail_color, max_width=w - right_x - 16)
+    _draw_widget_text(pdraw, (right_x, int(80 * scale)), f"Humidity {snapshot.get('weather_humidity_percent', 'N/A')}", font=detail_font, fill=detail_color, max_width=w - right_x - 16)
+    canvas.alpha_composite(panel, (x, y))
+
+
+def _render_weather_forecast_widget(canvas: Image.Image, item: dict[str, Any], base_dir: Path, snapshot: dict[str, str]) -> None:
+    x, y, w, h = [int(v) for v in item["rect"]]
+    settings = item.get("settings", {}) if isinstance(item.get("settings", {}), dict) else {}
+    opacity = max(0.0, min(1.0, float(item.get("opacity", 1.0))))
+    scale = max(0.45, min(2.0, min(w / 1088.0, h / 112.0)))
+    panel = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    pdraw = ImageDraw.Draw(panel)
+    fill = _rgba(settings.get("panel_fill", [8, 14, 24, 190]))
+    pdraw.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(4, int(18 * scale)), fill=(fill[0], fill[1], fill[2], int(fill[3] * opacity)))
+    font_family = str(settings.get("font_family", "DejaVu Sans"))
+    _draw_widget_text(pdraw, (int(26 * scale), int(10 * scale)), snapshot.get("weather_location", "N/A"), font=_scaled_font(int(settings.get("location_font_size", 18)), scale, bold=True, font_family=font_family), fill=_rgba(settings.get("location_color", [235, 246, 255])), max_width=w - int(52 * scale))
+    label_font = _scaled_font(int(settings.get("day_font_size", 17)), scale, bold=True, font_family=font_family)
+    hi_font = _scaled_font(int(settings.get("temp_max_font_size", 21)), scale, bold=True, font_family=font_family)
+    lo_font = _scaled_font(int(settings.get("temp_min_font_size", 16)), scale, font_family=font_family)
+    cond_font = _scaled_font(int(settings.get("condition_font_size", 13)), scale, font_family=font_family)
+    day_w = max(1, int((w - int(56 * scale)) / 7))
+    top = int(36 * scale)
+    icon_size = max(18, min(int(30 * scale), max(18, h - top - int(52 * scale))))
+    for idx in range(7):
+        dx = int(28 * scale) + idx * day_w
+        _draw_widget_text(pdraw, (dx, top), snapshot.get(f"weather_day_{idx}_label", "N/A"), font=label_font, fill=_rgba(settings.get("day_color", [160, 196, 232])), max_width=day_w - 4)
+        icon = _weather_icon_image(f"weather_day_{idx}_icon", snapshot, base_dir, (icon_size, icon_size))
+        if icon is not None:
+            panel.alpha_composite(icon, (dx, top + int(24 * scale)))
+        _draw_widget_text(pdraw, (dx + icon_size + int(6 * scale), top + int(23 * scale)), snapshot.get(f"weather_day_{idx}_temp_max_c", "N/A"), font=hi_font, fill=_rgba(settings.get("temp_max_color", [246, 231, 152])), max_width=day_w - icon_size - 6)
+        _draw_widget_text(pdraw, (dx + icon_size + int(48 * scale), top + int(29 * scale)), snapshot.get(f"weather_day_{idx}_temp_min_c", "N/A"), font=lo_font, fill=_rgba(settings.get("temp_min_color", [180, 206, 232])), max_width=day_w - icon_size - 48)
+        _draw_widget_text(pdraw, (dx, top + int(58 * scale)), snapshot.get(f"weather_day_{idx}_condition", "N/A"), font=cond_font, fill=_rgba(settings.get("condition_color", [210, 224, 240])), max_width=day_w - 6)
+    canvas.alpha_composite(panel, (x, y))
+
+
+def render_widgets(canvas: Image.Image, theme: ThemeDocument, base_dir: Path, snapshot: dict[str, str]) -> None:
+    for item in _sorted_by_z(theme.data.get("widgets", [])):
+        if not bool(item.get("visible", True)):
+            continue
+        kind = str(item.get("kind", "")).strip().lower()
+        if kind == "weather_current":
+            _render_weather_current_widget(canvas, item, base_dir, snapshot)
+        elif kind == "weather_forecast_7d":
+            _render_weather_forecast_widget(canvas, item, base_dir, snapshot)
+
+
 def render_effects(canvas: Image.Image, theme: ThemeDocument) -> None:
     effects = theme.data["effects"]
     draw = ImageDraw.Draw(canvas)
@@ -1530,6 +1629,7 @@ def render_theme_document(
         render_images(canvas, themed, base_dir, snapshot)
     render_texts(canvas, themed)
     render_stats(canvas, themed, snapshot)
+    render_widgets(canvas, themed, base_dir, snapshot)
     if include_effects:
         render_effects(canvas, themed)
 
