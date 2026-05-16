@@ -529,22 +529,6 @@
   ],
   "images": [
     {
-      "id": "image_0",
-      "path": "reference_frame_trcc.jpg",
-      "rect": [
-        0,
-        0,
-        1912,
-        464
-      ],
-      "fit": "contain",
-      "opacity": 1.0,
-      "rotation": 0,
-      "z_index": 100,
-      "visible": true,
-      "locked": false
-    },
-    {
       "id": "image_1",
       "path": "focus_monitor_assets/2026-04-28/image/focus_monitor_dashboard_strumien_image_trofeo_2.jpg",
       "rect": [

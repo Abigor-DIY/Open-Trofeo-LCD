@@ -129,6 +129,20 @@ class ReplayController:
         self.live_theme_thread: threading.Thread | None = None
         self.live_theme_stop = threading.Event()
         self.live_theme_started_at: float | None = None
+        self.live_theme_metrics: dict[str, Any] = {
+            "refresh_count": 0,
+            "last_refresh_at": None,
+            "last_refresh_age_s": None,
+            "last_reason": None,
+            "last_state": None,
+            "last_title": None,
+            "last_overlay_render_ms": None,
+            "last_compose_ms": None,
+            "last_full_render_ms": None,
+            "last_delay_ms": None,
+            "slow_refresh_count": 0,
+            "last_error": None,
+        }
         self.stats_provider = StatsProvider()
         self._load_themes()
         self._seed_themes_from_directory()
@@ -147,6 +161,60 @@ class ReplayController:
 
     def _log(self, msg: str) -> None:
         print(f"[{now_iso()}] {msg}", flush=True)
+
+    def _reset_live_theme_metrics(self) -> None:
+        with self.lock:
+            self.live_theme_metrics = {
+                "refresh_count": 0,
+                "last_refresh_at": None,
+                "last_refresh_age_s": None,
+                "last_reason": None,
+                "last_state": None,
+                "last_title": None,
+                "last_overlay_render_ms": None,
+                "last_compose_ms": None,
+                "last_full_render_ms": None,
+                "last_delay_ms": None,
+                "slow_refresh_count": 0,
+                "last_error": None,
+            }
+
+    def _record_live_theme_metrics(
+        self,
+        *,
+        reason: str | None,
+        media_cache: dict[str, str],
+        overlay_render_ms: float | None,
+        compose_ms: float | None,
+        full_render_ms: float | None,
+        delay_ms: int | None,
+    ) -> None:
+        slow = any(
+            value is not None and value >= LIVE_REFRESH_SLOW_STAGE_MS
+            for value in (overlay_render_ms, compose_ms, full_render_ms)
+        )
+        with self.lock:
+            metrics = dict(self.live_theme_metrics)
+            metrics["refresh_count"] = int(metrics.get("refresh_count") or 0) + 1
+            metrics["last_refresh_at"] = time.time()
+            metrics["last_refresh_age_s"] = 0.0
+            metrics["last_reason"] = reason
+            metrics["last_state"] = str(media_cache.get("media_state", ""))
+            metrics["last_title"] = str(media_cache.get("media_title", ""))[:128]
+            metrics["last_overlay_render_ms"] = None if overlay_render_ms is None else round(overlay_render_ms, 3)
+            metrics["last_compose_ms"] = None if compose_ms is None else round(compose_ms, 3)
+            metrics["last_full_render_ms"] = None if full_render_ms is None else round(full_render_ms, 3)
+            metrics["last_delay_ms"] = delay_ms
+            if slow:
+                metrics["slow_refresh_count"] = int(metrics.get("slow_refresh_count") or 0) + 1
+            metrics["last_error"] = None
+            self.live_theme_metrics = metrics
+
+    def _record_live_theme_error(self, error: str) -> None:
+        with self.lock:
+            metrics = dict(self.live_theme_metrics)
+            metrics["last_error"] = error
+            self.live_theme_metrics = metrics
 
     def _runtime_temp_dir(self, prefix: str) -> Path:
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -1148,6 +1216,7 @@ class ReplayController:
         base_render_path: str | None = None,
     ) -> None:
         self._log("live theme refresh worker start")
+        self._reset_live_theme_metrics()
         follow_meta: subprocess.Popen | None = None
         follow_status: subprocess.Popen | None = None
         follow_queue: queue.SimpleQueue[tuple[str, str | None, float]] = queue.SimpleQueue()
@@ -1620,6 +1689,15 @@ class ReplayController:
                             keep_live_refresh_running=True,
                         )
                     last_refresh = time.time()
+                    delay_ms = int(max(0.0, last_refresh - last_event_at) * 1000) if refresh_reason == "media" and last_event_at > 0 else None
+                    self._record_live_theme_metrics(
+                        reason=refresh_reason,
+                        media_cache=media_cache,
+                        overlay_render_ms=overlay_render_ms,
+                        compose_ms=compose_ms,
+                        full_render_ms=full_render_ms,
+                        delay_ms=delay_ms,
+                    )
                     if cheap_overlay_mode or fast_file_refresh_mode:
                         should_log = (last_refresh - last_live_refresh_log_at) >= LIVE_REFRESH_LOG_INTERVAL_S
                         if overlay_render_ms is not None and overlay_render_ms >= LIVE_REFRESH_SLOW_STAGE_MS:
@@ -1631,7 +1709,6 @@ class ReplayController:
                         if not should_log:
                             continue
                         last_live_refresh_log_at = last_refresh
-                        delay_ms = int(max(0.0, last_refresh - last_event_at) * 1000) if refresh_reason == "media" and last_event_at > 0 else None
                         self._log(
                             "live theme refreshed"
                             + (
@@ -1662,6 +1739,7 @@ class ReplayController:
                 except Exception as exc:
                     with self.lock:
                         self.last_error = f"live-theme refresh failed: {exc}"
+                    self._record_live_theme_error(str(exc))
 
         _close_proc(follow_meta)
         _close_proc(follow_status)
@@ -2484,6 +2562,10 @@ class ReplayController:
             self._cleanup_proc_locked()
             playlist_running = self.playlist_thread is not None and self.playlist_thread.is_alive()
             live_theme_running = self.live_theme_thread is not None and self.live_theme_thread.is_alive()
+            live_metrics = dict(self.live_theme_metrics)
+            last_refresh_at = live_metrics.get("last_refresh_at")
+            if isinstance(last_refresh_at, (int, float)) and last_refresh_at > 0:
+                live_metrics["last_refresh_age_s"] = round(time.time() - float(last_refresh_at), 3)
             return {
                 "ok": True,
                 "mode": self.mode,
@@ -2504,6 +2586,7 @@ class ReplayController:
                 "last_exit_code": self.last_exit_code,
                 "init_present": self.init_present,
                 "frame_count": self.frame_count,
+                "live_theme_metrics": live_metrics,
                 "last_capture_scan_at": self.last_capture_scan_at,
                 "theme_count": len(self.themes),
                 "config": {**self.cfg.as_json(), "weather": self.stats_provider.weather_status()},
