@@ -2049,7 +2049,10 @@ class ReplayController:
             "0.002",
             "--loop",
             "--interval",
-            "0.05",
+            "0.075",
+            "--skip-unchanged",
+            "--keepalive-interval",
+            "0.5",
         ]
         if raw_jpeg_passthrough:
             cmd.append("--raw-jpeg-passthrough")

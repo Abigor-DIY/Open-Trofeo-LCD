@@ -109,6 +109,12 @@ COMMIT_MODE_SCAN = "scan"
 BUFFER_INDEX_MODE_ZERO = "zero"
 BUFFER_INDEX_MODE_CYCLE3 = "cycle3"
 
+# Live Windows capture from 2026-05-16: first steady animation frames map
+# declared JPEG size to header byte[9] very closely as round(size / 512) - 491.
+# Later partial/delta frames have wider scatter, so this remains a heuristic.
+CAPTURE_B9_SIZE_DIVISOR = 512.0
+CAPTURE_B9_SIZE_OFFSET = -491.0
+
 
 @dataclass
 class PacketPlan:
@@ -138,7 +144,7 @@ class TrofeoLCD:
         self.init_strict = False
         self.header_b9 = None
         self.header_byte10 = 0x02
-        self.buffer_index_mode = BUFFER_INDEX_MODE_CYCLE3
+        self.buffer_index_mode = BUFFER_INDEX_MODE_ZERO
         self.buffer_index_override = None
 
     @staticmethod
@@ -150,7 +156,8 @@ class TrofeoLCD:
     def estimate_header_b9(jpeg_size: int) -> int:
         """
         Estimate header byte [9] from capture-derived size/b9 pairs.
-        The simple shift heuristic was not stable enough around ~310 KB.
+        The 2026-05-16 Windows trace shows a strong initial mapping:
+        b9 ~= round(jpeg_size / 512) - 491, with uint8 wrap-around.
         """
         nearest_size, nearest_b9 = min(
             TRCC_HEADER_B9_SIZE_MAP,
@@ -158,7 +165,7 @@ class TrofeoLCD:
         )
         if abs(nearest_size - jpeg_size) <= 4096:
             return nearest_b9 & 0xFF
-        return ((jpeg_size >> 8) - 0x48) & 0xFF
+        return int(round((jpeg_size / CAPTURE_B9_SIZE_DIVISOR) + CAPTURE_B9_SIZE_OFFSET)) & 0xFF
 
     @staticmethod
     def pad_jpeg_payload(jpeg_data: bytes, pad_to_size: int | None) -> bytes:
@@ -1467,6 +1474,17 @@ def main():
     parser.add_argument('--monitor', action='store_true', help='System monitoring mode')
     parser.add_argument('--loop', action='store_true', help='Loop continuously')
     parser.add_argument('--interval', type=float, default=1.0, help='Update interval in seconds (default: 1.0)')
+    parser.add_argument(
+        '--skip-unchanged',
+        action='store_true',
+        help='In --loop file mode, do not resend unchanged image data except for keepalive sends',
+    )
+    parser.add_argument(
+        '--keepalive-interval',
+        type=float,
+        default=0.5,
+        help='Maximum seconds between unchanged --loop keepalive sends when --skip-unchanged is active',
+    )
     parser.add_argument('--max-frames', type=int, default=0, help='Stop after N frames in --monitor/--loop modes (0 = infinite)')
     parser.add_argument('--repeat', type=int, default=1, help='Repeat the same frame N times (default: 1)')
     parser.add_argument('--frame-delay', type=float, default=0.0, help='Delay between repeated frames in seconds')
@@ -1559,7 +1577,7 @@ def main():
     parser.add_argument(
         '--buffer-index-mode',
         choices=[BUFFER_INDEX_MODE_ZERO, BUFFER_INDEX_MODE_CYCLE3],
-        default=BUFFER_INDEX_MODE_CYCLE3,
+        default=BUFFER_INDEX_MODE_ZERO,
         help='Header byte [12] strategy: zero or cycle3 (0,1,2)',
     )
     parser.add_argument(
@@ -1690,6 +1708,7 @@ def main():
     args.repeat = max(1, args.repeat)
     args.max_frames = max(0, args.max_frames)
     args.frame_delay = max(0.0, args.frame_delay)
+    args.keepalive_interval = max(0.05, args.keepalive_interval)
     args.frame_retries = max(0, args.frame_retries)
     args.connect_retries = max(1, args.connect_retries)
     args.connect_retry_delay = max(0.0, args.connect_retry_delay)
@@ -1701,6 +1720,7 @@ def main():
 
     if args.trcc_compatible:
         args.final_packet_mode = FINAL_PACKET_MODE_PAD_4096
+        args.buffer_index_mode = BUFFER_INDEX_MODE_ZERO
         args.ack_every_packet = True
         args.ack_on_seq0_only = True
         if args.inter_packet_delay <= 0:
@@ -1713,6 +1733,8 @@ def main():
             args.frame_retries = 1
         args.reconnect_on_fail = True
         args.init_strict = False
+        if args.loop:
+            args.skip_unchanged = True
 
     # Monitor mode is long-running and should prefer the most stable transport profile
     # even when --trcc-compatible is not explicitly set.
@@ -1838,6 +1860,7 @@ def main():
             "jpeg_data": None,
             "reloaded": False,
             "reload_ms": 0.0,
+            "last_send_at": 0.0,
         }
         path_lower = filepath.lower()
 
@@ -1865,6 +1888,14 @@ def main():
 
         def _send():
             _refresh_cache()
+            now = time.monotonic()
+            if (
+                args.skip_unchanged
+                and not cache["reloaded"]
+                and cache["last_send_at"] > 0.0
+                and now - cache["last_send_at"] < args.keepalive_interval
+            ):
+                return True
             send_started = time.perf_counter()
             ok = lcd.send_jpeg(
                 cache["jpeg_data"],
@@ -1887,6 +1918,8 @@ def main():
                 packet_templates=image_packet_template if image_packet_template else None,
             )
             send_ms = (time.perf_counter() - send_started) * 1000.0
+            if ok:
+                cache["last_send_at"] = time.monotonic()
             if cache["reloaded"] or send_ms >= 120.0 or cache["reload_ms"] >= 120.0:
                 reload_note = f" reload_ms={int(round(cache['reload_ms']))}" if cache["reloaded"] else ""
                 print(
