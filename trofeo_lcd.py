@@ -81,6 +81,8 @@ RECOVERY_DELAY = 1.0
 USB_RESET_DELAY = 2.0
 CONNECT_RETRIES = 5
 CONNECT_RETRY_DELAY = 0.5
+WINDOWS_CAPTURE_INTER_PACKET_DELAY = 0.0005
+WINDOWS_CAPTURE_ACK_TIMEOUT_MS = 120
 INIT_PACKET_SIZE = 2048
 INIT_RESPONSE_SIZE = 512
 INIT_RETRIES = 3
@@ -1499,6 +1501,11 @@ def main():
         action='store_true',
         help='Apply stable profile based on working TRCC replay (timing/ACK/final packet)',
     )
+    parser.add_argument(
+        '--windows-capture-profile',
+        action='store_true',
+        help='Apply the 2026-05-16 Windows capture transport profile: 4096B packets, buf=0, ~0.5ms packet cadence, ACK at frame end',
+    )
     parser.add_argument('--connect-retries', type=int, default=CONNECT_RETRIES, help='USB connect retries')
     parser.add_argument(
         '--connect-retry-delay',
@@ -1718,15 +1725,18 @@ def main():
     if args.jpeg_restart_marker_rows < 0:
         args.jpeg_restart_marker_rows = 0
 
+    if args.windows_capture_profile:
+        args.trcc_compatible = True
+
     if args.trcc_compatible:
         args.final_packet_mode = FINAL_PACKET_MODE_PAD_4096
         args.buffer_index_mode = BUFFER_INDEX_MODE_ZERO
-        args.ack_every_packet = True
-        args.ack_on_seq0_only = True
+        args.ack_every_packet = False
+        args.ack_on_seq0_only = False
         if args.inter_packet_delay <= 0:
-            args.inter_packet_delay = 0.01
+            args.inter_packet_delay = WINDOWS_CAPTURE_INTER_PACKET_DELAY
         if args.ack_timeout_ms == USB_TIMEOUT:
-            args.ack_timeout_ms = 500
+            args.ack_timeout_ms = WINDOWS_CAPTURE_ACK_TIMEOUT_MS
         if args.frame_delay <= 0:
             args.frame_delay = 0.02
         if args.frame_retries == 0:

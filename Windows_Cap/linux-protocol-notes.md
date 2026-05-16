@@ -56,6 +56,26 @@ The display reports `1920 x 599`, but frames in the capture are consistently
 reported as `1920 x 462`. Treat `1920 x 462` as the active image area until a
 separate capture proves otherwise.
 
+Direct parsing of the classic USBPcap `.pcap` files confirms the same shape as
+the live text summary:
+
+- `trofeo_live_19808.pcap`: `1910` frames, INIT present.
+- `trofeo_live_38096.pcap`: `11` frames, no INIT.
+- `trofeo_live_45188.pcap`: `2060` frames, no INIT.
+- `trofeo_live_9336.pcap`: `2433` frames, INIT present.
+
+Observed OUT packet cadence is much faster than the old Linux defaults:
+
+- median gap between OUT packets is about `0.43..0.46 ms`,
+- most frames have one `03 ff` IN ACK after the frame, not one ACK per packet,
+- byte `[12]` is overwhelmingly `0x00`,
+- byte `[10]` is normally `0x02`, with `0x01/0x00` appearing in some modes,
+- every frame header seen starts with byte `[6..8] = f0 01 01`.
+
+Linux sender implication: the best first native profile is full 4096-byte USB
+packets, no per-packet ACK wait, final ACK read only, `buf=0`, and roughly
+`0.5 ms` inter-packet delay if the host stack needs pacing.
+
 Capture summary:
 
 - Duration: `201.5 s`
@@ -115,6 +135,16 @@ Useful correlation to test:
 ```text
 b9 ~= f(jpeg_size)
 ```
+
+For steady full-frame regions in `trofeo_live_19808.pcap` and
+`trofeo_live_9336.pcap`, a useful approximation is:
+
+```text
+b9 ~= round(jpeg_size / 512) - 491  (uint8 wrap)
+```
+
+This is not exact across partial/delta-looking frames, but it is a better
+native fallback than the older shift-only heuristic.
 
 Do not hardcode `b9` as constant. The Linux sender should compute or preserve it
 from a known-good frame header once the exact frame header bytes are decoded.
@@ -202,4 +232,3 @@ For protocol decoding, capture a very small session:
 For each frame, save the first `64` bytes of the first chunk and the last `64`
 bytes of the final chunk. That should be enough to decode headers without
 handling a 600 MB capture.
-

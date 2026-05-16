@@ -50,10 +50,46 @@ def iter_epb_packets(pcapng_bytes: bytes):
         off += blen
 
 
+def iter_pcap_packets(pcap_bytes: bytes):
+    if len(pcap_bytes) < 24:
+        return
+
+    magic = pcap_bytes[:4]
+    if magic == b"\xd4\xc3\xb2\xa1":
+        endian = "<"
+        ts_resolution = "us"
+    elif magic == b"\xa1\xb2\xc3\xd4":
+        endian = ">"
+        ts_resolution = "us"
+    elif magic == b"\x4d\x3c\xb2\xa1":
+        endian = "<"
+        ts_resolution = "ns"
+    elif magic == b"\xa1\xb2\x3c\x4d":
+        endian = ">"
+        ts_resolution = "ns"
+    else:
+        return
+
+    off = 24
+    n = len(pcap_bytes)
+    while off + 16 <= n:
+        ts_sec, ts_frac, cap_len, _ = struct.unpack_from(endian + "IIII", pcap_bytes, off)
+        off += 16
+        if cap_len < 0 or off + cap_len > n:
+            break
+        pkt = pcap_bytes[off : off + cap_len]
+        off += cap_len
+        yield ts_sec, ts_frac, ts_resolution, pkt
+
+
 def parse_usbpcap_bulk_payloads(pcap_path: Path):
     sig = []
     data = pcap_path.read_bytes()
-    for pkt in iter_epb_packets(data):
+    if data.startswith(b"\x0a\x0d\x0d\x0a"):
+        packets = ((None, None, None, pkt) for pkt in iter_epb_packets(data))
+    else:
+        packets = iter_pcap_packets(data)
+    for _, _, _, pkt in packets:
         if len(pkt) < 27:
             continue
         hdr_len = struct.unpack_from("<H", pkt, 0)[0]

@@ -46,6 +46,8 @@ MIN_LIVE_REFRESH_INTERVAL_S = 0.15
 FAST_VISUAL_FULL_STATS_INTERVAL_S = 1.5
 LIVE_REFRESH_LOG_INTERVAL_S = 5.0
 LIVE_REFRESH_SLOW_STAGE_MS = 120.0
+WINDOWS_CAPTURE_INTER_PACKET_DELAY_S = 0.0005
+WINDOWS_CAPTURE_ACK_TIMEOUT_MS = 120
 
 
 def now_iso() -> str:
@@ -1890,8 +1892,6 @@ class ReplayController:
             "--send-init",
             "--recover-before-send",
             "--drain-in-before-send",
-            "--ack-every-packet",
-            "--ack-on-seq0-only",
             "--ack-timeout-ms",
             str(self.cfg.ack_timeout_ms),
             "--inter-packet-delay",
@@ -2038,15 +2038,14 @@ class ReplayController:
         cmd = [
             self.cfg.python_bin,
             str(self.cfg.trofeo_script),
-            "--trcc-compatible",
+            "--windows-capture-profile",
             "--recover-before-send",
             "--drain-in-before-send",
-            "--ack-every-packet",
-            "--ack-on-seq0-only",
+            "--ack-at-end-only",
             "--ack-timeout-ms",
-            "80",
+            str(WINDOWS_CAPTURE_ACK_TIMEOUT_MS),
             "--inter-packet-delay",
-            "0.002",
+            str(WINDOWS_CAPTURE_INTER_PACKET_DELAY_S),
             "--loop",
             "--interval",
             "0.075",
@@ -2710,8 +2709,8 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=18777)
     parser.add_argument("--pcap", default="dzis.pcapng")
     parser.add_argument("--frame-index", type=int, default=0)
-    parser.add_argument("--ack-timeout-ms", type=int, default=500)
-    parser.add_argument("--inter-packet-delay", type=float, default=0.01)
+    parser.add_argument("--ack-timeout-ms", type=int, default=WINDOWS_CAPTURE_ACK_TIMEOUT_MS)
+    parser.add_argument("--inter-packet-delay", type=float, default=WINDOWS_CAPTURE_INTER_PACKET_DELAY_S)
     parser.add_argument("--frame-delay", type=float, default=0.02)
     parser.add_argument("--connect-retries", type=int, default=20)
     parser.add_argument("--connect-retry-delay", type=float, default=0.5)
