@@ -57,7 +57,7 @@ KNOWN_IMAGE_SOURCES = {
 KNOWN_CLOCK_STYLE = {"classic", "modern", "nordic"}
 KNOWN_STAT_DISPLAY = {"text", "progress", "gauge", "sparkline", "equalizer"}
 KNOWN_GAUGE_VALUE_LAYOUT = frozenset({"center", "below", "beside"})
-KNOWN_WIDGET_KINDS = {"weather_current", "weather_forecast_7d"}
+KNOWN_WIDGET_KINDS = {"weather_current", "weather_forecast_7d", "media_now_playing"}
 
 class ThemeValidationError(RuntimeError):
     pass

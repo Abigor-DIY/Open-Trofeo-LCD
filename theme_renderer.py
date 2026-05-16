@@ -1575,6 +1575,68 @@ def _render_weather_forecast_widget(canvas: Image.Image, item: dict[str, Any], b
     canvas.alpha_composite(panel, (x, y))
 
 
+def _media_cover_image(snapshot: dict[str, str], base_dir: Path, size: tuple[int, int], *, video_frame: bool = False) -> Image.Image | None:
+    cover_path = ""
+    if video_frame:
+        cover_path = str(snapshot.get("media_video_frame_path", "")).strip() or str(snapshot.get("media_cover_path", "")).strip()
+    else:
+        cover_path = str(snapshot.get("media_cover_path", "")).strip()
+    if not cover_path:
+        return None
+    src_path = _resolve_asset_path(base_dir, cover_path)
+    if not src_path.exists():
+        return None
+    try:
+        return _fit_image(Image.open(src_path).convert("RGBA"), size[0], size[1], "cover")
+    except Exception:
+        return None
+
+
+def _render_media_now_playing_widget(canvas: Image.Image, item: dict[str, Any], base_dir: Path, snapshot: dict[str, str]) -> None:
+    x, y, w, h = [int(v) for v in item["rect"]]
+    settings = item.get("settings", {}) if isinstance(item.get("settings", {}), dict) else {}
+    style = str(item.get("style", "standard")).strip().lower()
+    opacity = max(0.0, min(1.0, float(item.get("opacity", 1.0))))
+    scale = max(0.45, min(2.4, min(w / (932.0 if style == "hero" else 760.0), h / (176.0 if style == "hero" else 128.0))))
+    panel = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    pdraw = ImageDraw.Draw(panel)
+    if style == "hero":
+        backdrop = _media_cover_image(snapshot, base_dir, (w, h), video_frame=True)
+        if backdrop is not None:
+            alpha = backdrop.getchannel("A")
+            alpha = alpha.point(lambda v: int(v * float(settings.get("backdrop_opacity", 0.24))))
+            backdrop.putalpha(alpha)
+            panel.alpha_composite(backdrop, (0, 0))
+    fill = _rgba(settings.get("panel_fill", [8, 14, 24, 210]))
+    pdraw.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(4, int((26 if style == "hero" else 16) * scale)), fill=(fill[0], fill[1], fill[2], int(fill[3] * opacity)))
+    font_family = str(settings.get("font_family", "DejaVu Sans"))
+    title_font = _scaled_font(int(settings.get("title_font_size", 32 if style == "hero" else 28 if style != "mini" else 20)), scale, bold=True, font_family=font_family)
+    artist_font = _scaled_font(int(settings.get("artist_font_size", 24 if style == "hero" else 22 if style != "mini" else 16)), scale, font_family=font_family)
+    detail_font = _scaled_font(int(settings.get("detail_font_size", 18)), scale, font_family=font_family)
+    title_color = _rgba(settings.get("title_color", [244, 248, 255]))
+    artist_color = _rgba(settings.get("artist_color", [210, 224, 240]))
+    detail_color = _rgba(settings.get("detail_color", [160, 196, 232]))
+    if style == "mini":
+        text_x = int(20 * scale)
+        _draw_widget_text(pdraw, (text_x, int(18 * scale)), f"♫ {snapshot.get('media_title', 'N/A')}", font=title_font, fill=title_color, max_width=w - text_x - int(20 * scale))
+        _draw_widget_text(pdraw, (text_x, int(52 * scale)), snapshot.get("media_artist", "N/A"), font=artist_font, fill=artist_color, max_width=w - text_x - int(20 * scale))
+    else:
+        cover_size = max(58, min(int(h * 0.78), int(w * 0.18)))
+        cover_x = int(20 * scale)
+        cover_y = max(8, (h - cover_size) // 2)
+        cover = _media_cover_image(snapshot, base_dir, (cover_size, cover_size))
+        if cover is not None:
+            radius = max(6, int(18 * scale))
+            cover = _apply_rounded_alpha(cover, radius)
+            panel.alpha_composite(cover, (cover_x, cover_y))
+        text_x = cover_x + cover_size + int(22 * scale)
+        max_text_w = w - text_x - int(28 * scale)
+        _draw_widget_text(pdraw, (text_x, int(24 * scale)), f"Now Playing: {snapshot.get('media_title', 'N/A')}", font=title_font, fill=title_color, max_width=max_text_w)
+        _draw_widget_text(pdraw, (text_x, int(66 * scale)), snapshot.get("media_artist", "N/A"), font=artist_font, fill=artist_color, max_width=max_text_w)
+        _draw_widget_text(pdraw, (text_x, int(102 * scale)), f"App {snapshot.get('media_app', 'N/A')}   State {snapshot.get('media_state', 'N/A')}", font=detail_font, fill=detail_color, max_width=max_text_w)
+    canvas.alpha_composite(panel, (x, y))
+
+
 def render_widgets(canvas: Image.Image, theme: ThemeDocument, base_dir: Path, snapshot: dict[str, str]) -> None:
     for item in _sorted_by_z(theme.data.get("widgets", [])):
         if not bool(item.get("visible", True)):
@@ -1584,6 +1646,8 @@ def render_widgets(canvas: Image.Image, theme: ThemeDocument, base_dir: Path, sn
             _render_weather_current_widget(canvas, item, base_dir, snapshot)
         elif kind == "weather_forecast_7d":
             _render_weather_forecast_widget(canvas, item, base_dir, snapshot)
+        elif kind == "media_now_playing":
+            _render_media_now_playing_widget(canvas, item, base_dir, snapshot)
 
 
 def render_effects(canvas: Image.Image, theme: ThemeDocument) -> None:

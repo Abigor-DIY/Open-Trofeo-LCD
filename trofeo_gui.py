@@ -3809,6 +3809,20 @@ class TrofeoGui(QMainWindow):
         self.designer_equalizer_gap_spin.setValue(4)
         self.designer_equalizer_mirror_chk = QCheckBox("Mirror from center")
         self.designer_equalizer_mirror_chk.setChecked(False)
+        self.widget_title_font_spin = QSpinBox(); self.widget_title_font_spin.setRange(6, 120); self.widget_title_font_spin.setValue(28)
+        self.widget_body_font_spin = QSpinBox(); self.widget_body_font_spin.setRange(6, 120); self.widget_body_font_spin.setValue(22)
+        self.widget_detail_font_spin = QSpinBox(); self.widget_detail_font_spin.setRange(6, 120); self.widget_detail_font_spin.setValue(18)
+        self.widget_title_color_edit = QLineEdit()
+        self.widget_body_color_edit = QLineEdit()
+        self.widget_detail_color_edit = QLineEdit()
+        self.widget_panel_color_edit = QLineEdit()
+        self.weather_widget_title_font_spin = QSpinBox(); self.weather_widget_title_font_spin.setRange(6, 120); self.weather_widget_title_font_spin.setValue(18)
+        self.weather_widget_body_font_spin = QSpinBox(); self.weather_widget_body_font_spin.setRange(6, 120); self.weather_widget_body_font_spin.setValue(38)
+        self.weather_widget_detail_font_spin = QSpinBox(); self.weather_widget_detail_font_spin.setRange(6, 120); self.weather_widget_detail_font_spin.setValue(18)
+        self.weather_widget_title_color_edit = QLineEdit()
+        self.weather_widget_body_color_edit = QLineEdit()
+        self.weather_widget_detail_color_edit = QLineEdit()
+        self.weather_widget_panel_color_edit = QLineEdit()
         self.designer_theme_gauge_style_combo = QComboBox()
         self._populate_designer_theme_gauge_style_combo()
         self.designer_font_bold_chk = QCheckBox("B")
@@ -4282,6 +4296,20 @@ class TrofeoGui(QMainWindow):
             (self.designer_equalizer_bars_spin, "valueChanged"),
             (self.designer_equalizer_gap_spin, "valueChanged"),
             (self.designer_equalizer_mirror_chk, "toggled"),
+            (self.widget_title_font_spin, "valueChanged"),
+            (self.widget_body_font_spin, "valueChanged"),
+            (self.widget_detail_font_spin, "valueChanged"),
+            (self.widget_title_color_edit, "textChanged"),
+            (self.widget_body_color_edit, "textChanged"),
+            (self.widget_detail_color_edit, "textChanged"),
+            (self.widget_panel_color_edit, "textChanged"),
+            (self.weather_widget_title_font_spin, "valueChanged"),
+            (self.weather_widget_body_font_spin, "valueChanged"),
+            (self.weather_widget_detail_font_spin, "valueChanged"),
+            (self.weather_widget_title_color_edit, "textChanged"),
+            (self.weather_widget_body_color_edit, "textChanged"),
+            (self.weather_widget_detail_color_edit, "textChanged"),
+            (self.weather_widget_panel_color_edit, "textChanged"),
             (self.bg_kind_combo, "currentTextChanged"), (self.bg_path_edit, "textChanged")
         ]:
             try: getattr(widget, signal).connect(self.on_designer_field_changed)
@@ -5357,6 +5385,24 @@ class TrofeoGui(QMainWindow):
         self.inspector_music_layout.addRow(self.row_music_equalizer_bars, self.designer_equalizer_bars_spin)
         self.inspector_music_layout.addRow(self.row_music_equalizer_gap, self.designer_equalizer_gap_spin)
         self.inspector_music_layout.addRow(self.row_music_equalizer_mirror, self.designer_equalizer_mirror_chk)
+        self.row_music_widget_title_font = make_label("Title font")
+        self.row_music_widget_artist_font = make_label("Artist font")
+        self.row_music_widget_detail_font = make_label("Detail font")
+        self.row_music_widget_title_color = make_label("Title color")
+        self.row_music_widget_artist_color = make_label("Artist color")
+        self.row_music_widget_detail_color = make_label("Detail color")
+        self.row_music_widget_panel_color = make_label("Panel color")
+        self.widget_title_color_row, _ = add_color_row(self.widget_title_color_edit)
+        self.widget_body_color_row, _ = add_color_row(self.widget_body_color_edit)
+        self.widget_detail_color_row, _ = add_color_row(self.widget_detail_color_edit)
+        self.widget_panel_color_row, _ = add_color_row(self.widget_panel_color_edit)
+        self.inspector_music_layout.addRow(self.row_music_widget_title_font, self.widget_title_font_spin)
+        self.inspector_music_layout.addRow(self.row_music_widget_artist_font, self.widget_body_font_spin)
+        self.inspector_music_layout.addRow(self.row_music_widget_detail_font, self.widget_detail_font_spin)
+        self.inspector_music_layout.addRow(self.row_music_widget_title_color, self.widget_title_color_row)
+        self.inspector_music_layout.addRow(self.row_music_widget_artist_color, self.widget_body_color_row)
+        self.inspector_music_layout.addRow(self.row_music_widget_detail_color, self.widget_detail_color_row)
+        self.inspector_music_layout.addRow(self.row_music_widget_panel_color, self.widget_panel_color_row)
         self.inspector_music_hint = QLabel("")
         self.inspector_music_hint.setWordWrap(True)
         self.inspector_music_hint.setObjectName("selectionSummaryLabel")
@@ -5423,6 +5469,24 @@ class TrofeoGui(QMainWindow):
         self.row_weather_format = make_label("Weather format")
         self.inspector_weather_layout.addRow(self.row_weather_source, self.weather_source_combo)
         self.inspector_weather_layout.addRow(self.row_weather_format, self.weather_format_combo)
+        self.row_weather_widget_location_font = make_label("Location font")
+        self.row_weather_widget_temp_font = make_label("Temp font")
+        self.row_weather_widget_detail_font = make_label("Detail font")
+        self.row_weather_widget_location_color = make_label("Location color")
+        self.row_weather_widget_temp_color = make_label("Temp color")
+        self.row_weather_widget_detail_color = make_label("Detail color")
+        self.row_weather_widget_panel_color = make_label("Panel color")
+        self.weather_widget_title_color_row, _ = add_color_row(self.weather_widget_title_color_edit)
+        self.weather_widget_body_color_row, _ = add_color_row(self.weather_widget_body_color_edit)
+        self.weather_widget_detail_color_row, _ = add_color_row(self.weather_widget_detail_color_edit)
+        self.weather_widget_panel_color_row, _ = add_color_row(self.weather_widget_panel_color_edit)
+        self.inspector_weather_layout.addRow(self.row_weather_widget_location_font, self.weather_widget_title_font_spin)
+        self.inspector_weather_layout.addRow(self.row_weather_widget_temp_font, self.weather_widget_body_font_spin)
+        self.inspector_weather_layout.addRow(self.row_weather_widget_detail_font, self.weather_widget_detail_font_spin)
+        self.inspector_weather_layout.addRow(self.row_weather_widget_location_color, self.weather_widget_title_color_row)
+        self.inspector_weather_layout.addRow(self.row_weather_widget_temp_color, self.weather_widget_body_color_row)
+        self.inspector_weather_layout.addRow(self.row_weather_widget_detail_color, self.weather_widget_detail_color_row)
+        self.inspector_weather_layout.addRow(self.row_weather_widget_panel_color, self.weather_widget_panel_color_row)
         self.weather_source_combo.currentIndexChanged.connect(self._on_weather_source_changed)
         self.weather_format_combo.currentIndexChanged.connect(self._on_weather_format_changed)
         self._populate_weather_source_combo()
@@ -13099,6 +13163,25 @@ class TrofeoGui(QMainWindow):
             "locked": False,
         }
 
+    def _make_media_widget(self, style: str = "standard") -> dict[str, Any]:
+        style_key = str(style or "standard").strip().lower()
+        rect = {
+            "standard": [40, 320, 760, 128],
+            "hero": [36, 250, 932, 176],
+            "mini": [1520, 24, 360, 96],
+        }.get(style_key, [40, 320, 760, 128])
+        return {
+            "id": self._next_item_id("widgets", "widget_media_now_playing"),
+            "kind": "media_now_playing",
+            "style": style_key,
+            "rect": rect,
+            "settings": {},
+            "opacity": 1.0,
+            "z_index": 210,
+            "visible": True,
+            "locked": False,
+        }
+
     def _next_item_id(self, collection: str, prefix: str) -> str:
         if self.theme_doc_model is None:
             return f"{prefix}_0"
@@ -13120,76 +13203,15 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         self.push_designer_history()
-        background = self.theme_doc_model.setdefault("background", {})
-        panels = background.setdefault("panels", [])
-        panel_id = self._next_item_id("panels", "panel_media")
-        panels.append(
-            {
-                "id": panel_id,
-                "rect": [40, 320, 760, 128],
-                "radius": 16,
-                "fill": [10, 16, 26, 210],
-                "z_index": 95,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        images = self.theme_doc_model.setdefault("images", [])
-        images.append(
-            {
-                "id": self._next_item_id("images", "img_media_cover"),
-                "path": "",
-                "source": "media_cover",
-                "rect": [52, 332, 104, 104],
-                "fit": "cover",
-                "opacity": 1.0,
-                "radius": 18,
-                "border_width": 2,
-                "border_color": [235, 246, 255, 170],
-                "glow_radius": 16,
-                "glow_opacity": 0.42,
-                "rotation": 0,
-                "z_index": 208,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        stats = self.theme_doc_model.setdefault("stats", [])
-        items = [
-            ("media_title", "", 176, 336, 586, 32, 28, True),
-            ("media_artist", "", 176, 374, 586, 28, 22, False),
-            ("media_app", "App", 176, 406, 240, 24, 18, False),
-            ("media_state", "State", 434, 406, 328, 24, 18, False),
-        ]
-        for source, label, x, y, w, h, size, bold in items:
-            stats.append(
-                {
-                    "id": self._next_item_id("stats", f"stat_{source}"),
-                    "label": label,
-                    "source": source,
-                    "format": "Now Playing: {value}" if source == "media_title" else "{value}",
-                    "x": x,
-                    "y": y,
-                    "box_width": w,
-                    "box_height": h,
-                    "font_family": "DejaVu Sans",
-                    "font_size": size,
-                    "font_bold": bold,
-                    "font_italic": False,
-                    "font_underline": False,
-                    "marquee": source == "media_title",
-                    "marquee_speed": 60.0,
-                    "label_color": [160, 196, 232],
-                    "value_color": [235, 246, 255],
-                    "align": "left",
-                    "z_index": 210 if source == "media_title" else 209,
-                    "visible": True,
-                    "locked": False,
-                }
-            )
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+        widgets.append(self._make_media_widget("standard"))
         self.write_designer_to_json()
         self.refresh_designer_element_list()
-        self.preview_info_label.setText("Dodano widget Now Playing (MPRIS): cover, title, artist, app, state.")
+        combo_index = self.designer_kind_combo.findData("widgets")
+        if combo_index >= 0:
+            self.designer_kind_combo.setCurrentIndex(combo_index)
+            self.designer_element_list.setCurrentRow(len(widgets) - 1)
+        self.preview_info_label.setText("Dodano kompletny widget Now Playing.")
         self.schedule_preview_theme_doc()
 
     def add_now_playing_widget_hero(self) -> None:
@@ -13198,96 +13220,15 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         self.push_designer_history()
-        background = self.theme_doc_model.setdefault("background", {})
-        panels = background.setdefault("panels", [])
-        panels.append(
-            {
-                "id": self._next_item_id("panels", "panel_media_hero"),
-                "rect": [36, 250, 932, 176],
-                "radius": 26,
-                "fill": [6, 10, 18, 220],
-                "z_index": 94,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        images = self.theme_doc_model.setdefault("images", [])
-        images.append(
-            {
-                "id": self._next_item_id("images", "img_media_video_backdrop"),
-                "path": "",
-                "source": "media_video_frame",
-                "rect": [44, 258, 916, 160],
-                "fit": "cover",
-                "opacity": 0.22,
-                "radius": 24,
-                "border_width": 0,
-                "border_color": [0, 0, 0, 0],
-                "glow_radius": 22,
-                "glow_opacity": 0.24,
-                "rotation": 0,
-                "z_index": 205,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        images.append(
-            {
-                "id": self._next_item_id("images", "img_media_cover_hero"),
-                "path": "",
-                "source": "media_cover",
-                "rect": [64, 270, 136, 136],
-                "fit": "cover",
-                "opacity": 1.0,
-                "radius": 24,
-                "border_width": 2,
-                "border_color": [235, 246, 255, 170],
-                "glow_radius": 18,
-                "glow_opacity": 0.42,
-                "rotation": 0,
-                "z_index": 208,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        stats = self.theme_doc_model.setdefault("stats", [])
-        items = [
-            ("media_title", "", 224, 278, 700, 38, 32, True, "Now Playing: {value}"),
-            ("media_artist", "", 224, 320, 700, 30, 24, False, "{value}"),
-            ("media_app", "App", 224, 358, 260, 24, 18, False, "{value}"),
-            ("media_state", "State", 508, 358, 240, 24, 18, False, "{value}"),
-        ]
-        for source, label, x, y, w, h, size, bold, fmt in items:
-            stats.append(
-                {
-                    "id": self._next_item_id("stats", f"stat_{source}_hero"),
-                    "label": label,
-                    "source": source,
-                    "format": fmt,
-                    "x": x,
-                    "y": y,
-                    "box_width": w,
-                    "box_height": h,
-                    "font_family": "DejaVu Sans",
-                    "font_size": size,
-                    "font_bold": bold,
-                    "font_italic": False,
-                    "font_underline": False,
-                    "marquee": source == "media_title",
-                    "marquee_speed": 64.0,
-                    "label_color": [160, 196, 232],
-                    "value_color": [244, 248, 255],
-                    "align": "left",
-                    "z_index": 210 if source == "media_title" else 209,
-                    "visible": True,
-                    "locked": False,
-                }
-            )
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+        widgets.append(self._make_media_widget("hero"))
         self.write_designer_to_json()
         self.refresh_designer_element_list()
-        self.preview_info_label.setText(
-            "Dodano widget Now Playing Hero: duża okładka + szeroki media-backdrop. Dla lokalnych playerów wideo tło użyje realnej klatki, a w pozostałych przypadkach fallbacku do okładki."
-        )
+        combo_index = self.designer_kind_combo.findData("widgets")
+        if combo_index >= 0:
+            self.designer_kind_combo.setCurrentIndex(combo_index)
+            self.designer_element_list.setCurrentRow(len(widgets) - 1)
+        self.preview_info_label.setText("Dodano kompletny widget Now Playing Hero.")
         self.schedule_preview_theme_doc()
 
     def add_now_playing_widget_mini(self) -> None:
@@ -13296,73 +13237,15 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         self.push_designer_history()
-        background = self.theme_doc_model.setdefault("background", {})
-        panels = background.setdefault("panels", [])
-        panels.append(
-            {
-                "id": self._next_item_id("panels", "panel_media_mini"),
-                "rect": [1520, 24, 360, 96],
-                "radius": 14,
-                "fill": [8, 14, 24, 200],
-                "z_index": 96,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        stats = self.theme_doc_model.setdefault("stats", [])
-        stats.append(
-            {
-                "id": self._next_item_id("stats", "stat_media_title_mini"),
-                "label": "",
-                "source": "media_title",
-                "format": "♫ {value}",
-                "x": 1540,
-                "y": 42,
-                "box_width": 320,
-                "box_height": 26,
-                "font_family": "DejaVu Sans",
-                "font_size": 20,
-                "font_bold": True,
-                "font_italic": False,
-                "font_underline": False,
-                "marquee": True,
-                "marquee_speed": 68.0,
-                "label_color": [160, 196, 232],
-                "value_color": [235, 246, 255],
-                "align": "left",
-                "z_index": 211,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        stats.append(
-            {
-                "id": self._next_item_id("stats", "stat_media_artist_mini"),
-                "label": "",
-                "source": "media_artist",
-                "format": "{value}",
-                "x": 1540,
-                "y": 74,
-                "box_width": 320,
-                "box_height": 22,
-                "font_family": "DejaVu Sans",
-                "font_size": 16,
-                "font_bold": False,
-                "font_italic": False,
-                "font_underline": False,
-                "marquee": False,
-                "marquee_speed": 55.0,
-                "label_color": [160, 196, 232],
-                "value_color": [210, 224, 240],
-                "align": "left",
-                "z_index": 210,
-                "visible": True,
-                "locked": False,
-            }
-        )
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+        widgets.append(self._make_media_widget("mini"))
         self.write_designer_to_json()
         self.refresh_designer_element_list()
-        self.preview_info_label.setText("Dodano widget Now Playing Mini.")
+        combo_index = self.designer_kind_combo.findData("widgets")
+        if combo_index >= 0:
+            self.designer_kind_combo.setCurrentIndex(combo_index)
+            self.designer_element_list.setCurrentRow(len(widgets) - 1)
+        self.preview_info_label.setText("Dodano kompletny widget Now Playing Mini.")
         self.schedule_preview_theme_doc()
 
     def add_volume_widget(self) -> None:
@@ -14213,6 +14096,7 @@ class TrofeoGui(QMainWindow):
             label = {
                 "weather_current": "Pogoda teraz",
                 "weather_forecast_7d": "Prognoza 7 dni",
+                "media_now_playing": "Now Playing",
             }.get(kind, kind or "Widget")
             return f"{prefix}{label[:40]}"
         source = str(item.get("source", "")).strip()
@@ -14463,6 +14347,8 @@ class TrofeoGui(QMainWindow):
         label = str(item.get("label", "")).strip().lower()
         display = str(item.get("display", "")).strip().lower()
         if source.startswith("media_") or source == "media_cover" or self._is_music_stat_source(source):
+            return True
+        if collection == "widgets" and str(item.get("kind", "")).strip().lower().startswith("media_"):
             return True
         if display in MUSIC_VISUAL_STAT_DISPLAYS:
             return True
@@ -15020,6 +14906,8 @@ class TrofeoGui(QMainWindow):
             want_music_tab = any(pid.startswith(p) for p in MUSIC_RELATED_PANEL_ID_PREFIXES)
         elif coll == "images" and item is not None:
             want_music_tab = str(item.get("source", "")).strip() in MUSIC_RELATED_IMAGE_SOURCES
+        elif coll == "widgets" and item is not None:
+            want_music_tab = str(item.get("kind", "")).strip().lower().startswith("media_")
 
         if coll == "stats" and show_music_stat_rows and not simple_mode:
             self._move_stat_binding_rows_to_music()
@@ -15040,6 +14928,11 @@ class TrofeoGui(QMainWindow):
             and item is not None
             and str(item.get("source", "")).strip() in MUSIC_RELATED_IMAGE_SOURCES
         )
+        hint_widget = (
+            coll == "widgets"
+            and item is not None
+            and str(item.get("kind", "")).strip().lower().startswith("media_")
+        )
         if hasattr(self, "inspector_music_hint"):
             if hint_panel:
                 self.inspector_music_hint.setText(
@@ -15055,6 +14948,13 @@ class TrofeoGui(QMainWindow):
                         "Okładka / tło mediów: kadrowanie i przezroczystość w zakładce Obraz; zsynchronizowany korektor widma pojawi się tu później.",
                     )
                 )
+            elif hint_widget:
+                self.inspector_music_hint.setText(
+                    self._tr(
+                        "Composite Now Playing widget: move and scale it as one element; tune title, artist, details and panel styling here.",
+                        "Złożony widget Now Playing: przesuwasz i skalujesz go jako jeden element; tutaj ustawiasz tytuł, wykonawcę, detale i panel.",
+                    )
+                )
             elif coll == "stats" and item is not None and str(item.get("display", "")).strip().lower() == "equalizer":
                 self.inspector_music_hint.setText(
                     self._tr(
@@ -15064,7 +14964,7 @@ class TrofeoGui(QMainWindow):
                 )
             else:
                 self.inspector_music_hint.clear()
-            show_music_hint = bool(tab_shown and (hint_panel or hint_image))
+            show_music_hint = bool(tab_shown and (hint_panel or hint_image or hint_widget))
             if coll == "stats" and item is not None and str(item.get("display", "")).strip().lower() == "equalizer":
                 show_music_hint = bool(tab_shown)
             self.inspector_music_hint.setVisible(show_music_hint)
@@ -15081,6 +14981,19 @@ class TrofeoGui(QMainWindow):
                 and str(item.get("display", "")).strip().lower() == "equalizer"
             )
             self.inspector_music_spectrum_placeholder.setVisible(bool(tab_shown and not show_eq_placeholder))
+
+        show_media_widget_fields = bool(tab_shown and coll == "widgets" and item is not None and str(item.get("kind", "")).strip().lower().startswith("media_"))
+        music_layout = self.inspector_music.layout()
+        for row_label, widget in (
+            (self.row_music_widget_title_font, self.widget_title_font_spin),
+            (self.row_music_widget_artist_font, self.widget_body_font_spin),
+            (self.row_music_widget_detail_font, self.widget_detail_font_spin),
+            (self.row_music_widget_title_color, self.widget_title_color_row),
+            (self.row_music_widget_artist_color, self.widget_body_color_row),
+            (self.row_music_widget_detail_color, self.widget_detail_color_row),
+            (self.row_music_widget_panel_color, self.widget_panel_color_row),
+        ):
+            self._set_form_row_visible(music_layout, row_label, widget, show_media_widget_fields)
 
         self._sync_stat_binding_row_visibility(coll)
 
@@ -15112,6 +15025,7 @@ class TrofeoGui(QMainWindow):
             self.inspector_tabs.setTabVisible(weather_idx, bool(want_weather_tab))
         show_stat_fields = bool(want_weather_tab and coll == "stats")
         show_city_fields = bool(want_weather_tab and coll == "widgets")
+        show_weather_widget_fields = show_city_fields
         for row_widget in (
             getattr(self, "row_weather_city_search", None),
             getattr(self, "weather_designer_search_row", None),
@@ -15132,6 +15046,17 @@ class TrofeoGui(QMainWindow):
         if hasattr(self, "weather_format_combo"):
             self.weather_format_combo.setVisible(show_stat_fields)
             self.row_weather_format.setVisible(show_stat_fields)
+        weather_layout = self.inspector_weather.layout()
+        for row_label, widget in (
+            (self.row_weather_widget_location_font, self.weather_widget_title_font_spin),
+            (self.row_weather_widget_temp_font, self.weather_widget_body_font_spin),
+            (self.row_weather_widget_detail_font, self.weather_widget_detail_font_spin),
+            (self.row_weather_widget_location_color, self.weather_widget_title_color_row),
+            (self.row_weather_widget_temp_color, self.weather_widget_body_color_row),
+            (self.row_weather_widget_detail_color, self.weather_widget_detail_color_row),
+            (self.row_weather_widget_panel_color, self.weather_widget_panel_color_row),
+        ):
+            self._set_form_row_visible(weather_layout, row_label, widget, show_weather_widget_fields)
         if show_stat_fields and hasattr(self, "weather_source_combo"):
             self._designer_updating = True
             try:
@@ -15160,7 +15085,7 @@ class TrofeoGui(QMainWindow):
 
         self._set_tab_enabled_if_present(self.inspector_general, True)
         self._set_tab_enabled_if_present(self.inspector_content, is_text or is_stat)
-        self._set_tab_enabled_if_present(self.inspector_appearance, is_text or is_stat or is_image or is_panel)
+        self._set_tab_enabled_if_present(self.inspector_appearance, is_text or is_stat or is_image or is_panel or is_widget)
         self._set_tab_enabled_if_present(self.inspector_gauge, is_stat)
         self._set_tab_enabled_if_present(self.inspector_geometry, True)
         self._set_tab_enabled_if_present(self.inspector_image, is_image)
@@ -15438,6 +15363,7 @@ class TrofeoGui(QMainWindow):
                 self.panel_fill_edit.clear()
                 self.panel_opacity_spin.setValue(1.0)
                 self.panel_radius_spin.setValue(0)
+            self._load_widget_style_fields(active_item if active_collection == "widgets" else None)
             self._load_motion_track_fields(active_item, active_collection)
         finally:
             self._designer_updating = False
@@ -15550,6 +15476,70 @@ class TrofeoGui(QMainWindow):
         self.designer_equalizer_bars_spin.setValue(18)
         self.designer_equalizer_gap_spin.setValue(4)
         self.designer_equalizer_mirror_chk.setChecked(False)
+
+    def _load_widget_style_fields(self, item: dict[str, Any] | None) -> None:
+        if item is None or str(item.get("kind", "")).strip().lower() not in {"weather_current", "weather_forecast_7d", "media_now_playing"}:
+            return
+        settings = item.get("settings", {}) if isinstance(item.get("settings", {}), dict) else {}
+        kind = str(item.get("kind", "")).strip().lower()
+        self._designer_updating = True
+        try:
+            if kind.startswith("weather_"):
+                self.weather_widget_title_font_spin.setValue(int(settings.get("location_font_size", settings.get("day_font_size", 18))))
+                self.weather_widget_body_font_spin.setValue(int(settings.get("temp_font_size", settings.get("temp_max_font_size", 38))))
+                self.weather_widget_detail_font_spin.setValue(int(settings.get("detail_font_size", settings.get("condition_font_size", 18))))
+                self.weather_widget_title_color_edit.setText(json.dumps(settings.get("location_color", settings.get("day_color", [235, 246, 255])), ensure_ascii=False))
+                self.weather_widget_body_color_edit.setText(json.dumps(settings.get("temp_color", settings.get("temp_max_color", [246, 231, 152])), ensure_ascii=False))
+                self.weather_widget_detail_color_edit.setText(json.dumps(settings.get("detail_color", settings.get("condition_color", [210, 224, 240])), ensure_ascii=False))
+                self.weather_widget_panel_color_edit.setText(json.dumps(settings.get("panel_fill", [8, 14, 24, 205]), ensure_ascii=False))
+            elif kind == "media_now_playing":
+                style = str(item.get("style", "standard")).strip().lower()
+                self.widget_title_font_spin.setValue(int(settings.get("title_font_size", 32 if style == "hero" else 20 if style == "mini" else 28)))
+                self.widget_body_font_spin.setValue(int(settings.get("artist_font_size", 24 if style == "hero" else 16 if style == "mini" else 22)))
+                self.widget_detail_font_spin.setValue(int(settings.get("detail_font_size", 18)))
+                self.widget_title_color_edit.setText(json.dumps(settings.get("title_color", [244, 248, 255]), ensure_ascii=False))
+                self.widget_body_color_edit.setText(json.dumps(settings.get("artist_color", [210, 224, 240]), ensure_ascii=False))
+                self.widget_detail_color_edit.setText(json.dumps(settings.get("detail_color", [160, 196, 232]), ensure_ascii=False))
+                self.widget_panel_color_edit.setText(json.dumps(settings.get("panel_fill", [8, 14, 24, 210]), ensure_ascii=False))
+        finally:
+            self._designer_updating = False
+
+    def _apply_widget_style_fields(self, item: dict[str, Any]) -> None:
+        kind = str(item.get("kind", "")).strip().lower()
+        settings = item.setdefault("settings", {})
+        if not isinstance(settings, dict):
+            settings = {}
+            item["settings"] = settings
+        if kind.startswith("weather_"):
+            settings["panel_fill"] = self._parse_color_line(self.weather_widget_panel_color_edit.text(), settings.get("panel_fill", [8, 14, 24, 205]))
+            if kind == "weather_forecast_7d":
+                settings["location_font_size"] = int(self.weather_widget_title_font_spin.value())
+                settings["day_font_size"] = int(self.weather_widget_title_font_spin.value())
+                settings["temp_max_font_size"] = int(self.weather_widget_body_font_spin.value())
+                settings["temp_min_font_size"] = max(6, int(self.weather_widget_body_font_spin.value() * 0.76))
+                settings["condition_font_size"] = int(self.weather_widget_detail_font_spin.value())
+                settings["location_color"] = self._parse_color_line(self.weather_widget_title_color_edit.text(), settings.get("location_color", [235, 246, 255]))
+                settings["day_color"] = self._parse_color_line(self.weather_widget_title_color_edit.text(), settings.get("day_color", [160, 196, 232]))
+                settings["temp_max_color"] = self._parse_color_line(self.weather_widget_body_color_edit.text(), settings.get("temp_max_color", [246, 231, 152]))
+                settings["temp_min_color"] = self._parse_color_line(self.weather_widget_detail_color_edit.text(), settings.get("temp_min_color", [180, 206, 232]))
+                settings["condition_color"] = self._parse_color_line(self.weather_widget_detail_color_edit.text(), settings.get("condition_color", [210, 224, 240]))
+            else:
+                settings["location_font_size"] = int(self.weather_widget_title_font_spin.value())
+                settings["temp_font_size"] = int(self.weather_widget_body_font_spin.value())
+                settings["condition_font_size"] = int(self.weather_widget_detail_font_spin.value())
+                settings["detail_font_size"] = int(self.weather_widget_detail_font_spin.value())
+                settings["location_color"] = self._parse_color_line(self.weather_widget_title_color_edit.text(), settings.get("location_color", [235, 246, 255]))
+                settings["temp_color"] = self._parse_color_line(self.weather_widget_body_color_edit.text(), settings.get("temp_color", [246, 231, 152]))
+                settings["condition_color"] = self._parse_color_line(self.weather_widget_detail_color_edit.text(), settings.get("condition_color", [210, 224, 240]))
+                settings["detail_color"] = self._parse_color_line(self.weather_widget_detail_color_edit.text(), settings.get("detail_color", [210, 224, 240]))
+        elif kind == "media_now_playing":
+            settings["title_font_size"] = int(self.widget_title_font_spin.value())
+            settings["artist_font_size"] = int(self.widget_body_font_spin.value())
+            settings["detail_font_size"] = int(self.widget_detail_font_spin.value())
+            settings["title_color"] = self._parse_color_line(self.widget_title_color_edit.text(), settings.get("title_color", [244, 248, 255]))
+            settings["artist_color"] = self._parse_color_line(self.widget_body_color_edit.text(), settings.get("artist_color", [210, 224, 240]))
+            settings["detail_color"] = self._parse_color_line(self.widget_detail_color_edit.text(), settings.get("detail_color", [160, 196, 232]))
+            settings["panel_fill"] = self._parse_color_line(self.widget_panel_color_edit.text(), settings.get("panel_fill", [8, 14, 24, 210]))
 
     def _update_gauge_stat_inspector_visibility(self) -> None:
         gauge_layout = self.inspector_gauge.layout()
@@ -15906,6 +15896,7 @@ class TrofeoGui(QMainWindow):
                 self._snap_value(int(self.designer_h_spin.value())),
             ]
             item["opacity"] = float(self.panel_opacity_spin.value())
+            self._apply_widget_style_fields(item)
 
         self._refresh_inspector_music_layout()
         self._refresh_inspector_weather_layout()
