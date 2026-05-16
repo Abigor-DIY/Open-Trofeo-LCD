@@ -438,130 +438,6 @@
       "locked": false
     },
     {
-      "id": "stat_media_artist_hero_0",
-      "label": "",
-      "source": "media_artist",
-      "format": "{value}",
-      "x": 632,
-      "y": 152,
-      "box_width": 700,
-      "box_height": 30,
-      "font_family": "DejaVu Sans",
-      "font_size": 24,
-      "font_bold": false,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": false,
-      "marquee_speed": 64.0,
-      "label_color": [
-        160,
-        196,
-        232
-      ],
-      "value_color": [
-        244,
-        248,
-        255
-      ],
-      "display": "text",
-      "min_value": 0.0,
-      "max_value": 100.0,
-      "track_color": [
-        34,
-        44,
-        58,
-        210
-      ],
-      "fill_color": [
-        244,
-        248,
-        255
-      ],
-      "stroke_width": 12,
-      "show_value_text": true,
-      "gauge_preset": "",
-      "gauge_smooth": 0.32,
-      "gauge_match_value_color": true,
-      "gauge_color_low": null,
-      "gauge_color_mid": null,
-      "gauge_color_high": null,
-      "gauge_ring_size": null,
-      "gauge_value_layout": "center",
-      "gauge_inner_alpha": 1.0,
-      "sparkline_points": 42,
-      "sparkline_fill_opacity": 0.18,
-      "sparkline_show_points": true,
-      "equalizer_bars": 18,
-      "equalizer_gap": 4,
-      "equalizer_mirror": false,
-      "align": "left",
-      "z_index": 6,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "stat_media_app_hero_0",
-      "label": "App",
-      "source": "media_app",
-      "format": "{value}",
-      "x": 632,
-      "y": 192,
-      "box_width": 260,
-      "box_height": 24,
-      "font_family": "DejaVu Sans",
-      "font_size": 18,
-      "font_bold": false,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": false,
-      "marquee_speed": 64.0,
-      "label_color": [
-        160,
-        196,
-        232
-      ],
-      "value_color": [
-        244,
-        248,
-        255
-      ],
-      "display": "text",
-      "min_value": 0.0,
-      "max_value": 100.0,
-      "track_color": [
-        34,
-        44,
-        58,
-        210
-      ],
-      "fill_color": [
-        244,
-        248,
-        255
-      ],
-      "stroke_width": 12,
-      "show_value_text": true,
-      "gauge_preset": "",
-      "gauge_smooth": 0.32,
-      "gauge_match_value_color": true,
-      "gauge_color_low": null,
-      "gauge_color_mid": null,
-      "gauge_color_high": null,
-      "gauge_ring_size": null,
-      "gauge_value_layout": "center",
-      "gauge_inner_alpha": 1.0,
-      "sparkline_points": 42,
-      "sparkline_fill_opacity": 0.18,
-      "sparkline_show_points": true,
-      "equalizer_bars": 18,
-      "equalizer_gap": 4,
-      "equalizer_mirror": false,
-      "align": "left",
-      "z_index": 7,
-      "visible": true,
-      "locked": false
-    },
-    {
       "id": "stat_10",
       "label": "CPU",
       "source": "cpu_core_avg_percent",
@@ -700,191 +576,9 @@
       "z_index": 214,
       "visible": true,
       "locked": false
-    },
-    {
-      "id": "stat_media_title_0",
-      "label": "",
-      "source": "media_title",
-      "format": "Now Playing: {value}",
-      "x": 624,
-      "y": 104,
-      "box_width": 586,
-      "box_height": 32,
-      "font_family": "DejaVu Sans",
-      "font_size": 28,
-      "font_bold": true,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": true,
-      "marquee_speed": 60.0,
-      "label_color": [
-        160,
-        196,
-        232
-      ],
-      "value_color": [
-        235,
-        246,
-        255
-      ],
-      "display": "text",
-      "min_value": 0.0,
-      "max_value": 100.0,
-      "track_color": [
-        34,
-        44,
-        58,
-        210
-      ],
-      "fill_color": [
-        235,
-        246,
-        255
-      ],
-      "stroke_width": 12,
-      "show_value_text": true,
-      "gauge_preset": "",
-      "gauge_smooth": 0.32,
-      "gauge_match_value_color": true,
-      "gauge_color_low": null,
-      "gauge_color_mid": null,
-      "gauge_color_high": null,
-      "gauge_ring_size": null,
-      "gauge_value_layout": "center",
-      "gauge_inner_alpha": 1.0,
-      "sparkline_points": 42,
-      "sparkline_fill_opacity": 0.18,
-      "sparkline_show_points": true,
-      "equalizer_bars": 18,
-      "equalizer_gap": 4,
-      "equalizer_mirror": false,
-      "align": "left",
-      "z_index": 210,
-      "visible": true,
-      "locked": false
     }
   ],
   "images": [
-    {
-      "id": "img_media_video_backdrop_0",
-      "path": "",
-      "source": "media_video_frame",
-      "rect": [
-        504,
-        88,
-        912,
-        160
-      ],
-      "fit": "cover",
-      "opacity": 0.09,
-      "radius": 24,
-      "border_width": 0,
-      "border_color": [
-        0,
-        0,
-        0,
-        0
-      ],
-      "glow_radius": 22,
-      "glow_opacity": 0.24,
-      "clock_style": "classic",
-      "clock_show_second_hand": true,
-      "clock_face_color": [
-        13,
-        18,
-        28,
-        220
-      ],
-      "clock_tick_color": [
-        220,
-        232,
-        245,
-        220
-      ],
-      "clock_hand_color": [
-        240,
-        244,
-        250,
-        255
-      ],
-      "clock_second_color": [
-        255,
-        92,
-        92,
-        255
-      ],
-      "clock_center_color": [
-        255,
-        255,
-        255,
-        255
-      ],
-      "crop_box": null,
-      "rotation": 0,
-      "z_index": 205,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "img_media_cover_hero_0",
-      "path": "",
-      "source": "media_cover",
-      "rect": [
-        472,
-        104,
-        136,
-        136
-      ],
-      "fit": "cover",
-      "opacity": 1.0,
-      "radius": 24,
-      "border_width": 2,
-      "border_color": [
-        235,
-        246,
-        255,
-        170
-      ],
-      "glow_radius": 18,
-      "glow_opacity": 0.42,
-      "clock_style": "classic",
-      "clock_show_second_hand": true,
-      "clock_face_color": [
-        13,
-        18,
-        28,
-        220
-      ],
-      "clock_tick_color": [
-        220,
-        232,
-        245,
-        220
-      ],
-      "clock_hand_color": [
-        240,
-        244,
-        250,
-        255
-      ],
-      "clock_second_color": [
-        255,
-        92,
-        92,
-        255
-      ],
-      "clock_center_color": [
-        255,
-        255,
-        255,
-        255
-      ],
-      "crop_box": null,
-      "rotation": 0,
-      "z_index": 208,
-      "visible": true,
-      "locked": false
-    },
     {
       "id": "img_analog_clock_nordic_0",
       "path": "verdant_bloom_assets/2026-05-13/image/verdant_bloom_9_image_trofeo.jpg",
@@ -942,6 +636,50 @@
       "crop_box": null,
       "rotation": 0,
       "z_index": 212,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "widgets": [
+    {
+      "id": "widget_media_now_playing_0",
+      "kind": "media_now_playing",
+      "rect": [
+        472,
+        88,
+        944,
+        160
+      ],
+      "style": "hero",
+      "settings": {
+        "title_font_size": 28,
+        "artist_font_size": 24,
+        "detail_font_size": 18,
+        "title_color": [
+          235,
+          246,
+          255
+        ],
+        "artist_color": [
+          244,
+          248,
+          255
+        ],
+        "detail_color": [
+          244,
+          248,
+          255
+        ],
+        "panel_fill": [
+          8,
+          14,
+          24,
+          188
+        ],
+        "backdrop_opacity": 0.24
+      },
+      "opacity": 1.0,
+      "z_index": 210,
       "visible": true,
       "locked": false
     }

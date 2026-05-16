@@ -8,7 +8,8 @@
       "monitor",
       "safe-pack",
       "static"
-    ]
+    ],
+    "gauge_style": ""
   },
   "canvas": {
     "width": 1920,
@@ -43,6 +44,7 @@
           20,
           214
         ],
+        "opacity": 1.0,
         "z_index": 80,
         "visible": true,
         "locked": false
@@ -61,6 +63,7 @@
           28,
           220
         ],
+        "opacity": 1.0,
         "z_index": 80,
         "visible": true,
         "locked": false
@@ -79,6 +82,7 @@
           22,
           214
         ],
+        "opacity": 1.0,
         "z_index": 80,
         "visible": true,
         "locked": false
@@ -97,6 +101,7 @@
           126,
           224
         ],
+        "opacity": 1.0,
         "z_index": 78,
         "visible": true,
         "locked": false
@@ -115,6 +120,7 @@
           18,
           220
         ],
+        "opacity": 1.0,
         "z_index": 94,
         "visible": true,
         "locked": false
@@ -201,6 +207,37 @@
         246,
         248
       ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        34,
+        44,
+        58,
+        210
+      ],
+      "fill_color": [
+        242,
+        246,
+        248
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.32,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 42,
+      "sparkline_fill_opacity": 0.18,
+      "sparkline_show_points": true,
+      "equalizer_bars": 18,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
       "align": "left",
       "z_index": 210,
       "visible": true,
@@ -232,6 +269,37 @@
         170,
         0
       ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        34,
+        44,
+        58,
+        210
+      ],
+      "fill_color": [
+        0,
+        170,
+        0
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.32,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 42,
+      "sparkline_fill_opacity": 0.18,
+      "sparkline_show_points": true,
+      "equalizer_bars": 18,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
       "align": "center",
       "z_index": 210,
       "visible": true,
@@ -263,6 +331,37 @@
         116,
         82
       ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        34,
+        44,
+        58,
+        210
+      ],
+      "fill_color": [
+        255,
+        116,
+        82
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.32,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 42,
+      "sparkline_fill_opacity": 0.18,
+      "sparkline_show_points": true,
+      "equalizer_bars": 18,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
       "align": "left",
       "z_index": 210,
       "visible": true,
@@ -294,6 +393,37 @@
         116,
         82
       ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        34,
+        44,
+        58,
+        210
+      ],
+      "fill_color": [
+        255,
+        116,
+        82
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.32,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 42,
+      "sparkline_fill_opacity": 0.18,
+      "sparkline_show_points": true,
+      "equalizer_bars": 18,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
       "align": "left",
       "z_index": 210,
       "visible": true,
@@ -325,6 +455,37 @@
         202,
         126
       ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        34,
+        44,
+        58,
+        210
+      ],
+      "fill_color": [
+        255,
+        202,
+        126
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.32,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 42,
+      "sparkline_fill_opacity": 0.18,
+      "sparkline_show_points": true,
+      "equalizer_bars": 18,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
       "align": "left",
       "z_index": 210,
       "visible": true,
@@ -356,6 +517,37 @@
         202,
         126
       ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        34,
+        44,
+        58,
+        210
+      ],
+      "fill_color": [
+        255,
+        202,
+        126
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.32,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 42,
+      "sparkline_fill_opacity": 0.18,
+      "sparkline_show_points": true,
+      "equalizer_bars": 18,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
       "align": "left",
       "z_index": 210,
       "visible": true,
@@ -387,6 +579,37 @@
         242,
         246
       ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        34,
+        44,
+        58,
+        210
+      ],
+      "fill_color": [
+        236,
+        242,
+        246
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.32,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 42,
+      "sparkline_fill_opacity": 0.18,
+      "sparkline_show_points": true,
+      "equalizer_bars": 18,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
       "align": "left",
       "z_index": 210,
       "visible": true,
@@ -418,6 +641,37 @@
         206,
         214
       ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        34,
+        44,
+        58,
+        210
+      ],
+      "fill_color": [
+        194,
+        206,
+        214
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.32,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 42,
+      "sparkline_fill_opacity": 0.18,
+      "sparkline_show_points": true,
+      "equalizer_bars": 18,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
       "align": "left",
       "z_index": 210,
       "visible": true,
@@ -449,132 +703,39 @@
         206,
         214
       ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        34,
+        44,
+        58,
+        210
+      ],
+      "fill_color": [
+        194,
+        206,
+        214
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.32,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 42,
+      "sparkline_fill_opacity": 0.18,
+      "sparkline_show_points": true,
+      "equalizer_bars": 18,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
       "align": "left",
       "z_index": 210,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "stat_media_title_hero_0",
-      "label": "",
-      "source": "media_title",
-      "format": "Now Playing: {value}",
-      "x": 616,
-      "y": 120,
-      "box_width": 700,
-      "box_height": 38,
-      "font_family": "DejaVu Sans",
-      "font_size": 32,
-      "font_bold": true,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": true,
-      "marquee_speed": 64.0,
-      "label_color": [
-        160,
-        196,
-        232
-      ],
-      "value_color": [
-        244,
-        248,
-        255
-      ],
-      "align": "left",
-      "z_index": 3,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "stat_media_artist_hero_0",
-      "label": "",
-      "source": "media_artist",
-      "format": "{value}",
-      "x": 616,
-      "y": 160,
-      "box_width": 700,
-      "box_height": 30,
-      "font_family": "DejaVu Sans",
-      "font_size": 24,
-      "font_bold": false,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": false,
-      "marquee_speed": 64.0,
-      "label_color": [
-        160,
-        196,
-        232
-      ],
-      "value_color": [
-        244,
-        248,
-        255
-      ],
-      "align": "left",
-      "z_index": 3,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "stat_media_app_hero_0",
-      "label": "App",
-      "source": "media_app",
-      "format": "{value}",
-      "x": 616,
-      "y": 200,
-      "box_width": 260,
-      "box_height": 24,
-      "font_family": "DejaVu Sans",
-      "font_size": 18,
-      "font_bold": false,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": false,
-      "marquee_speed": 64.0,
-      "label_color": [
-        160,
-        196,
-        232
-      ],
-      "value_color": [
-        244,
-        248,
-        255
-      ],
-      "align": "left",
-      "z_index": 3,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "stat_media_state_hero_0",
-      "label": "State",
-      "source": "media_state",
-      "format": "{value}",
-      "x": 904,
-      "y": 200,
-      "box_width": 240,
-      "box_height": 24,
-      "font_family": "DejaVu Sans",
-      "font_size": 18,
-      "font_bold": false,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": false,
-      "marquee_speed": 64.0,
-      "label_color": [
-        160,
-        196,
-        232
-      ],
-      "value_color": [
-        244,
-        248,
-        255
-      ],
-      "align": "left",
-      "z_index": 3,
       "visible": true,
       "locked": false
     },
@@ -604,63 +765,83 @@
         85,
         0
       ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        34,
+        44,
+        58,
+        210
+      ],
+      "fill_color": [
+        255,
+        85,
+        0
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.32,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 42,
+      "sparkline_fill_opacity": 0.18,
+      "sparkline_show_points": true,
+      "equalizer_bars": 18,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
       "align": "left",
       "z_index": 220,
       "visible": true,
       "locked": false
     }
   ],
-  "images": [
+  "images": [],
+  "widgets": [
     {
-      "id": "img_media_video_backdrop_0",
-      "path": "",
-      "source": "media_video_frame",
+      "id": "widget_media_now_playing_0",
+      "kind": "media_now_playing",
       "rect": [
         448,
         96,
         916,
         160
       ],
-      "fit": "cover",
-      "opacity": 0.22,
-      "radius": 24,
-      "border_width": 0,
-      "border_color": [
-        0,
-        0,
-        0,
-        0
-      ],
-      "glow_radius": 22,
-      "glow_opacity": 0.24,
-      "rotation": 0,
-      "z_index": 205,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "img_media_cover_hero_0",
-      "path": "",
-      "source": "media_cover",
-      "rect": [
-        448,
-        112,
-        136,
-        136
-      ],
-      "fit": "cover",
+      "style": "hero",
+      "settings": {
+        "title_font_size": 32,
+        "artist_font_size": 24,
+        "detail_font_size": 18,
+        "title_color": [
+          244,
+          248,
+          255
+        ],
+        "artist_color": [
+          244,
+          248,
+          255
+        ],
+        "detail_color": [
+          244,
+          248,
+          255
+        ],
+        "panel_fill": [
+          8,
+          14,
+          24,
+          188
+        ],
+        "backdrop_opacity": 0.24
+      },
       "opacity": 1.0,
-      "radius": 24,
-      "border_width": 2,
-      "border_color": [
-        235,
-        246,
-        255,
-        170
-      ],
-      "glow_radius": 18,
-      "glow_opacity": 0.42,
-      "rotation": 0,
       "z_index": 208,
       "visible": true,
       "locked": false
@@ -677,6 +858,9 @@
       "loop": true,
       "frame_paths": [],
       "frame_durations_ms": []
+    },
+    "slideshow": {
+      "enabled": false
     },
     "motion_tracks": [],
     "import_report": {}
