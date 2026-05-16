@@ -546,12 +546,26 @@ class ReplayController:
         rendered_dir = self._runtime_temp_dir("trofeo-theme-anim-")
         rendered_frames: list[str] = []
         durations_ms: list[int] = []
-        selected_indices = list(range(len(frame_paths)))
-        if isinstance(max_frames, int) and max_frames > 0 and len(frame_paths) > max_frames:
-            stride = max(1, (len(frame_paths) + max_frames - 1) // max_frames)
-            selected_indices = list(range(0, len(frame_paths), stride))
-            if selected_indices[-1] != len(frame_paths) - 1:
-                selected_indices.append(len(frame_paths) - 1)
+        loop_start = 0
+        loop_end = len(frame_paths) - 1
+        if "loop_start" in animation or "loop_end" in animation:
+            try:
+                loop_start = max(0, min(len(frame_paths) - 1, int(animation.get("loop_start", 0))))
+            except Exception:
+                loop_start = 0
+            try:
+                loop_end = max(0, min(len(frame_paths) - 1, int(animation.get("loop_end", len(frame_paths) - 1))))
+            except Exception:
+                loop_end = len(frame_paths) - 1
+            if loop_end < loop_start:
+                loop_start, loop_end = loop_end, loop_start
+        source_index_count = (loop_end - loop_start) + 1
+        selected_indices = list(range(loop_start, loop_end + 1))
+        if isinstance(max_frames, int) and max_frames > 0 and source_index_count > max_frames:
+            stride = max(1, (source_index_count + max_frames - 1) // max_frames)
+            selected_indices = list(range(loop_start, loop_end + 1, stride))
+            if selected_indices[-1] != loop_end:
+                selected_indices.append(loop_end)
 
         for idx in selected_indices:
             theme_frame = json.loads(json.dumps(theme.data))
@@ -567,17 +581,51 @@ class ReplayController:
                     duration_ms = max(1, int(frame_durations[idx]))
                 except Exception:
                     duration_ms = default_duration
-            if len(selected_indices) != len(frame_paths):
-                duration_ms = int(round(duration_ms * (len(frame_paths) / max(1, len(selected_indices)))))
+            if len(selected_indices) != source_index_count:
+                duration_ms = int(round(duration_ms * (source_index_count / max(1, len(selected_indices)))))
                 duration_ms = max(1, duration_ms)
             durations_ms.append(duration_ms)
+        if bool(animation.get("loop", True)) and bool(animation.get("smooth_loop", True)) and len(rendered_frames) > 2:
+            self._append_animation_loop_bridge(rendered_frames, durations_ms, rendered_dir)
         return {
             "frame_paths": rendered_frames,
             "frame_durations_ms": durations_ms,
             "loop": bool(animation.get("loop", True)),
             "fps": float(animation.get("fps", 12.0)),
             "frame_count": len(rendered_frames),
+            "loop_start": loop_start,
+            "loop_end": loop_end,
         }
+
+    def _append_animation_loop_bridge(self, frame_paths: list[str], durations_ms: list[int], rendered_dir: Path) -> None:
+        try:
+            from PIL import Image, ImageChops, ImageStat
+        except Exception:
+            return
+        if len(frame_paths) < 3:
+            return
+        try:
+            first = Image.open(frame_paths[0]).convert("RGBA")
+            last = Image.open(frame_paths[-1]).convert("RGBA")
+        except Exception:
+            return
+        if first.size != last.size:
+            return
+        try:
+            diff_stat = ImageStat.Stat(ImageChops.difference(first, last).convert("L"))
+            if diff_stat.rms and diff_stat.rms[0] < 3.0:
+                return
+        except Exception:
+            pass
+        bridge_duration = max(16, min(80, int(round(sum(durations_ms[-2:] + durations_ms[:2]) / max(1, min(4, len(durations_ms)))))))
+        for bridge_idx, alpha in enumerate((0.33, 0.66), start=1):
+            try:
+                out = rendered_dir / f"loop_bridge_{bridge_idx:02d}.png"
+                Image.blend(last, first, alpha).save(out)
+                frame_paths.append(str(out))
+                durations_ms.append(bridge_duration)
+            except Exception:
+                break
 
     def _split_live_overlay_document(self, document: dict[str, Any] | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         if not isinstance(document, dict):

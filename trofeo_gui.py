@@ -11567,13 +11567,15 @@ class TrofeoGui(QMainWindow):
         columns = max(1, min(4, (available_width + spacing) // (min_card_width + spacing)))
         card_width = max(260, int((available_width - ((columns - 1) * spacing)) / columns))
         compact_cards = card_width < 430
-        card_height = 260 if compact_cards else 228
+        card_height_base = 268 if compact_cards else 228
         if hasattr(self, "library_theme_cards_container"):
             self.library_theme_cards_container.setMinimumWidth(0)
             self.library_theme_cards_container.setMaximumWidth(viewport_width)
         for idx, (name, item) in enumerate(items):
             asset_count, animation_count = self._theme_card_stats(item)
             category = self._theme_card_category(item)
+            is_current = name == current
+            card_height = card_height_base + (24 if compact_cards and is_current else 0)
             card = AnimatedCardFrame("libraryCard")
             card.setObjectName("libraryCard")
             card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
@@ -11636,7 +11638,7 @@ class TrofeoGui(QMainWindow):
             layout.addWidget(title)
             layout.addWidget(meta)
             layout.addWidget(desc)
-            if name == current:
+            if is_current:
                 active_label = QLabel(self._tr("Currently selected", "Aktualnie wybrany"))
                 active_label.setObjectName("layerBadgeLabel")
                 layout.addWidget(active_label)
@@ -11654,7 +11656,7 @@ class TrofeoGui(QMainWindow):
             apply_btn = QPushButton(self._tr("Apply", "Zastosuj"))
             duplicate_btn = QPushButton(self._tr("Duplicate", "Duplikuj"))
             remove_btn = QPushButton(self._tr("Remove", "Usuń"))
-            apply_btn.setObjectName("primaryButton" if name == current else "secondaryAccentButton")
+            apply_btn.setObjectName("primaryButton" if is_current else "secondaryAccentButton")
             for btn in (select_btn, preview_btn, apply_btn, duplicate_btn, remove_btn):
                 btn.setMinimumHeight(28)
                 btn.setMinimumWidth(0)
@@ -11695,8 +11697,13 @@ class TrofeoGui(QMainWindow):
             self.library_theme_cards_layout.setColumnStretch(col, 1)
         row_count = max(1, (len(items) + columns - 1) // columns)
         visible_rows = min(row_count, 3)
+        visible_heights = [
+            card_height_base + (24 if compact_cards and name == current else 0)
+            for name, _item in items[: visible_rows * columns]
+        ]
+        viewport_card_height = max(visible_heights or [card_height_base])
         row_gap = self.library_theme_cards_layout.verticalSpacing()
-        viewport_height = 14 + (visible_rows * card_height) + (max(0, visible_rows - 1) * row_gap) + 10
+        viewport_height = 14 + (visible_rows * viewport_card_height) + (max(0, visible_rows - 1) * row_gap) + 10
         if hasattr(self, "theme_browser_scroll"):
             self.theme_browser_scroll.setMinimumHeight(viewport_height)
             self.theme_browser_scroll.setMaximumHeight(viewport_height if row_count <= 3 else 760)
