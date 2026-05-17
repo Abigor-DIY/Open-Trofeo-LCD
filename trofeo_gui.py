@@ -4208,6 +4208,15 @@ class TrofeoGui(QMainWindow):
         self.preview_tools_label = QLabel("Mouse:")
         self.preview_tools_label.setObjectName("selectionSummaryLabel")
         preview_tools_row.addWidget(self.preview_tools_label)
+        self.designer_active_tool_label = QLabel("Auto")
+        self.designer_active_tool_label.setObjectName("selectionSummaryLabel")
+        self.designer_active_tool_label.setMinimumWidth(78)
+        self.designer_active_tool_label.setAlignment(Qt.AlignCenter)
+        self.designer_active_tool_label.setStyleSheet(
+            "background: rgba(31, 111, 235, 0.18); border: 1px solid rgba(94, 200, 255, 0.35); "
+            "border-radius: 8px; padding: 3px 8px; font-weight: 700;"
+        )
+        preview_tools_row.addWidget(self.designer_active_tool_label)
         self.designer_tool_auto_btn = AnimatedToolbarButton("Auto")
         self.designer_tool_select_btn = AnimatedToolbarButton("Select")
         self.designer_tool_move_btn = AnimatedToolbarButton("Move")
@@ -5048,6 +5057,15 @@ class TrofeoGui(QMainWindow):
         }
         if hasattr(self, "preview_info_label"):
             self.preview_info_label.setText(hint_map.get(normalized, hint_map["auto"]))
+        tool_label_map = {
+            "auto": self._tr("Tool: Auto", "Narzędzie: Auto"),
+            "select": self._tr("Tool: Select", "Narzędzie: Zaznacz"),
+            "move": self._tr("Tool: Move", "Narzędzie: Przesuń"),
+            "scale": self._tr("Tool: Scale", "Narzędzie: Skaluj"),
+            "crop": self._tr("Tool: Crop", "Narzędzie: Kadruj"),
+        }
+        if hasattr(self, "designer_active_tool_label"):
+            self.designer_active_tool_label.setText(tool_label_map.get(normalized, tool_label_map["auto"]))
         self._update_designer_mouse_tools_availability()
 
     def _designer_snap_threshold(self) -> int:

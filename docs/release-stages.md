@@ -110,3 +110,8 @@
   - onion skin
   - skroty transportu
   - informacja o koszcie animacji dla USB/LCD
+
+## Backlog funkcji
+
+- Zegary swiatowe jako gotowy widget: czas dla wybranych miast na swiecie, np. 3 konfigurowalne zegary w jednym komponencie.
+- Statystyki gier/FPS jako gotowy widget: FPS, frametime/frames i dane z linuksowych nakladek, gdy uruchomiona jest gra.
