@@ -5734,6 +5734,22 @@ class TrofeoGui(QMainWindow):
                 grid.addWidget(cell, idx // 2, idx % 2)
             return grid_widget
 
+        def make_compact_labeled_row(
+            *pairs: tuple[QLabel, QWidget],
+            stretch_first: bool = False,
+            stretch_last: bool = False,
+        ) -> QWidget:
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
+            for idx, (caption, widget) in enumerate(pairs):
+                caption.setObjectName("selectionSummaryLabel")
+                row_layout.addWidget(caption)
+                stretch = (stretch_first and idx == 0) or (stretch_last and idx == len(pairs) - 1)
+                row_layout.addWidget(widget, 1 if stretch else 0)
+            return row
+
         self.inspector_general, self.inspector_general_layout = make_tab()
         self.inspector_content, self.inspector_content_layout = make_tab()
         self.inspector_music, self.inspector_music_layout = make_scrolled_tab()
@@ -6033,14 +6049,23 @@ class TrofeoGui(QMainWindow):
         self.inspector_gauge_layout.addRow(self.row_gauge_smooth, self.designer_gauge_smooth_spin)
         self.inspector_gauge_layout.addRow(self.row_gauge_match_value, self.designer_gauge_match_value_chk)
 
-        self.row_panel_fill = make_label("Wypełnienie panelu")
+        self.row_panel_fill = make_label("Panel style")
         self.panel_fill_row = wrap_row(self.panel_fill_edit, self.panel_fill_btn, stretch_first=True)
         self.panel_fill_btn.clicked.connect(lambda _checked=False: self.pick_color_for_edit(self.panel_fill_edit))
-        self.inspector_appearance_layout.addRow(self.row_panel_fill, self.panel_fill_row)
-        self.row_panel_opacity = make_label("Przezroczystość panelu")
-        self.inspector_appearance_layout.addRow(self.row_panel_opacity, self.panel_opacity_spin)
-        self.row_panel_radius = make_label("Promień narożników")
-        self.inspector_appearance_layout.addRow(self.row_panel_radius, self.panel_radius_spin)
+        self.panel_fill_compact_label = QLabel("Fill")
+        self.panel_opacity_compact_label = QLabel("Opacity")
+        self.panel_radius_compact_label = QLabel("Radius")
+        self.panel_opacity_spin.setMaximumWidth(84)
+        self.panel_radius_spin.setMaximumWidth(84)
+        self.panel_style_row = make_compact_labeled_row(
+            (self.panel_fill_compact_label, self.panel_fill_row),
+            (self.panel_opacity_compact_label, self.panel_opacity_spin),
+            (self.panel_radius_compact_label, self.panel_radius_spin),
+            stretch_first=True,
+        )
+        self.inspector_appearance_layout.addRow(self.row_panel_fill, self.panel_style_row)
+        self.row_panel_opacity = make_label("Panel opacity")
+        self.row_panel_radius = make_label("Corner radius")
 
         self.row_geometry_x = make_label("X")
         self.inspector_geometry_layout.addRow(self.row_geometry_x, self.designer_x_spin)
@@ -6087,12 +6112,21 @@ class TrofeoGui(QMainWindow):
         )
         self.row_image_path = make_label("Plik obrazu")
         self.inspector_image_layout.addRow(self.row_image_path, self.designer_path_row)
-        self.row_image_fit = make_label("Dopasowanie")
-        self.inspector_image_layout.addRow(self.row_image_fit, self.designer_fit_combo)
-        self.row_image_opacity = make_label("Przezroczystość")
-        self.inspector_image_layout.addRow(self.row_image_opacity, self.designer_opacity_spin)
-        self.row_image_rotation = make_label("Obrót")
-        self.inspector_image_layout.addRow(self.row_image_rotation, self.designer_rotation_spin)
+        self.row_image_fit = make_label("Transform")
+        self.image_fit_compact_label = QLabel("Fit")
+        self.image_opacity_compact_label = QLabel("Opacity")
+        self.image_rotation_compact_label = QLabel("Rotation")
+        self.designer_opacity_spin.setMaximumWidth(84)
+        self.designer_rotation_spin.setMaximumWidth(84)
+        self.image_transform_row = make_compact_labeled_row(
+            (self.image_fit_compact_label, self.designer_fit_combo),
+            (self.image_opacity_compact_label, self.designer_opacity_spin),
+            (self.image_rotation_compact_label, self.designer_rotation_spin),
+            stretch_first=True,
+        )
+        self.inspector_image_layout.addRow(self.row_image_fit, self.image_transform_row)
+        self.row_image_opacity = make_label("Opacity")
+        self.row_image_rotation = make_label("Rotation")
         self.row_image_import = make_label("Import")
         self.inspector_image_layout.addRow(self.row_image_import, self.designer_import_image_btn)
         self.row_image_actions = make_label("Szybkie akcje")
@@ -7165,7 +7199,7 @@ class TrofeoGui(QMainWindow):
             ("row_gauge_smooth", "Needle smoothing", "Wygładzanie igły"),
             ("row_gauge_match_value", "Value color matches arc", "Kolor wartości jak łuk"),
             ("row_gauge_inner_alpha", "Inner transparency", "Przezrocz. środka"),
-            ("row_panel_fill", "Panel fill", "Wypełnienie panelu"),
+            ("row_panel_fill", "Panel style", "Styl panelu"),
             ("row_panel_opacity", "Panel opacity", "Przezroczystość panelu"),
             ("row_panel_radius", "Corner radius", "Promień narożników"),
             ("row_geometry_x", "X", "X"),
@@ -7179,7 +7213,7 @@ class TrofeoGui(QMainWindow):
             ("row_motion_target_opacity", "End opacity", "Końcowa przezr."),
             ("row_motion_actions", "Motion actions", "Akcje ruchu"),
             ("row_image_path", "Image file", "Plik obrazu"),
-            ("row_image_fit", "Fit", "Dopasowanie"),
+            ("row_image_fit", "Transform", "Transformacja"),
             ("row_image_opacity", "Opacity", "Przezroczystość"),
             ("row_image_rotation", "Rotation", "Obrót"),
             ("row_image_import", "Import", "Import"),
@@ -7195,6 +7229,17 @@ class TrofeoGui(QMainWindow):
             ("row_media_bg_texture", "Texture", "Tekstura"),
             ("row_media_bg_preview", "Background preview", "Podgląd tła"),
             ("row_animation_overview", "Animation", "Animacja"),
+        ):
+            w = getattr(self, attr, None)
+            if isinstance(w, QLabel):
+                w.setText(tr(en, pl))
+        for attr, en, pl in (
+            ("panel_fill_compact_label", "Fill", "Kolor"),
+            ("panel_opacity_compact_label", "Opacity", "Przezr."),
+            ("panel_radius_compact_label", "Radius", "Promień"),
+            ("image_fit_compact_label", "Fit", "Dopas."),
+            ("image_opacity_compact_label", "Opacity", "Przezr."),
+            ("image_rotation_compact_label", "Rotation", "Obrót"),
         ):
             w = getattr(self, attr, None)
             if isinstance(w, QLabel):
@@ -16048,9 +16093,15 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(appearance_layout, self.row_sparkline_points, self.designer_sparkline_points_spin, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_sparkline_fill_opacity, self.designer_sparkline_fill_opacity_spin, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_sparkline_show_points, self.designer_sparkline_show_points_chk, is_stat)
-        self._set_form_row_visible(appearance_layout, self.row_panel_fill, self.panel_fill_row, is_panel)
-        self._set_form_row_visible(appearance_layout, self.row_panel_opacity, self.panel_opacity_spin, is_panel or is_widget)
-        self._set_form_row_visible(appearance_layout, self.row_panel_radius, self.panel_radius_spin, is_panel)
+        self._set_form_row_visible(appearance_layout, self.row_panel_fill, self.panel_style_row, is_panel or is_widget)
+        if hasattr(self, "panel_fill_compact_label"):
+            self.panel_fill_compact_label.setVisible(is_panel)
+        if hasattr(self, "panel_fill_row"):
+            self.panel_fill_row.setVisible(is_panel)
+        if hasattr(self, "panel_radius_compact_label"):
+            self.panel_radius_compact_label.setVisible(is_panel)
+        if hasattr(self, "panel_radius_spin"):
+            self.panel_radius_spin.setVisible(is_panel)
 
         geometry_layout = self.inspector_geometry_layout
         self._set_form_row_visible(geometry_layout, self.row_geometry_x, self.designer_x_spin, True)
@@ -16065,9 +16116,7 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(geometry_layout, self.row_motion_actions, self.motion_actions_row, supports_motion)
         image_layout = self.inspector_image_layout
         self._set_form_row_visible(image_layout, self.row_image_path, self.designer_path_row, is_image)
-        self._set_form_row_visible(image_layout, self.row_image_fit, self.designer_fit_combo, is_image)
-        self._set_form_row_visible(image_layout, self.row_image_opacity, self.designer_opacity_spin, is_image)
-        self._set_form_row_visible(image_layout, self.row_image_rotation, self.designer_rotation_spin, is_image)
+        self._set_form_row_visible(image_layout, self.row_image_fit, self.image_transform_row, is_image)
         self._set_form_row_visible(image_layout, self.row_image_import, self.designer_import_image_btn, is_image)
         self._set_form_row_visible(image_layout, self.row_image_actions, self.designer_image_actions_row, is_image)
         self._set_form_row_visible(image_layout, self.row_image_preview, self.designer_image_preview_label, is_image)
