@@ -337,14 +337,7 @@ class PreviewLabel(QLabel):
         if normalized not in {"auto", "select", "move", "scale", "crop"}:
             normalized = "auto"
         self._tool_mode = normalized
-        cursor = Qt.ArrowCursor
-        if normalized == "move":
-            cursor = Qt.SizeAllCursor
-        elif normalized == "scale":
-            cursor = Qt.SizeFDiagCursor
-        elif normalized == "crop":
-            cursor = Qt.CrossCursor
-        self.setCursor(cursor)
+        self.setCursor(self._cursor_for_tool_or_hit(None))
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
@@ -415,10 +408,22 @@ class PreviewLabel(QLabel):
 
     def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
         if self._drag_mode is None or self._selected is None or self._drag_start_rect is None:
+            pos = event.position().toPoint()
             if self._selection_origin_widget is not None:
-                self._selection_current_widget = event.position().toPoint()
+                self._selection_current_widget = pos
                 self.update()
-            self.cursor_changed.emit(img_pos if (img_pos := self._widget_to_image_point(event.position().toPoint())) is not None else None)
+            hit_mode: str | None = None
+            if self._tool_mode in {"auto", "move", "scale"}:
+                hit = self._hit_test(pos)
+                if hit is not None:
+                    hit_mode = str(hit[2])
+                    if self._tool_mode == "move" and hit_mode.startswith("resize-"):
+                        hit_mode = "move"
+                    elif self._tool_mode == "scale" and hit_mode == "move":
+                        rect = self._element_rect_for_canvas(str(hit[0]), int(hit[1]))
+                        hit_mode = self._preferred_resize_mode(self._canvas_rect_to_widget_rect(rect), pos) if rect is not None else "resize-br"
+            self.setCursor(self._cursor_for_tool_or_hit(hit_mode))
+            self.cursor_changed.emit(img_pos if (img_pos := self._widget_to_image_point(pos)) is not None else None)
             return
         pos = event.position().toPoint()
         img_pos = self._widget_to_image_point(pos)
@@ -452,6 +457,11 @@ class PreviewLabel(QLabel):
                 next_w,
                 next_h,
             )
+
+    def leaveEvent(self, event) -> None:  # type: ignore[override]
+        self.cursor_changed.emit(None)
+        self.setCursor(self._cursor_for_tool_or_hit(None))
+        super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
         had_drag = self._drag_mode is not None and self._had_drag_motion
@@ -570,10 +580,16 @@ class PreviewLabel(QLabel):
 
     def _resize_handle_rects(self, rect: QRect) -> dict[str, QRect]:
         size = 12
+        center_x = rect.center().x()
+        center_y = rect.center().y()
         return {
             "resize-tl": QRect(rect.left() - size // 2, rect.top() - size // 2, size, size),
+            "resize-t": QRect(center_x - size // 2, rect.top() - size // 2, size, size),
             "resize-tr": QRect(rect.right() - size // 2, rect.top() - size // 2, size, size),
+            "resize-l": QRect(rect.left() - size // 2, center_y - size // 2, size, size),
+            "resize-r": QRect(rect.right() - size // 2, center_y - size // 2, size, size),
             "resize-bl": QRect(rect.left() - size // 2, rect.bottom() - size // 2, size, size),
+            "resize-b": QRect(center_x - size // 2, rect.bottom() - size // 2, size, size),
             "resize-br": QRect(rect.right() - size // 2, rect.bottom() - size // 2, size, size),
         }
 
@@ -586,6 +602,19 @@ class PreviewLabel(QLabel):
             painter.drawRect(handle)
 
     def _preferred_resize_mode(self, rect: QRect, pos: QPoint) -> str:
+        edge_band = max(10, min(rect.width(), rect.height()) // 4)
+        near_left = abs(pos.x() - rect.left()) <= edge_band
+        near_right = abs(pos.x() - rect.right()) <= edge_band
+        near_top = abs(pos.y() - rect.top()) <= edge_band
+        near_bottom = abs(pos.y() - rect.bottom()) <= edge_band
+        if near_top and not (near_left or near_right):
+            return "resize-t"
+        if near_bottom and not (near_left or near_right):
+            return "resize-b"
+        if near_left and not (near_top or near_bottom):
+            return "resize-l"
+        if near_right and not (near_top or near_bottom):
+            return "resize-r"
         horizontal = "l" if pos.x() <= rect.center().x() else "r"
         vertical = "t" if pos.y() <= rect.center().y() else "b"
         return f"resize-{vertical}{horizontal}"
@@ -604,17 +633,13 @@ class PreviewLabel(QLabel):
         top = y
         right = x + width
         bottom = y + height
-        if mode == "resize-tl":
+        if "l" in mode:
             left += dx
-            top += dy
-        elif mode == "resize-tr":
+        if "r" in mode:
             right += dx
+        if "t" in mode:
             top += dy
-        elif mode == "resize-bl":
-            left += dx
-            bottom += dy
-        else:
-            right += dx
+        if "b" in mode:
             bottom += dy
         min_size = 1
         if right - left < min_size:
@@ -628,6 +653,26 @@ class PreviewLabel(QLabel):
             else:
                 bottom = top + min_size
         return int(left), int(top), int(right - left), int(bottom - top)
+
+    def _cursor_for_tool_or_hit(self, hit_mode: str | None) -> Qt.CursorShape:
+        if hit_mode:
+            if hit_mode in {"resize-tl", "resize-br"}:
+                return Qt.SizeFDiagCursor
+            if hit_mode in {"resize-tr", "resize-bl"}:
+                return Qt.SizeBDiagCursor
+            if hit_mode in {"resize-l", "resize-r"}:
+                return Qt.SizeHorCursor
+            if hit_mode in {"resize-t", "resize-b"}:
+                return Qt.SizeVerCursor
+            if hit_mode == "move":
+                return Qt.SizeAllCursor
+        if self._tool_mode == "move":
+            return Qt.SizeAllCursor
+        if self._tool_mode == "scale":
+            return Qt.SizeFDiagCursor
+        if self._tool_mode == "crop":
+            return Qt.CrossCursor
+        return Qt.ArrowCursor
 
     def _group_bounds_rect(self) -> QRect | None:
         selected_rects: list[QRect] = []
@@ -4216,6 +4261,30 @@ class TrofeoGui(QMainWindow):
         self.designer_align_center_h_btn.setToolTip(self._tr("Center selected element horizontally", "Wycentruj zaznaczenie w poziomie"))
         self.designer_align_center_v_btn.setToolTip(self._tr("Center selected element vertically", "Wycentruj zaznaczenie w pionie"))
         self.designer_align_right_btn.setToolTip(self._tr("Align selected element to the right edge", "Wyrównaj zaznaczenie do prawej krawędzi"))
+        self.designer_tool_auto_btn.setToolTip(
+            self._tr(
+                "Auto: click to select, drag selected bounds to move, drag handles to resize.",
+                "Auto: klik zaznacza, przeciąganie ramki przesuwa, uchwyty zmieniają rozmiar.",
+            )
+        )
+        self.designer_tool_select_btn.setToolTip(
+            self._tr(
+                "Select: click an element or drag a box to select multiple layers.",
+                "Zaznaczanie: kliknij element albo przeciągnij ramkę, aby wybrać kilka warstw.",
+            )
+        )
+        self.designer_tool_move_btn.setToolTip(
+            self._tr(
+                "Move: drag elements on the LCD preview without resizing them.",
+                "Przesuwanie: przeciągaj elementy na podglądzie LCD bez zmiany rozmiaru.",
+            )
+        )
+        self.designer_tool_scale_btn.setToolTip(
+            self._tr(
+                "Scale: drag an element edge or corner to resize it on the preview.",
+                "Skalowanie: przeciągnij bok albo narożnik elementu, aby zmienić rozmiar.",
+            )
+        )
         preview_tools_row.addWidget(self.designer_tool_auto_btn)
         preview_tools_row.addWidget(self.designer_tool_select_btn)
         preview_tools_row.addWidget(self.designer_tool_move_btn)
