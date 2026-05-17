@@ -5291,13 +5291,24 @@ class TrofeoGui(QMainWindow):
         self.quick_add_stat_btn = QPushButton("Stat")
         self.quick_add_image_btn = QPushButton("Image")
         self.quick_add_panel_btn = QPushButton("Panel")
-        for btn in (self.quick_add_text_btn, self.quick_add_stat_btn, self.quick_add_image_btn, self.quick_add_panel_btn):
+        self.quick_add_progress_btn = QPushButton("Progress")
+        self.quick_add_sparkline_btn = QPushButton("Sparkline")
+        for btn in (
+            self.quick_add_text_btn,
+            self.quick_add_stat_btn,
+            self.quick_add_image_btn,
+            self.quick_add_panel_btn,
+            self.quick_add_progress_btn,
+            self.quick_add_sparkline_btn,
+        ):
             btn.setObjectName("quickAddButton")
             btn.setMinimumHeight(24)
         basics_grid.addWidget(self.quick_add_text_btn, 0, 0)
         basics_grid.addWidget(self.quick_add_stat_btn, 0, 1)
         basics_grid.addWidget(self.quick_add_image_btn, 1, 0)
         basics_grid.addWidget(self.quick_add_panel_btn, 1, 1)
+        basics_grid.addWidget(self.quick_add_progress_btn, 2, 0)
+        basics_grid.addWidget(self.quick_add_sparkline_btn, 2, 1)
 
         self.quick_add_group_music = QGroupBox("Music & audio")
         self.quick_add_group_music.setFlat(True)
@@ -5347,11 +5358,27 @@ class TrofeoGui(QMainWindow):
         self.quick_add_analog_clock_btn = QPushButton("Analog Clock")
         self.quick_add_analog_clock_btn.setObjectName("quickAddButton")
         self.quick_add_analog_clock_btn.setMinimumHeight(24)
+        self.quick_add_clock_modern_btn = QPushButton("Clock Modern")
+        self.quick_add_clock_modern_btn.setObjectName("quickAddButton")
+        self.quick_add_clock_modern_btn.setMinimumHeight(24)
+        self.quick_add_clock_nordic_btn = QPushButton("Clock Nordic")
+        self.quick_add_clock_nordic_btn.setObjectName("quickAddButton")
+        self.quick_add_clock_nordic_btn.setMinimumHeight(24)
         self.quick_add_gauge_set_btn = QPushButton("Gauge Set")
         self.quick_add_gauge_set_btn.setObjectName("quickAddButton")
         self.quick_add_gauge_set_btn.setMinimumHeight(24)
+        self.quick_add_gauge_cyber_btn = QPushButton("Gauge Cyber")
+        self.quick_add_gauge_cyber_btn.setObjectName("quickAddButton")
+        self.quick_add_gauge_cyber_btn.setMinimumHeight(24)
+        self.quick_add_gauge_thermal_btn = QPushButton("Gauge Thermal")
+        self.quick_add_gauge_thermal_btn.setObjectName("quickAddButton")
+        self.quick_add_gauge_thermal_btn.setMinimumHeight(24)
         widgets_grid.addWidget(self.quick_add_analog_clock_btn, 0, 0)
-        widgets_grid.addWidget(self.quick_add_gauge_set_btn, 0, 1)
+        widgets_grid.addWidget(self.quick_add_clock_modern_btn, 0, 1)
+        widgets_grid.addWidget(self.quick_add_clock_nordic_btn, 1, 0)
+        widgets_grid.addWidget(self.quick_add_gauge_set_btn, 1, 1)
+        widgets_grid.addWidget(self.quick_add_gauge_cyber_btn, 2, 0)
+        widgets_grid.addWidget(self.quick_add_gauge_thermal_btn, 2, 1)
 
         quick_container_layout.addWidget(self.quick_add_group_basics)
         quick_container_layout.addWidget(self.quick_add_group_music)
@@ -5363,11 +5390,17 @@ class TrofeoGui(QMainWindow):
         self.quick_add_stat_btn.clicked.connect(lambda: self.quick_add_designer_element("stats"))
         self.quick_add_image_btn.clicked.connect(lambda: self.quick_add_designer_element("images"))
         self.quick_add_panel_btn.clicked.connect(lambda: self.quick_add_designer_element("panels"))
+        self.quick_add_progress_btn.clicked.connect(lambda: self.add_stat_visual_widget("progress"))
+        self.quick_add_sparkline_btn.clicked.connect(lambda: self.add_stat_visual_widget("sparkline"))
         self.quick_add_now_playing_btn.clicked.connect(self.add_now_playing_widget)
         self.quick_add_now_playing_hero_btn.clicked.connect(self.add_now_playing_widget_hero)
         self.quick_add_now_playing_mini_btn.clicked.connect(self.add_now_playing_widget_mini)
         self.quick_add_analog_clock_btn.clicked.connect(lambda: self.add_analog_clock_widget("classic"))
+        self.quick_add_clock_modern_btn.clicked.connect(lambda: self.add_analog_clock_widget("modern"))
+        self.quick_add_clock_nordic_btn.clicked.connect(lambda: self.add_analog_clock_widget("nordic"))
         self.quick_add_gauge_set_btn.clicked.connect(lambda: self.add_gauge_ring_bundle("system"))
+        self.quick_add_gauge_cyber_btn.clicked.connect(lambda: self.add_gauge_ring_bundle("cyber"))
+        self.quick_add_gauge_thermal_btn.clicked.connect(lambda: self.add_gauge_ring_bundle("thermal"))
         self.quick_add_volume_btn.clicked.connect(self.add_volume_widget)
         self.quick_add_equalizer_btn.clicked.connect(self.add_graphic_equalizer_widget)
         self.quick_add_weather_current_btn.clicked.connect(self.add_weather_current_widget)
@@ -7267,6 +7300,10 @@ class TrofeoGui(QMainWindow):
             self.quick_add_image_btn.setText(tr("Image", "Obraz"))
         if hasattr(self, "quick_add_panel_btn"):
             self.quick_add_panel_btn.setText(tr("Panel", "Panel"))
+        if hasattr(self, "quick_add_progress_btn"):
+            self.quick_add_progress_btn.setText(tr("Progress", "Postęp"))
+        if hasattr(self, "quick_add_sparkline_btn"):
+            self.quick_add_sparkline_btn.setText(tr("Sparkline", "Wykres mini"))
         if hasattr(self, "quick_add_now_playing_btn"):
             self.quick_add_now_playing_btn.setText(tr("Now Playing", "Now Playing"))
         if hasattr(self, "quick_add_now_playing_hero_btn"):
@@ -7279,8 +7316,16 @@ class TrofeoGui(QMainWindow):
             self.quick_add_equalizer_btn.setText(tr("Graphic EQ", "Korektor"))
         if hasattr(self, "quick_add_analog_clock_btn"):
             self.quick_add_analog_clock_btn.setText(tr("Analog Clock", "Zegar analogowy"))
+        if hasattr(self, "quick_add_clock_modern_btn"):
+            self.quick_add_clock_modern_btn.setText(tr("Clock Modern", "Zegar modern"))
+        if hasattr(self, "quick_add_clock_nordic_btn"):
+            self.quick_add_clock_nordic_btn.setText(tr("Clock Nordic", "Zegar nordic"))
         if hasattr(self, "quick_add_gauge_set_btn"):
             self.quick_add_gauge_set_btn.setText(tr("Gauge Set", "Zestaw gauge"))
+        if hasattr(self, "quick_add_gauge_cyber_btn"):
+            self.quick_add_gauge_cyber_btn.setText(tr("Gauge Cyber", "Gauge cyber"))
+        if hasattr(self, "quick_add_gauge_thermal_btn"):
+            self.quick_add_gauge_thermal_btn.setText(tr("Gauge Thermal", "Gauge temp"))
         if hasattr(self, "designer_move_box"):
             self.designer_move_box.setTitle(tr("Nudge selection", "Przesuwanie zaznaczenia"))
         if hasattr(self, "designer_nudge_step_label"):
