@@ -43,8 +43,6 @@ cpu_preview.png
 test_red.png
 probe_trace.txt
 reference_frame_trcc.jpg
-themes/new_theme_minimal.json
-themes/new_theme_minimal_assets/
 themes/nowy_motyw_minimal.json
 themes/nowy_motyw_minimal_assets/
 themes/zmiany_dashboard.json
@@ -53,17 +51,14 @@ themes/animated_landscape.json
 themes/dashboard_custom_assets/2026-05-09/image/dashboard_custom_7_image_trofeo.jpg
 themes/dashboard_custom_assets/2026-05-09/image/dashboard_custom_9_image_trofeo.jpg
 themes/heritage_duality_assets/2026-05-12/
-themes/heritage_duality_assets/2026-05-13/
 themes/tux_circuit_green_assets/2026-05-09/background/
 themes/verdant_bloom_assets/2026-05-10/
 themes/verdant_bloom_assets/2026-05-12/
 themes/theme_ttcr_import.json
 themes/theme_ttcr_import_2.json
 themes/theme_ttcr_import_3.json
-themes/theme_ttcr_import_4.json
 themes/ttcr_windows_ttcr_import.json
 themes/theme_ttcr_import_assets/
 themes/theme_ttcr_import_2_assets/
 themes/theme_ttcr_import_3_assets/
-themes/theme_ttcr_import_4_assets/
 themes/ttcr_windows_ttcr_import_assets/

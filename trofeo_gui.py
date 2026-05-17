@@ -11929,7 +11929,25 @@ class TrofeoGui(QMainWindow):
     def _runtime_theme_card_pixmap(self, item: dict[str, Any], size: QSize) -> QPixmap:
         path = str(item.get("path", "")).strip()
         theme_type = str(item.get("type", "image")).strip()
-        if theme_type == "theme-doc" and path:
+        if theme_type == "theme-doc" and render_theme_file is not None and path:
+            try:
+                image = render_theme_file(path)
+                try:
+                    raw = parse_theme_json_text(Path(path).read_text(encoding="utf-8"))
+                    if isinstance(raw, dict):
+                        rotation = int(raw.get("canvas", {}).get("rotation", 0)) % 360
+                        if rotation:
+                            image = image.rotate((-rotation) % 360, expand=True)
+                except Exception:
+                    pass
+                image.thumbnail((max(240, size.width()), max(92, size.height())))
+                buffer = io.BytesIO()
+                image.save(buffer, format="PNG")
+                pixmap = QPixmap()
+                if pixmap.loadFromData(buffer.getvalue(), "PNG"):
+                    return pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            except Exception:
+                pass
             asset_path = self._theme_card_fast_preview_asset(path)
             if asset_path:
                 pixmap = QPixmap(str(asset_path))
