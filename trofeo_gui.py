@@ -3896,6 +3896,14 @@ class TrofeoGui(QMainWindow):
         self.widget_body_color_edit = QLineEdit()
         self.widget_detail_color_edit = QLineEdit()
         self.widget_panel_color_edit = QLineEdit()
+        self.widget_cover_enabled_chk = QCheckBox("Cover")
+        self.widget_cover_enabled_chk.setChecked(True)
+        self.widget_backdrop_enabled_chk = QCheckBox("Cover backdrop")
+        self.widget_backdrop_enabled_chk.setChecked(True)
+        self.widget_title_marquee_chk = QCheckBox("Title marquee")
+        self.widget_title_marquee_chk.setChecked(True)
+        self.widget_equalizer_enabled_chk = QCheckBox("EQ")
+        self.widget_equalizer_enabled_chk.setChecked(True)
         self.weather_widget_title_font_spin = QSpinBox(); self.weather_widget_title_font_spin.setRange(6, 120); self.weather_widget_title_font_spin.setValue(18)
         self.weather_widget_body_font_spin = QSpinBox(); self.weather_widget_body_font_spin.setRange(6, 120); self.weather_widget_body_font_spin.setValue(38)
         self.weather_widget_detail_font_spin = QSpinBox(); self.weather_widget_detail_font_spin.setRange(6, 120); self.weather_widget_detail_font_spin.setValue(18)
@@ -4390,6 +4398,10 @@ class TrofeoGui(QMainWindow):
             (self.widget_body_color_edit, "textChanged"),
             (self.widget_detail_color_edit, "textChanged"),
             (self.widget_panel_color_edit, "textChanged"),
+            (self.widget_cover_enabled_chk, "toggled"),
+            (self.widget_backdrop_enabled_chk, "toggled"),
+            (self.widget_title_marquee_chk, "toggled"),
+            (self.widget_equalizer_enabled_chk, "toggled"),
             (self.weather_widget_title_font_spin, "valueChanged"),
             (self.weather_widget_body_font_spin, "valueChanged"),
             (self.weather_widget_detail_font_spin, "valueChanged"),
@@ -5519,6 +5531,13 @@ class TrofeoGui(QMainWindow):
         self.inspector_music_layout.addRow(self.row_music_equalizer_bars, self.designer_equalizer_bars_spin)
         self.inspector_music_layout.addRow(self.row_music_equalizer_gap, self.designer_equalizer_gap_spin)
         self.inspector_music_layout.addRow(self.row_music_equalizer_mirror, self.designer_equalizer_mirror_chk)
+        self.row_music_widget_options = make_label("Options")
+        self.music_widget_options_row = wrap_row(
+            self.widget_cover_enabled_chk,
+            self.widget_backdrop_enabled_chk,
+            self.widget_title_marquee_chk,
+            self.widget_equalizer_enabled_chk,
+        )
         self.row_music_widget_title_font = make_label("Title font")
         self.row_music_widget_artist_font = make_label("Artist font")
         self.row_music_widget_detail_font = make_label("Detail font")
@@ -5530,6 +5549,7 @@ class TrofeoGui(QMainWindow):
         self.widget_body_color_row, _ = add_color_row(self.widget_body_color_edit)
         self.widget_detail_color_row, _ = add_color_row(self.widget_detail_color_edit)
         self.widget_panel_color_row, _ = add_color_row(self.widget_panel_color_edit)
+        self.inspector_music_layout.addRow(self.row_music_widget_options, self.music_widget_options_row)
         self.inspector_music_layout.addRow(self.row_music_widget_title_font, self.widget_title_font_spin)
         self.inspector_music_layout.addRow(self.row_music_widget_artist_font, self.widget_body_font_spin)
         self.inspector_music_layout.addRow(self.row_music_widget_detail_font, self.widget_detail_font_spin)
@@ -15482,6 +15502,7 @@ class TrofeoGui(QMainWindow):
         show_media_widget_fields = bool(tab_shown and coll == "widgets" and item is not None and str(item.get("kind", "")).strip().lower().startswith("media_"))
         music_layout = self.inspector_music.layout()
         for row_label, widget in (
+            (self.row_music_widget_options, self.music_widget_options_row),
             (self.row_music_widget_title_font, self.widget_title_font_spin),
             (self.row_music_widget_artist_font, self.widget_body_font_spin),
             (self.row_music_widget_detail_font, self.widget_detail_font_spin),
@@ -16005,6 +16026,10 @@ class TrofeoGui(QMainWindow):
                 self.widget_body_color_edit.setText(json.dumps(settings.get("artist_color", [210, 224, 240]), ensure_ascii=False))
                 self.widget_detail_color_edit.setText(json.dumps(settings.get("detail_color", [160, 196, 232]), ensure_ascii=False))
                 self.widget_panel_color_edit.setText(json.dumps(settings.get("panel_fill", [8, 14, 24, 210]), ensure_ascii=False))
+                self.widget_cover_enabled_chk.setChecked(bool(settings.get("cover_enabled", True)))
+                self.widget_backdrop_enabled_chk.setChecked(bool(settings.get("backdrop_enabled", True)))
+                self.widget_title_marquee_chk.setChecked(bool(settings.get("title_marquee", True)))
+                self.widget_equalizer_enabled_chk.setChecked(bool(settings.get("equalizer_enabled", True)))
         finally:
             self._designer_updating = False
 
@@ -16046,6 +16071,11 @@ class TrofeoGui(QMainWindow):
             settings["artist_color"] = self._parse_color_line(self.widget_body_color_edit.text(), settings.get("artist_color", [210, 224, 240]))
             settings["detail_color"] = self._parse_color_line(self.widget_detail_color_edit.text(), settings.get("detail_color", [160, 196, 232]))
             settings["panel_fill"] = self._parse_color_line(self.widget_panel_color_edit.text(), settings.get("panel_fill", [8, 14, 24, 210]))
+            settings["cover_enabled"] = bool(self.widget_cover_enabled_chk.isChecked())
+            settings["backdrop_enabled"] = bool(self.widget_backdrop_enabled_chk.isChecked())
+            settings["title_marquee"] = bool(self.widget_title_marquee_chk.isChecked())
+            settings["equalizer_enabled"] = bool(self.widget_equalizer_enabled_chk.isChecked())
+            settings["cover_placeholder_enabled"] = True
 
     def _update_gauge_stat_inspector_visibility(self) -> None:
         gauge_layout = self.inspector_gauge.layout()
