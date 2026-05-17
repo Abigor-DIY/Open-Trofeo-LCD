@@ -55,11 +55,17 @@ Application UI:
 
 Theme previews rendered from bundled starter themes:
 
+![Verdant Bloom theme preview](docs/screenshots/theme-verdant-bloom.png)
+
 ![Heritage Duality theme preview](docs/screenshots/theme-heritage-duality.png)
 
-![Linux Matrix Blue theme preview](docs/screenshots/theme-linux-matrix-blue.png)
+![Linux Matrix Command Deck theme preview](docs/screenshots/theme-linux-matrix-blue.png)
+
+![Linux Matrix Green theme preview](docs/screenshots/theme-linux-matrix-green.png)
 
 ![New Theme preview](docs/screenshots/theme-new-theme.png)
+
+![TTCR Import theme preview](docs/screenshots/theme-ttcr-import.png)
 
 ## Support
 
