@@ -182,21 +182,21 @@ THEME_COLOR_PRESETS = {
 }
 THEME_TEMPLATE_CATALOG = [
     {
-        "title": "Dashboard",
-        "description": "Pelny dashboard z sekcjami CPU, pamięci, uptime i wyraźnym podziałem paneli.",
-        "path": "themes/dashboard_monitor.json",
+        "title": "Heritage Duality",
+        "description": "Animowany motyw panoramiczny z gotowym ukladem dashboardu i widgetami.",
+        "path": "themes/heritage_duality.json",
         "accent": "#59b7ff",
     },
     {
-        "title": "Minimal",
-        "description": "Lekki układ z ograniczoną liczbą sekcji i większym naciskiem na czytelność.",
-        "path": "themes/minimal_monitor.json",
+        "title": "Linux Matrix Blue",
+        "description": "Statyczny motyw techniczny z czytelnymi statystykami systemu.",
+        "path": "themes/linux_matrix_blue.json",
         "accent": "#8fd878",
     },
     {
-        "title": "Focus",
-        "description": "Układ z większymi kartami i mocniejszym akcentem na najważniejsze statystyki.",
-        "path": "themes/focus_monitor.json",
+        "title": "New Theme",
+        "description": "Animowany motyw startowy do dalszego dopracowania w projektancie.",
+        "path": "themes/new_theme_minimal.json",
         "accent": "#f1b15b",
     },
 ]
@@ -3747,7 +3747,7 @@ class TrofeoGui(QMainWindow):
         self.theme_doc_box = QGroupBox("Theme")
         theme_doc_grid = QGridLayout(self.theme_doc_box)
         theme_doc_grid.setColumnStretch(1, 1)
-        self.theme_doc_path_edit = QLineEdit(str(Path("themes/default_monitor.json")))
+        self.theme_doc_path_edit = QLineEdit(str(Path("themes/linux_matrix_blue.json")))
         self.theme_doc_browse_btn = QPushButton("Browse theme…")
         self.theme_doc_use_selected_btn = QPushButton("From active theme")
         self.theme_doc_load_btn = QPushButton("Load")

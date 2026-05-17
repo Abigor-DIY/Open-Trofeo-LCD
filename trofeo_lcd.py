@@ -1352,7 +1352,7 @@ def _get_monitor_theme_document() -> ThemeDocument:
     if _MONITOR_THEME_DOCUMENT is not None:
         return _MONITOR_THEME_DOCUMENT
 
-    theme_path = Path(__file__).resolve().parent / "themes" / "default_monitor.json"
+    theme_path = Path(__file__).resolve().parent / "themes" / "linux_matrix_blue.json"
     _MONITOR_THEME_DOCUMENT = load_theme_document(theme_path)
     return _MONITOR_THEME_DOCUMENT
 

@@ -57,9 +57,9 @@ Theme previews rendered from bundled starter themes:
 
 ![Heritage Duality theme preview](docs/screenshots/theme-heritage-duality.png)
 
-![Verdant Bloom theme preview](docs/screenshots/theme-verdant-bloom.png)
+![Linux Matrix Blue theme preview](docs/screenshots/theme-linux-matrix-blue.png)
 
-![Wolfstorm Forge theme preview](docs/screenshots/theme-wolfstorm-forge.png)
+![New Theme preview](docs/screenshots/theme-new-theme.png)
 
 ## Support
 
