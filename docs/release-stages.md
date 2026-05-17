@@ -54,7 +54,7 @@
 
 ## Etap 5 - Uzytecznosc projektanta
 
-- Status: w trakcie. Canvas obsluguje zaznaczanie, przesuwanie, skalowanie z uchwytami naroznymi i bocznymi, crop dla obrazow, snap, undo/redo, kompaktowy inspector oraz edycje przezroczystosci dla obrazow, paneli i widgetow.
+- Status: w trakcie. Canvas obsluguje zaznaczanie, przesuwanie, skalowanie z uchwytami naroznymi i bocznymi, crop dla obrazow, snap, undo/redo, kompaktowy inspector/Weather oraz edycje przezroczystosci dla obrazow, paneli i widgetow.
 - Umozliwic przesuwanie elementow kursorem myszy bezposrednio na canvasie.
 - Umozliwic skalowanie elementow kursorem myszy z uchwytami resize.
 - Dodac male menu narzedzi w edytorze:

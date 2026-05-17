@@ -5861,20 +5861,26 @@ class TrofeoGui(QMainWindow):
         self.weather_designer_city_search_edit = QLineEdit()
         self.weather_designer_city_search_edit.setPlaceholderText("Search city, e.g. Warsaw")
         self.weather_designer_search_btn = QPushButton("Search")
-        weather_designer_search_row = wrap_row(self.weather_designer_city_search_edit, self.weather_designer_search_btn, stretch_first=True)
-        self.weather_designer_search_row = weather_designer_search_row
         self.weather_designer_results_combo = QComboBox()
         self.weather_designer_results_combo.addItem("No city selected", None)
         self.weather_designer_apply_btn = QPushButton("Apply city")
         self.weather_designer_refresh_btn = QPushButton("Refresh weather")
-        weather_designer_actions = wrap_row(self.weather_designer_apply_btn, self.weather_designer_refresh_btn)
-        self.weather_designer_actions_row = weather_designer_actions
-        self.row_weather_city_search = make_label("City search")
+        self.weather_designer_results_combo.setMinimumWidth(160)
+        self.weather_city_row = wrap_row(
+            self.weather_designer_city_search_edit,
+            self.weather_designer_search_btn,
+            self.weather_designer_results_combo,
+            self.weather_designer_apply_btn,
+            self.weather_designer_refresh_btn,
+            stretch_first=True,
+        )
+        self.weather_designer_search_row = self.weather_city_row
+        self.weather_designer_actions_row = self.weather_city_row
+        self.row_weather_city = make_label("City")
+        self.row_weather_city_search = self.row_weather_city
         self.row_weather_city_results = make_label("Results")
         self.row_weather_city_actions = make_label("Weather config")
-        self.inspector_weather_layout.addRow(self.row_weather_city_search, weather_designer_search_row)
-        self.inspector_weather_layout.addRow(self.row_weather_city_results, self.weather_designer_results_combo)
-        self.inspector_weather_layout.addRow(self.row_weather_city_actions, weather_designer_actions)
+        self.inspector_weather_layout.addRow(self.row_weather_city, self.weather_city_row)
         self.weather_designer_search_btn.clicked.connect(self.search_designer_weather_city)
         self.weather_designer_city_search_edit.returnPressed.connect(self.search_designer_weather_city)
         self.weather_designer_results_combo.currentIndexChanged.connect(self._apply_selected_designer_weather_city)
@@ -5890,10 +5896,16 @@ class TrofeoGui(QMainWindow):
         self.weather_format_combo.addItem("Humidity: {value}", "Humidity: {value}")
         self.weather_format_combo.addItem("High: {value}", "High: {value}")
         self.weather_format_combo.addItem("Low: {value}", "Low: {value}")
-        self.row_weather_source = make_label("Weather source")
+        self.weather_source_compact_label = QLabel("Source")
+        self.weather_format_compact_label = QLabel("Format")
+        self.weather_binding_row = make_compact_labeled_row(
+            (self.weather_source_compact_label, self.weather_source_combo),
+            (self.weather_format_compact_label, self.weather_format_combo),
+            stretch_first=True,
+        )
+        self.row_weather_source = make_label("Weather binding")
         self.row_weather_format = make_label("Weather format")
-        self.inspector_weather_layout.addRow(self.row_weather_source, self.weather_source_combo)
-        self.inspector_weather_layout.addRow(self.row_weather_format, self.weather_format_combo)
+        self.inspector_weather_layout.addRow(self.row_weather_source, self.weather_binding_row)
         for spin in (
             self.weather_widget_title_font_spin,
             self.weather_widget_body_font_spin,
@@ -7171,6 +7183,8 @@ class TrofeoGui(QMainWindow):
             ("row_music_equalizer_bars", "EQ bars", "Słupki EQ"),
             ("row_music_equalizer_gap", "Bar gap", "Odstęp słupków"),
             ("row_music_equalizer_mirror", "Mirror mode", "Tryb lustrzany"),
+            ("row_weather_city", "City", "Miasto"),
+            ("row_weather_source", "Weather binding", "Dane pogody"),
             ("row_content_text", "Text", "Tekst"),
             ("row_content_label", "Label", "Etykieta"),
             ("row_content_source", "Data source", "Źródło"),
@@ -7240,6 +7254,8 @@ class TrofeoGui(QMainWindow):
             ("image_fit_compact_label", "Fit", "Dopas."),
             ("image_opacity_compact_label", "Opacity", "Przezr."),
             ("image_rotation_compact_label", "Rotation", "Obrót"),
+            ("weather_source_compact_label", "Source", "Źródło"),
+            ("weather_format_compact_label", "Format", "Format"),
         ):
             w = getattr(self, attr, None)
             if isinstance(w, QLabel):
@@ -7522,6 +7538,12 @@ class TrofeoGui(QMainWindow):
             self.weather_tool_hero_btn.setText(tr("Hero", "Hero"))
         if hasattr(self, "weather_tool_forecast_btn"):
             self.weather_tool_forecast_btn.setText(tr("Weather 7D", "Prognoza 7 dni"))
+        if hasattr(self, "weather_designer_search_btn"):
+            self.weather_designer_search_btn.setText(tr("Search", "Szukaj"))
+        if hasattr(self, "weather_designer_apply_btn"):
+            self.weather_designer_apply_btn.setText(tr("Apply", "Zastosuj"))
+        if hasattr(self, "weather_designer_refresh_btn"):
+            self.weather_designer_refresh_btn.setText(tr("Refresh", "Odśwież"))
         if hasattr(self, "cfg_weather_refresh_now_btn"):
             self.cfg_weather_refresh_now_btn.setText(tr("Refresh weather", "Odśwież pogodę"))
         if hasattr(self, "inspector_weather_hint"):
@@ -16007,26 +16029,18 @@ class TrofeoGui(QMainWindow):
         show_city_fields = bool(want_weather_tab and coll == "widgets")
         show_weather_widget_fields = show_city_fields
         for row_widget in (
-            getattr(self, "row_weather_city_search", None),
-            getattr(self, "weather_designer_search_row", None),
-            getattr(self, "weather_designer_city_search_edit", None),
-            getattr(self, "weather_designer_search_btn", None),
-            getattr(self, "row_weather_city_results", None),
-            getattr(self, "weather_designer_results_combo", None),
-            getattr(self, "row_weather_city_actions", None),
-            getattr(self, "weather_designer_actions_row", None),
-            getattr(self, "weather_designer_apply_btn", None),
-            getattr(self, "weather_designer_refresh_btn", None),
+            getattr(self, "row_weather_city", None),
+            getattr(self, "weather_city_row", None),
         ):
             if row_widget is not None:
                 row_widget.setVisible(show_city_fields)
-        if hasattr(self, "weather_source_combo"):
-            self.weather_source_combo.setVisible(show_stat_fields)
-            self.row_weather_source.setVisible(show_stat_fields)
-        if hasattr(self, "weather_format_combo"):
-            self.weather_format_combo.setVisible(show_stat_fields)
-            self.row_weather_format.setVisible(show_stat_fields)
         weather_layout = getattr(self, "inspector_weather_layout", None)
+        self._set_form_row_visible(
+            weather_layout,
+            getattr(self, "row_weather_source", None),
+            getattr(self, "weather_binding_row", None),
+            show_stat_fields,
+        )
         self._set_form_row_visible(
             weather_layout,
             getattr(self, "row_weather_tools", None),
