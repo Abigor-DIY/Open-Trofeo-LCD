@@ -766,6 +766,12 @@ def _resampled_audio_eq_levels(snapshot: dict[str, str], count: int) -> list[flo
     if not raw:
         return []
     try:
+        age_ms = int(float(str(snapshot.get("audio_eq_age_ms", "0") or "0")))
+    except (TypeError, ValueError):
+        age_ms = 0
+    if age_ms > 750:
+        return []
+    try:
         parsed = json.loads(str(raw))
     except Exception:
         parsed = []

@@ -97,7 +97,7 @@ class StatsProvider:
         self._audio_eq_cava_bin = self._local_or_host_cmd("cava")
         self._audio_eq_input_method = self._normalize_audio_eq_input(os.environ.get("OPEN_TROFEO_CAVA_INPUT", "auto"))
         self._audio_eq_active_input_method = "none"
-        self._audio_eq_profile = self._normalize_audio_eq_profile(os.environ.get("OPEN_TROFEO_AUDIO_EQ_PROFILE", "balanced"))
+        self._audio_eq_profile = self._normalize_audio_eq_profile(os.environ.get("OPEN_TROFEO_AUDIO_EQ_PROFILE", "responsive"))
         self._audio_eq_sensitivity = self._parse_audio_eq_sensitivity(os.environ.get("OPEN_TROFEO_AUDIO_EQ_SENSITIVITY", "1.0"))
         self._weather_runtime_dir = os.path.join(state_home, "open-trofeo-lcd", "weather")
         self._weather_cache_path = os.path.join(self._weather_runtime_dir, "open-meteo.json")
@@ -157,10 +157,10 @@ class StatsProvider:
     @staticmethod
     def _audio_eq_profile_settings(profile: str) -> dict[str, float]:
         if profile == "responsive":
-            return {"attack": 0.018, "release": 0.095, "gate": 0.012, "gamma": 0.66, "blend": 0.07}
+            return {"attack": 0.010, "release": 0.060, "gate": 0.008, "gamma": 0.62, "blend": 0.03}
         if profile == "smooth":
             return {"attack": 0.045, "release": 0.220, "gate": 0.022, "gamma": 0.78, "blend": 0.16}
-        return {"attack": 0.030, "release": 0.145, "gate": 0.018, "gamma": 0.72, "blend": 0.11}
+        return {"attack": 0.020, "release": 0.105, "gate": 0.014, "gamma": 0.68, "blend": 0.07}
 
     def set_audio_eq_config(
         self,
@@ -209,7 +209,7 @@ class StatsProvider:
             [
                 "[general]",
                 "bars = 32",
-                "framerate = 30",
+                "framerate = 60",
                 "autosens = 1",
                 "",
                 "[input]",

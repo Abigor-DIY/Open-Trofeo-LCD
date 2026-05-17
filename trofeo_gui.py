@@ -2359,7 +2359,7 @@ class TrofeoGui(QMainWindow):
         profile_combo = getattr(self, "cfg_audio_eq_profile_combo", None)
         sensitivity_spin = getattr(self, "cfg_audio_eq_sensitivity_spin", None)
         method = str(input_combo.currentData() if input_combo is not None else "auto").strip() or "auto"
-        profile = str(profile_combo.currentData() if profile_combo is not None else "balanced").strip() or "balanced"
+        profile = str(profile_combo.currentData() if profile_combo is not None else "responsive").strip() or "responsive"
         sensitivity = float(sensitivity_spin.value()) / 100.0 if sensitivity_spin is not None else 1.0
         return {"audio_eq_input": method, "audio_eq_profile": profile, "audio_eq_sensitivity": sensitivity}
 
@@ -3398,8 +3398,8 @@ class TrofeoGui(QMainWindow):
         self.cfg_audio_eq_input_combo.addItem("ALSA", "alsa")
         self.cfg_audio_eq_input_combo.activated.connect(lambda _idx: setattr(self, "_audio_eq_config_dirty", True))
         self.cfg_audio_eq_profile_combo = QComboBox()
-        self.cfg_audio_eq_profile_combo.addItem("Balanced", "balanced")
         self.cfg_audio_eq_profile_combo.addItem("Responsive", "responsive")
+        self.cfg_audio_eq_profile_combo.addItem("Balanced", "balanced")
         self.cfg_audio_eq_profile_combo.addItem("Smooth", "smooth")
         self.cfg_audio_eq_profile_combo.activated.connect(lambda _idx: setattr(self, "_audio_eq_config_dirty", True))
         self.cfg_audio_eq_sensitivity_spin = QSpinBox()
@@ -7789,7 +7789,7 @@ class TrofeoGui(QMainWindow):
                 if idx >= 0:
                     self.cfg_audio_eq_input_combo.setCurrentIndex(idx)
             if hasattr(self, "cfg_audio_eq_profile_combo"):
-                idx = self.cfg_audio_eq_profile_combo.findData(str(payload.get("audio_eq_profile", "balanced") or "balanced"))
+                idx = self.cfg_audio_eq_profile_combo.findData(str(payload.get("audio_eq_profile", "responsive") or "responsive"))
                 if idx >= 0:
                     self.cfg_audio_eq_profile_combo.setCurrentIndex(idx)
             if hasattr(self, "cfg_audio_eq_sensitivity_spin"):
@@ -7839,7 +7839,7 @@ class TrofeoGui(QMainWindow):
         if hasattr(self, "cfg_audio_eq_input_combo"):
             payload["audio_eq_input"] = str(self.cfg_audio_eq_input_combo.currentData() or "auto")
         if hasattr(self, "cfg_audio_eq_profile_combo"):
-            payload["audio_eq_profile"] = str(self.cfg_audio_eq_profile_combo.currentData() or "balanced")
+            payload["audio_eq_profile"] = str(self.cfg_audio_eq_profile_combo.currentData() or "responsive")
         if hasattr(self, "cfg_audio_eq_sensitivity_spin"):
             payload["audio_eq_sensitivity"] = float(self.cfg_audio_eq_sensitivity_spin.value()) / 100.0
         for attr, key in (
