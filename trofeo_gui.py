@@ -4130,6 +4130,8 @@ class TrofeoGui(QMainWindow):
         # LCD PREVIEW (Góra prawego panelu)
         self.designer_canvas_workbench = QFrame()
         self.designer_canvas_workbench.setObjectName("designerSectionBox")
+        self.designer_canvas_workbench.setMinimumHeight(260)
+        self.designer_canvas_workbench.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         canvas_vbox = QVBoxLayout(self.designer_canvas_workbench)
         canvas_vbox.setContentsMargins(0, 0, 0, 0) # Przejmujemy niewykorzystaną część
         canvas_vbox.setSpacing(6)
@@ -4242,6 +4244,8 @@ class TrofeoGui(QMainWindow):
 
         # INSPECTOR (Właściwości - Powiększony do góry)
         self.designer_inspector_container = QWidget()
+        self.designer_inspector_container.setMinimumHeight(220)
+        self.designer_inspector_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._setup_inspector_tabs(QVBoxLayout(self.designer_inspector_container))
         self.designer_stat_display_combo.currentTextChanged.connect(
             lambda _t: self._update_gauge_stat_inspector_visibility()
@@ -4251,8 +4255,8 @@ class TrofeoGui(QMainWindow):
 
         # Ograniczamy wysokość Inspectora, dajemy więcej miejsca dla LCD
         self.designer_top_splitter.setStretchFactor(0, 5) # Canvas
-        self.designer_top_splitter.setStretchFactor(1, 1) # Inspector
-        self.designer_top_splitter.setSizes([900, 200])
+        self.designer_top_splitter.setStretchFactor(1, 2) # Inspector
+        self.designer_top_splitter.setSizes([640, 320])
 
         designer_tab_layout.addWidget(designer_box, 1)
 
@@ -5399,6 +5403,23 @@ class TrofeoGui(QMainWindow):
             tab_layout.setContentsMargins(4, 4, 4, 4)
             return tab, tab_layout
 
+        def make_scrolled_tab() -> tuple[QScrollArea, QFormLayout]:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            inner = QWidget()
+            tab_layout = QFormLayout(inner)
+            tab_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+            tab_layout.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            tab_layout.setFormAlignment(Qt.AlignTop)
+            tab_layout.setHorizontalSpacing(6)
+            tab_layout.setVerticalSpacing(4)
+            tab_layout.setContentsMargins(4, 4, 4, 4)
+            scroll.setWidget(inner)
+            return scroll, tab_layout
+
         def make_label(text: str) -> QLabel:
             label = QLabel(text)
             label.setObjectName("headerFieldLabel")
@@ -5422,10 +5443,38 @@ class TrofeoGui(QMainWindow):
             row = wrap_row(target_edit, button, stretch_first=True)
             return row, button
 
+        def add_compact_color_cell(caption: str, target_edit: QLineEdit) -> QWidget:
+            cell = QWidget()
+            cell_layout = QHBoxLayout(cell)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            cell_layout.setSpacing(4)
+            caption_label = QLabel(caption)
+            caption_label.setObjectName("selectionSummaryLabel")
+            target_edit.setMinimumWidth(120)
+            target_edit.setMaximumWidth(210)
+            button = QPushButton("🎨")
+            button.setMaximumWidth(32)
+            button.setMinimumHeight(24)
+            button.clicked.connect(lambda _checked=False, edit=target_edit: self.pick_color_for_edit(edit))
+            cell_layout.addWidget(caption_label)
+            cell_layout.addWidget(target_edit, 1)
+            cell_layout.addWidget(button)
+            return cell
+
+        def make_compact_color_grid(*cells: QWidget) -> QWidget:
+            grid_widget = QWidget()
+            grid = QGridLayout(grid_widget)
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setHorizontalSpacing(8)
+            grid.setVerticalSpacing(4)
+            for idx, cell in enumerate(cells):
+                grid.addWidget(cell, idx // 2, idx % 2)
+            return grid_widget
+
         self.inspector_general, self.inspector_general_layout = make_tab()
         self.inspector_content, self.inspector_content_layout = make_tab()
         self.inspector_music, self.inspector_music_layout = make_tab()
-        self.inspector_weather, self.inspector_weather_layout = make_tab()
+        self.inspector_weather, self.inspector_weather_layout = make_scrolled_tab()
         self.inspector_appearance, self.inspector_appearance_layout = make_tab()
         self.inspector_gauge, self.inspector_gauge_layout = make_tab()
         self.inspector_geometry, self.inspector_geometry_layout = make_tab()
@@ -5519,6 +5568,7 @@ class TrofeoGui(QMainWindow):
             self.weather_tool_forecast_btn,
             self.weather_tool_convert_legacy_btn,
         )
+        self.weather_tools_row = weather_tools_row
         self.row_weather_tools = make_label("Weather tools")
         self.inspector_weather_layout.addRow(self.row_weather_tools, weather_tools_row)
         self.weather_designer_city_search_edit = QLineEdit()
@@ -5557,26 +5607,32 @@ class TrofeoGui(QMainWindow):
         self.row_weather_format = make_label("Weather format")
         self.inspector_weather_layout.addRow(self.row_weather_source, self.weather_source_combo)
         self.inspector_weather_layout.addRow(self.row_weather_format, self.weather_format_combo)
-        self.row_weather_widget_location_font = make_label("Location font")
-        self.row_weather_widget_temp_font = make_label("Temp font")
-        self.row_weather_widget_detail_font = make_label("Detail font")
-        self.row_weather_widget_location_color = make_label("Location color")
-        self.row_weather_widget_temp_color = make_label("Temp color")
-        self.row_weather_widget_detail_color = make_label("Detail color")
-        self.row_weather_widget_panel_color = make_label("Panel color")
+        for spin in (
+            self.weather_widget_title_font_spin,
+            self.weather_widget_body_font_spin,
+            self.weather_widget_detail_font_spin,
+        ):
+            spin.setMaximumWidth(84)
+        self.weather_widget_fonts_row = wrap_row(
+            QLabel("Location"),
+            self.weather_widget_title_font_spin,
+            QLabel("Temp"),
+            self.weather_widget_body_font_spin,
+            QLabel("Detail"),
+            self.weather_widget_detail_font_spin,
+        )
+        self.weather_widget_colors_row = make_compact_color_grid(
+            add_compact_color_cell("Location", self.weather_widget_title_color_edit),
+            add_compact_color_cell("Temp", self.weather_widget_body_color_edit),
+            add_compact_color_cell("Detail", self.weather_widget_detail_color_edit),
+            add_compact_color_cell("Panel", self.weather_widget_panel_color_edit),
+        )
+        self.row_weather_widget_fonts = make_label("Fonts")
+        self.row_weather_widget_colors = make_label("Colors")
         self.row_weather_widget_transparent_bg = make_label("Background")
         self.row_weather_widget_animate_icons = make_label("Icon motion")
-        self.weather_widget_title_color_row, _ = add_color_row(self.weather_widget_title_color_edit)
-        self.weather_widget_body_color_row, _ = add_color_row(self.weather_widget_body_color_edit)
-        self.weather_widget_detail_color_row, _ = add_color_row(self.weather_widget_detail_color_edit)
-        self.weather_widget_panel_color_row, _ = add_color_row(self.weather_widget_panel_color_edit)
-        self.inspector_weather_layout.addRow(self.row_weather_widget_location_font, self.weather_widget_title_font_spin)
-        self.inspector_weather_layout.addRow(self.row_weather_widget_temp_font, self.weather_widget_body_font_spin)
-        self.inspector_weather_layout.addRow(self.row_weather_widget_detail_font, self.weather_widget_detail_font_spin)
-        self.inspector_weather_layout.addRow(self.row_weather_widget_location_color, self.weather_widget_title_color_row)
-        self.inspector_weather_layout.addRow(self.row_weather_widget_temp_color, self.weather_widget_body_color_row)
-        self.inspector_weather_layout.addRow(self.row_weather_widget_detail_color, self.weather_widget_detail_color_row)
-        self.inspector_weather_layout.addRow(self.row_weather_widget_panel_color, self.weather_widget_panel_color_row)
+        self.inspector_weather_layout.addRow(self.row_weather_widget_fonts, self.weather_widget_fonts_row)
+        self.inspector_weather_layout.addRow(self.row_weather_widget_colors, self.weather_widget_colors_row)
         self.inspector_weather_layout.addRow(self.row_weather_widget_transparent_bg, self.weather_widget_transparent_bg_chk)
         self.inspector_weather_layout.addRow(self.row_weather_widget_animate_icons, self.weather_widget_animate_icons_chk)
         self.weather_source_combo.currentIndexChanged.connect(self._on_weather_source_changed)
@@ -15487,15 +15543,16 @@ class TrofeoGui(QMainWindow):
         if hasattr(self, "weather_format_combo"):
             self.weather_format_combo.setVisible(show_stat_fields)
             self.row_weather_format.setVisible(show_stat_fields)
-        weather_layout = self.inspector_weather.layout()
+        weather_layout = getattr(self, "inspector_weather_layout", None)
+        self._set_form_row_visible(
+            weather_layout,
+            getattr(self, "row_weather_tools", None),
+            getattr(self, "weather_tools_row", None),
+            bool(want_weather_tab and not show_weather_widget_fields),
+        )
         for row_label, widget in (
-            (self.row_weather_widget_location_font, self.weather_widget_title_font_spin),
-            (self.row_weather_widget_temp_font, self.weather_widget_body_font_spin),
-            (self.row_weather_widget_detail_font, self.weather_widget_detail_font_spin),
-            (self.row_weather_widget_location_color, self.weather_widget_title_color_row),
-            (self.row_weather_widget_temp_color, self.weather_widget_body_color_row),
-            (self.row_weather_widget_detail_color, self.weather_widget_detail_color_row),
-            (self.row_weather_widget_panel_color, self.weather_widget_panel_color_row),
+            (self.row_weather_widget_fonts, self.weather_widget_fonts_row),
+            (self.row_weather_widget_colors, self.weather_widget_colors_row),
             (self.row_weather_widget_transparent_bg, self.weather_widget_transparent_bg_chk),
             (self.row_weather_widget_animate_icons, self.weather_widget_animate_icons_chk),
         ):
