@@ -6087,6 +6087,34 @@ class TrofeoGui(QMainWindow):
         self.inspector_geometry_layout.addRow(self.row_geometry_w, self.designer_w_spin)
         self.row_geometry_h = make_label("Wysokość")
         self.inspector_geometry_layout.addRow(self.row_geometry_h, self.designer_h_spin)
+        self.geometry_preset_top_btn = QPushButton("Top")
+        self.geometry_preset_bottom_btn = QPushButton("Bottom")
+        self.geometry_preset_left_btn = QPushButton("Left")
+        self.geometry_preset_right_btn = QPushButton("Right")
+        self.geometry_preset_center_btn = QPushButton("Center")
+        for btn in (
+            self.geometry_preset_top_btn,
+            self.geometry_preset_bottom_btn,
+            self.geometry_preset_left_btn,
+            self.geometry_preset_right_btn,
+            self.geometry_preset_center_btn,
+        ):
+            btn.setObjectName("quickAddButton")
+            btn.setMinimumHeight(24)
+        self.geometry_preset_top_btn.clicked.connect(lambda: self.apply_geometry_rect_preset("top"))
+        self.geometry_preset_bottom_btn.clicked.connect(lambda: self.apply_geometry_rect_preset("bottom"))
+        self.geometry_preset_left_btn.clicked.connect(lambda: self.apply_geometry_rect_preset("left"))
+        self.geometry_preset_right_btn.clicked.connect(lambda: self.apply_geometry_rect_preset("right"))
+        self.geometry_preset_center_btn.clicked.connect(lambda: self.apply_geometry_rect_preset("center"))
+        self.geometry_preset_row = wrap_row(
+            self.geometry_preset_top_btn,
+            self.geometry_preset_bottom_btn,
+            self.geometry_preset_left_btn,
+            self.geometry_preset_right_btn,
+            self.geometry_preset_center_btn,
+        )
+        self.row_geometry_presets = make_label("Presets")
+        self.inspector_geometry_layout.addRow(self.row_geometry_presets, self.geometry_preset_row)
         self.row_motion_enabled = make_label("Ruch")
         self.inspector_geometry_layout.addRow(self.row_motion_enabled, self.motion_enabled_chk)
         self.row_motion_range = make_label("Zakres klatek")
@@ -7220,6 +7248,7 @@ class TrofeoGui(QMainWindow):
             ("row_geometry_y", "Y", "Y"),
             ("row_geometry_w", "Width", "Szerokość"),
             ("row_geometry_h", "Height", "Wysokość"),
+            ("row_geometry_presets", "Presets", "Presety"),
             ("row_motion_enabled", "Motion", "Ruch"),
             ("row_motion_range", "Frame range", "Zakres klatek"),
             ("row_motion_target_x", "End X", "Koniec X"),
@@ -7544,6 +7573,16 @@ class TrofeoGui(QMainWindow):
             self.weather_designer_apply_btn.setText(tr("Apply", "Zastosuj"))
         if hasattr(self, "weather_designer_refresh_btn"):
             self.weather_designer_refresh_btn.setText(tr("Refresh", "Odśwież"))
+        if hasattr(self, "geometry_preset_top_btn"):
+            self.geometry_preset_top_btn.setText(tr("Top", "Góra"))
+        if hasattr(self, "geometry_preset_bottom_btn"):
+            self.geometry_preset_bottom_btn.setText(tr("Bottom", "Dół"))
+        if hasattr(self, "geometry_preset_left_btn"):
+            self.geometry_preset_left_btn.setText(tr("Left", "Lewo"))
+        if hasattr(self, "geometry_preset_right_btn"):
+            self.geometry_preset_right_btn.setText(tr("Right", "Prawo"))
+        if hasattr(self, "geometry_preset_center_btn"):
+            self.geometry_preset_center_btn.setText(tr("Center", "Środek"))
         if hasattr(self, "cfg_weather_refresh_now_btn"):
             self.cfg_weather_refresh_now_btn.setText(tr("Refresh weather", "Odśwież pogodę"))
         if hasattr(self, "inspector_weather_hint"):
@@ -17398,6 +17437,62 @@ class TrofeoGui(QMainWindow):
                 f"Δx {int(item['x']) - int(current_rect[0]):+d}  Δy {int(item['y']) - int(current_rect[1]):+d}",
             )
         self._sync_drag_editor_state(collection, index)
+
+    def apply_geometry_rect_preset(self, preset: str) -> None:
+        if self.theme_doc_model is None:
+            return
+        selected = self._selected_items_multi_any()
+        if len(selected) != 1:
+            QMessageBox.information(self, "Info", self._tr("Select one element first.", "Najpierw zaznacz jeden element."))
+            return
+        collection, row, item = selected[0]
+        if bool(item.get("locked", False)):
+            return
+        canvas = self.theme_doc_model.get("canvas", {}) if isinstance(self.theme_doc_model, dict) else {}
+        canvas_width = max(1, int(canvas.get("width", 1920)))
+        canvas_height = max(1, int(canvas.get("height", 462)))
+        margin_x = 48
+        margin_y = 24
+        gap_y = 18
+        current_x, current_y, current_w, current_h = self._selected_item_rect(item, collection)
+        if preset == "top":
+            next_rect = [margin_x, margin_y, max(1, canvas_width - margin_x * 2), max(1, min(current_h, 82))]
+        elif preset == "bottom":
+            height = max(1, min(current_h, 92))
+            next_rect = [margin_x, max(0, canvas_height - margin_y - height), max(1, canvas_width - margin_x * 2), height]
+        elif preset == "left":
+            width = max(1, min(max(current_w, 360), (canvas_width // 2) - margin_x - 16))
+            next_rect = [margin_x, margin_y + gap_y, width, max(1, canvas_height - (margin_y + gap_y) * 2)]
+        elif preset == "right":
+            width = max(1, min(max(current_w, 360), (canvas_width // 2) - margin_x - 16))
+            next_rect = [max(0, canvas_width - margin_x - width), margin_y + gap_y, width, max(1, canvas_height - (margin_y + gap_y) * 2)]
+        else:
+            width = max(1, min(max(current_w, 520), canvas_width - margin_x * 2))
+            height = max(1, min(max(current_h, 150), canvas_height - margin_y * 2))
+            next_rect = [(canvas_width - width) // 2, (canvas_height - height) // 2, width, height]
+        self.push_designer_history()
+        x, y, width, height = [self._snap_value(int(v)) for v in next_rect]
+        width = max(1, width)
+        height = max(1, height)
+        if collection in {"images", "panels", "widgets"}:
+            item["rect"] = [x, y, width, height]
+        else:
+            item["x"] = x
+            item["y"] = y
+            item["box_width"] = width
+            item["box_height"] = height
+        self._designer_updating = True
+        try:
+            self.designer_x_spin.setValue(x)
+            self.designer_y_spin.setValue(y)
+            self.designer_w_spin.setValue(width)
+            self.designer_h_spin.setValue(height)
+        finally:
+            self._designer_updating = False
+        self.write_designer_to_json()
+        self._refresh_designer_list_row(row)
+        self._update_preview_canvas_overlay()
+        self.schedule_preview_theme_doc()
 
     def resize_designer_element(self, collection: str, index: int, x: int, y: int, width: int, height: int) -> None:
         if self.theme_doc_model is None:
