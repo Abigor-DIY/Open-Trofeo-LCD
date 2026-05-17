@@ -13797,6 +13797,7 @@ class TrofeoGui(QMainWindow):
                 "backdrop_enabled": True,
                 "backdrop_opacity": 0.30,
                 "cover_enabled": True,
+                "cover_placeholder_enabled": True,
                 "title_marquee": True,
                 "title_marquee_speed": 55.0,
                 "equalizer_enabled": True,

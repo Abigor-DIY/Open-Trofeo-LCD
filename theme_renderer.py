@@ -1841,17 +1841,38 @@ def _render_media_now_playing_widget(canvas: Image.Image, item: dict[str, Any], 
     media_app = str(snapshot.get("media_app", "N/A") or "N/A")
     media_state = str(snapshot.get("media_state", "N/A") or "N/A")
     if style == "mini":
-        text_x = int(20 * scale)
-        text_w = max(1, w - text_x - int(20 * scale))
-        title_h = max(16, min(int(30 * scale), max(16, h // 3)))
-        artist_h = max(12, min(int(24 * scale), max(12, h // 4)))
-        title_y = max(4, int(12 * scale))
-        artist_y = min(h - artist_h - 4, title_y + title_h + max(2, int(4 * scale)))
-        eq_h = max(0, h - (artist_y + artist_h) - max(8, int(10 * scale)))
+        pad = max(6, int(12 * scale))
+        gap = max(3, int(5 * scale))
+        cover_size = 0
+        cover_x = pad
+        cover_y = 0
+        if cover_enabled and w >= 220 and h >= 58:
+            cover_size = max(42, min(int(h * 0.70), int(w * 0.22)))
+            cover_y = max(4, (h - cover_size) // 2)
+            cover = _media_cover_image(snapshot, base_dir, (cover_size, cover_size))
+            if cover is None and cover_placeholder_enabled:
+                cover = _media_cover_placeholder((cover_size, cover_size), title=media_title, artist=media_artist, fill=fill, accent=title_color)
+            if cover is not None:
+                panel.alpha_composite(_apply_rounded_alpha(cover, max(5, int(10 * scale))), (cover_x, cover_y))
+        text_x = pad + cover_size + (gap * 2 if cover_size else 0)
+        text_w = max(1, w - text_x - pad)
+        top = max(4, int(9 * scale))
+        bottom = max(4, int(7 * scale))
+        title_h = max(14, min(int(28 * scale), max(14, h // 3)))
+        artist_h = max(0, min(int(20 * scale), max(0, h // 4)))
+        eq_h = max(0, h - top - title_h - artist_h - gap * 2 - bottom)
+        if equalizer_enabled and eq_h < 14:
+            artist_h = max(0, min(artist_h, h - top - title_h - gap - bottom - 14))
+            eq_h = max(0, h - top - title_h - artist_h - gap * 2 - bottom)
+        title_y = top
+        artist_y = title_y + title_h + gap
         _draw_media_widget_text(panel, x=text_x, y=title_y, width=text_w, height=title_h, text=f"♫ {media_title}", font=title_font, fill=title_color, bold=True, marquee=title_marquee, marquee_speed=marquee_speed)
-        _draw_media_widget_text(panel, x=text_x, y=artist_y, width=text_w, height=artist_h, text=media_artist, font=artist_font, fill=artist_color)
+        show_artist = artist_h >= 8
+        if show_artist:
+            _draw_media_widget_text(panel, x=text_x, y=artist_y, width=text_w, height=artist_h, text=media_artist, font=artist_font, fill=artist_color)
         if equalizer_enabled and eq_h >= 14:
-            _draw_media_widget_equalizer(panel, rect=(text_x, artist_y + artist_h + max(3, int(4 * scale)), text_w, eq_h), snapshot=snapshot, fill_color=eq_color, accent_color=eq_accent, bars=int(settings.get("equalizer_bars", 20)), gap=int(settings.get("equalizer_gap", 3)), mirror=bool(settings.get("equalizer_mirror", False)))
+            eq_top = (artist_y + artist_h + gap) if show_artist else (title_y + title_h + gap)
+            _draw_media_widget_equalizer(panel, rect=(text_x, eq_top, text_w, eq_h), snapshot=snapshot, fill_color=eq_color, accent_color=eq_accent, bars=int(settings.get("equalizer_bars", 20)), gap=int(settings.get("equalizer_gap", 3)), mirror=bool(settings.get("equalizer_mirror", False)))
     else:
         cover_size = max(58, min(int(h * 0.78), int(w * 0.18)))
         cover_x = int(20 * scale)
