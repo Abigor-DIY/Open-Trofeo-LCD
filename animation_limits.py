@@ -13,3 +13,8 @@ ANIMATION_TIMELINE_THUMB_MAX_FRAMES = 240
 ANIMATION_FRAMES_SOFT_WARN = 96
 ANIMATION_FRAMES_STRONG_WARN = 180
 ANIMATION_FRAMES_EXTREME_WARN = 300
+
+# Video backgrounds are expanded to image frames before they are sent to the LCD.
+# Keep automatic imports below the strong-warning level; users can still append
+# more frames manually when they explicitly want a heavier animation.
+VIDEO_IMPORT_MAX_FRAMES = ANIMATION_FRAMES_STRONG_WARN

@@ -34,6 +34,7 @@ from animation_limits import (
     ANIMATION_FRAMES_STRONG_WARN,
     ANIMATION_LIST_THUMB_MAX_FRAMES,
     ANIMATION_TIMELINE_THUMB_MAX_FRAMES,
+    VIDEO_IMPORT_MAX_FRAMES,
 )
 from animation_studio import AnimationSequenceController, AnimationTimelineWidget
 
@@ -10793,9 +10794,10 @@ class TrofeoGui(QMainWindow):
         width = max(1, int(canvas_size[0]))
         height = max(1, int(canvas_size[1]))
         fps_value = max(1.0, min(30.0, float(fps or 12.0)))
-        max_frames = int(max(24, min(720, fps_value * 20.0)))
+        max_frames = int(max(24, min(VIDEO_IMPORT_MAX_FRAMES, fps_value * 20.0)))
         copied_paths: list[str] = []
         durations: list[int] = []
+        truncated = False
         for source_index, source in enumerate(sources):
             if source.suffix.lower() not in VIDEO_BACKGROUND_EXTENSIONS:
                 continue
@@ -10821,10 +10823,19 @@ class TrofeoGui(QMainWindow):
             if proc.returncode != 0:
                 raise RuntimeError(proc.stderr.strip() or f"ffmpeg failed for {source}")
             frames = sorted(target_dir.glob(f"{safe_stem}_video_{source_index:02d}_*.png"))
+            if len(frames) >= max_frames:
+                truncated = True
             for frame in frames:
                 copied_paths.append(cls._display_path_for_base(frame, base_dir))
                 durations.append(max(1, int(round(1000.0 / fps_value))))
-        return {"frame_paths": copied_paths, "frame_durations_ms": durations[: len(copied_paths)]}
+        return {
+            "frame_paths": copied_paths,
+            "frame_durations_ms": durations[: len(copied_paths)],
+            "source_kind": "video",
+            "video_fps": fps_value,
+            "video_max_frames": max_frames,
+            "video_truncated": truncated,
+        }
 
     @classmethod
     def _collect_animation_zip_export_for_worker(
@@ -10871,7 +10882,13 @@ class TrofeoGui(QMainWindow):
                 copied_paths.append(cls._display_path_for_base(out, base_dir))
         return {"frame_paths": copied_paths, "frame_durations_ms": durations[: len(copied_paths)]}
 
-    def _finish_animation_frame_import(self, mode: str, copied_paths: list[str], frame_durations: list[int] | None = None) -> None:
+    def _finish_animation_frame_import(
+        self,
+        mode: str,
+        copied_paths: list[str],
+        frame_durations: list[int] | None = None,
+        import_info: dict[str, Any] | None = None,
+    ) -> None:
         if not copied_paths:
             QMessageBox.warning(
                 self,
@@ -10915,10 +10932,29 @@ class TrofeoGui(QMainWindow):
         self._set_image_preview_label(self.background_preview_label, copied_paths[0], empty_text=self._empty_background_preview_caption())
         self._rebuild_theme_asset_gallery()
         self._maybe_warn_animation_frame_count(controller.normalize().frame_count)
+        info = import_info if isinstance(import_info, dict) else {}
+        source_kind = str(info.get("source_kind", "")).strip().lower()
+        truncated = bool(info.get("video_truncated", False))
         if mode == "append":
-            self.preview_info_label.setText(self._tr(f"Added {len(copied_paths)} animation frame(s).", f"Dodano {len(copied_paths)} klat. animacji."))
+            if source_kind == "video" and truncated:
+                self.preview_info_label.setText(
+                    self._tr(
+                        f"Added {len(copied_paths)} video frame(s); import was capped for LCD performance.",
+                        f"Dodano {len(copied_paths)} klatek wideo; import ograniczony dla wydajności LCD.",
+                    )
+                )
+            else:
+                self.preview_info_label.setText(self._tr(f"Added {len(copied_paths)} animation frame(s).", f"Dodano {len(copied_paths)} klat. animacji."))
         else:
-            self.preview_info_label.setText(self._tr(f"Imported animation: {len(copied_paths)} frame(s).", f"Zaimportowano animację: {len(copied_paths)} klat."))
+            if source_kind == "video" and truncated:
+                self.preview_info_label.setText(
+                    self._tr(
+                        f"Imported video background: {len(copied_paths)} frame(s); import was capped for LCD performance.",
+                        f"Zaimportowano tło wideo: {len(copied_paths)} klat.; import ograniczony dla wydajności LCD.",
+                    )
+                )
+            else:
+                self.preview_info_label.setText(self._tr(f"Imported animation: {len(copied_paths)} frame(s).", f"Zaimportowano animację: {len(copied_paths)} klat."))
         self.schedule_preview_theme_doc()
 
     def _set_animation_import_busy(self, busy: bool) -> None:
@@ -11209,7 +11245,7 @@ class TrofeoGui(QMainWindow):
                             frame_durations.append(max(1, int(float(item))))
                         except Exception:
                             continue
-                self._finish_animation_frame_import(mode, copied_paths, frame_durations)
+                self._finish_animation_frame_import(mode, copied_paths, frame_durations, result)
             return
         if action == "animation-stabilize":
             result = data.get("result", {})
