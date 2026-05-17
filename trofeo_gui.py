@@ -5485,14 +5485,14 @@ class TrofeoGui(QMainWindow):
 
         self.inspector_general, self.inspector_general_layout = make_tab()
         self.inspector_content, self.inspector_content_layout = make_tab()
-        self.inspector_music, self.inspector_music_layout = make_tab()
+        self.inspector_music, self.inspector_music_layout = make_scrolled_tab()
         self.inspector_weather, self.inspector_weather_layout = make_scrolled_tab()
-        self.inspector_appearance, self.inspector_appearance_layout = make_tab()
-        self.inspector_gauge, self.inspector_gauge_layout = make_tab()
-        self.inspector_geometry, self.inspector_geometry_layout = make_tab()
-        self.inspector_image, self.inspector_image_layout = make_tab()
-        self.inspector_media, self.inspector_media_layout = make_tab()
-        self.inspector_animation, self.inspector_animation_layout = make_tab()
+        self.inspector_appearance, self.inspector_appearance_layout = make_scrolled_tab()
+        self.inspector_gauge, self.inspector_gauge_layout = make_scrolled_tab()
+        self.inspector_geometry, self.inspector_geometry_layout = make_scrolled_tab()
+        self.inspector_image, self.inspector_image_layout = make_scrolled_tab()
+        self.inspector_media, self.inspector_media_layout = make_scrolled_tab()
+        self.inspector_animation, self.inspector_animation_layout = make_scrolled_tab()
 
         self.inspector_music_spectrum_placeholder = QLabel(
             "Animated spectrum / EQ visualizer: reserved for a future update."
@@ -15500,7 +15500,7 @@ class TrofeoGui(QMainWindow):
             self.inspector_music_spectrum_placeholder.setVisible(bool(tab_shown and not show_eq_placeholder))
 
         show_media_widget_fields = bool(tab_shown and coll == "widgets" and item is not None and str(item.get("kind", "")).strip().lower().startswith("media_"))
-        music_layout = self.inspector_music.layout()
+        music_layout = self.inspector_music_layout
         for row_label, widget in (
             (self.row_music_widget_options, self.music_widget_options_row),
             (self.row_music_widget_title_font, self.widget_title_font_spin),
@@ -15612,14 +15612,14 @@ class TrofeoGui(QMainWindow):
         self._set_tab_enabled_if_present(self.inspector_image, is_image)
         self._set_tab_enabled_if_present(self.inspector_weather, is_widget)
 
-        self._set_form_row_visible(inspector_content_layout := self.inspector_content.layout(), self.row_content_text, self.designer_text_edit, is_text)
+        self._set_form_row_visible(inspector_content_layout := self.inspector_content_layout, self.row_content_text, self.designer_text_edit, is_text)
         self._set_form_row_visible(inspector_content_layout, self.row_content_label, self.designer_label_edit, is_stat)
         # Stat binding rows (source, format, …) live on Content or Music tab — visibility via _refresh_inspector_music_layout().
         self.designer_source_combo.setToolTip("Źródło danych dla tej statystyki.")
         self.designer_format_edit.setPlaceholderText("{value}")
         self.designer_label_edit.setPlaceholderText("Np. CPU, RAM, Temp")
 
-        appearance_layout = self.inspector_appearance.layout()
+        appearance_layout = self.inspector_appearance_layout
         self._set_form_row_visible(appearance_layout, self.row_appearance_font, self.font_row, is_text or is_stat)
         self._set_form_row_visible(appearance_layout, self.row_appearance_font_style, self.font_style_row, is_text or is_stat)
         self._set_form_row_visible(appearance_layout, self.row_appearance_align, self.designer_align_combo, is_text or is_stat)
@@ -15635,7 +15635,7 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(appearance_layout, self.row_panel_opacity, self.panel_opacity_spin, is_panel or is_widget)
         self._set_form_row_visible(appearance_layout, self.row_panel_radius, self.panel_radius_spin, is_panel)
 
-        geometry_layout = self.inspector_geometry.layout()
+        geometry_layout = self.inspector_geometry_layout
         self._set_form_row_visible(geometry_layout, self.row_geometry_x, self.designer_x_spin, True)
         self._set_form_row_visible(geometry_layout, self.row_geometry_y, self.designer_y_spin, True)
         self._set_form_row_visible(geometry_layout, self.row_geometry_w, self.designer_w_spin, True)
@@ -15646,7 +15646,7 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(geometry_layout, self.row_motion_target_y, self.motion_target_y_spin, supports_motion)
         self._set_form_row_visible(geometry_layout, self.row_motion_target_opacity, self.motion_target_opacity_spin, supports_motion)
         self._set_form_row_visible(geometry_layout, self.row_motion_actions, self.motion_actions_row, supports_motion)
-        image_layout = self.inspector_image.layout()
+        image_layout = self.inspector_image_layout
         self._set_form_row_visible(image_layout, self.row_image_path, self.designer_path_row, is_image)
         self._set_form_row_visible(image_layout, self.row_image_fit, self.designer_fit_combo, is_image)
         self._set_form_row_visible(image_layout, self.row_image_opacity, self.designer_opacity_spin, is_image)
@@ -16078,7 +16078,7 @@ class TrofeoGui(QMainWindow):
             settings["cover_placeholder_enabled"] = True
 
     def _update_gauge_stat_inspector_visibility(self) -> None:
-        gauge_layout = self.inspector_gauge.layout()
+        gauge_layout = self.inspector_gauge_layout
         gauge_tab_idx = self.inspector_tabs.indexOf(getattr(self, "inspector_gauge", None))
         selected_multi = self._selected_items_multi_any()
         show_gauge = False
@@ -16107,7 +16107,7 @@ class TrofeoGui(QMainWindow):
         )
         for row_label, widget in gauge_rows:
             self._set_form_row_visible(gauge_layout, row_label, widget, show_gauge)
-        appearance_layout = self.inspector_appearance.layout()
+        appearance_layout = self.inspector_appearance_layout
         sparkline_rows = (
             (self.row_sparkline_points, self.designer_sparkline_points_spin),
             (self.row_sparkline_fill_opacity, self.designer_sparkline_fill_opacity_spin),
@@ -16115,7 +16115,7 @@ class TrofeoGui(QMainWindow):
         )
         for row_label, widget in sparkline_rows:
             self._set_form_row_visible(appearance_layout, row_label, widget, show_sparkline)
-        music_layout = self.inspector_music.layout()
+        music_layout = self.inspector_music_layout
         equalizer_rows = (
             (self.row_music_equalizer_bars, self.designer_equalizer_bars_spin),
             (self.row_music_equalizer_gap, self.designer_equalizer_gap_spin),
