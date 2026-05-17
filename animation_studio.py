@@ -88,6 +88,10 @@ class AnimationSequenceController:
         animation["loop"] = bool(animation.get("loop", True))
         animation["frame_paths"] = frame_paths
         animation["frame_durations_ms"] = frame_durations
+        animation["smooth_loop"] = bool(animation.get("smooth_loop", True))
+        if loop_start is not None and loop_end is not None:
+            animation["loop_start"] = loop_start
+            animation["loop_end"] = loop_end
 
         return AnimationSequence(
             frame_paths=frame_paths,

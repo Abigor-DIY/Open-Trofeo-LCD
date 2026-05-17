@@ -481,6 +481,16 @@ def _normalize_effects(raw: Any) -> dict[str, Any]:
         normalized_frame_durations.extend([default_duration] * (len(normalized_frame_paths) - len(normalized_frame_durations)))
     elif len(normalized_frame_durations) > len(normalized_frame_paths):
         normalized_frame_durations = normalized_frame_durations[: len(normalized_frame_paths)]
+    loop_start = None
+    loop_end = None
+    if normalized_frame_paths and ("loop_start" in animation_data or "loop_end" in animation_data):
+        loop_start = int(_expect_number(animation_data.get("loop_start", 0), "effects.animation.loop_start"))
+        loop_end = int(_expect_number(animation_data.get("loop_end", len(normalized_frame_paths) - 1), "effects.animation.loop_end"))
+        frame_max = len(normalized_frame_paths) - 1
+        loop_start = max(0, min(frame_max, loop_start))
+        loop_end = max(0, min(frame_max, loop_end))
+        if loop_end < loop_start:
+            loop_start, loop_end = loop_end, loop_start
 
     motion_tracks_raw = data.get("motion_tracks", [])
     if motion_tracks_raw is None:
@@ -510,18 +520,24 @@ def _normalize_effects(raw: Any) -> dict[str, Any]:
                 "opacity_to": opacity_to,
             }
         )
+    animation_out = {
+        "enabled": bool(animation_data.get("enabled", False)),
+        "use_as_background": bool(animation_data.get("use_as_background", True)),
+        "fps": fps,
+        "current_frame": current_frame,
+        "loop": bool(animation_data.get("loop", True)),
+        "smooth_loop": bool(animation_data.get("smooth_loop", True)),
+        "frame_paths": normalized_frame_paths,
+        "frame_durations_ms": normalized_frame_durations,
+    }
+    if loop_start is not None and loop_end is not None:
+        animation_out["loop_start"] = loop_start
+        animation_out["loop_end"] = loop_end
+
     out = {
         "show_grid": bool(data.get("show_grid", False)),
         "show_safe_area": bool(data.get("show_safe_area", False)),
-        "animation": {
-            "enabled": bool(animation_data.get("enabled", False)),
-            "use_as_background": bool(animation_data.get("use_as_background", True)),
-            "fps": fps,
-            "current_frame": current_frame,
-            "loop": bool(animation_data.get("loop", True)),
-            "frame_paths": normalized_frame_paths,
-            "frame_durations_ms": normalized_frame_durations,
-        },
+        "animation": animation_out,
         "slideshow": {"enabled": False},
         "motion_tracks": normalized_motion_tracks,
         "import_report": _expect_dict(data.get("import_report", {}), "effects.import_report") if data.get("import_report", {}) is not None else {},
