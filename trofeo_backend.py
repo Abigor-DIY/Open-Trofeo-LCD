@@ -45,6 +45,7 @@ FAST_VISUAL_REFRESH_INTERVAL_S = 0.25
 FAST_AUDIO_EQ_REFRESH_INTERVAL_S = 0.10
 MIN_LIVE_REFRESH_INTERVAL_S = 0.15
 FAST_VISUAL_FULL_STATS_INTERVAL_S = 1.5
+MEDIA_TRANSIENT_GRACE_S = 8.0
 LIVE_REFRESH_LOG_INTERVAL_S = 5.0
 LIVE_REFRESH_SLOW_STAGE_MS = 120.0
 WINDOWS_CAPTURE_INTER_PACKET_DELAY_S = 0.0005
@@ -1523,6 +1524,25 @@ class ReplayController:
         last_audio_eq_probe = 0.0
         last_full_stats_at = time.time()
         full_stats_interval_s = FAST_VISUAL_FULL_STATS_INTERVAL_S if fast_visual_refresh else max(1.0, interval_s)
+        last_good_media_cache = dict(media_cache) if self.stats_provider._media_snapshot_has_content(media_cache) else _default_media()
+        last_good_media_at = time.time() if self.stats_provider._media_snapshot_has_content(media_cache) else 0.0
+
+        def _stabilize_media(media: dict[str, str]) -> dict[str, str]:
+            nonlocal last_good_media_cache, last_good_media_at
+            if self.stats_provider._media_snapshot_has_content(media):
+                last_good_media_cache = dict(media)
+                last_good_media_at = time.time()
+                return media
+            if last_good_media_at and time.time() - last_good_media_at <= MEDIA_TRANSIENT_GRACE_S:
+                stable = dict(last_good_media_cache)
+                state = str(media.get("media_state", "")).strip().lower()
+                if state:
+                    stable["media_state"] = state
+                app = str(media.get("media_app", "")).strip()
+                if app and app != "N/A":
+                    stable["media_app"] = app
+                return stable
+            return media
 
         def _cached_live_stats(media_override: dict[str, str]) -> dict[str, str]:
             values = dict(stats_cache)
@@ -1674,7 +1694,7 @@ class ReplayController:
                                 current_player["media_title"] = current_player.get("media_title") or "N/A"
                                 current_player["media_artist"] = current_player.get("media_artist", "")
                             media_players[player_name] = current_player
-                    media_cache = _select_best_player(media_players) if media_players else media_cache
+                    media_cache = _stabilize_media(_select_best_player(media_players) if media_players else media_cache)
                     changed = _media_sig(media_cache) != _media_sig(previous)
                     if changed:
                         last_media_sig = _media_sig(media_cache)
@@ -1688,7 +1708,7 @@ class ReplayController:
             if has_media_sources and not event and now - last_probe >= probe_interval_s:
                 last_probe = now
                 try:
-                    media = _normalize_media(self.stats_provider._read_media_now_playing())
+                    media = _stabilize_media(_normalize_media(self.stats_provider._read_media_now_playing()))
                     sig = _media_sig(media)
                     if last_media_sig is None:
                         last_media_sig = sig

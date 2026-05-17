@@ -782,6 +782,46 @@ class StatsProvider:
         }
 
     @staticmethod
+    def _media_snapshot_has_content(snapshot: dict[str, str]) -> bool:
+        title = str(snapshot.get("media_title", "")).strip()
+        artist = str(snapshot.get("media_artist", "")).strip()
+        cover = str(snapshot.get("media_cover_path", "")).strip()
+        return bool((title and title != "N/A") or (artist and artist != "N/A") or cover)
+
+    def _remember_media_snapshot(self, snapshot: dict[str, str]) -> None:
+        if not self._media_snapshot_has_content(snapshot):
+            return
+        self._last_media_snapshot = dict(snapshot)
+        self._last_media_at = time.time()
+
+    def _apply_recent_media_fallback(self, snapshot: dict[str, str], *, max_age_s: float = 600.0) -> dict[str, str]:
+        if (time.time() - self._last_media_at) > max_age_s:
+            return snapshot
+        fallback = dict(self._last_media_snapshot)
+        if not self._media_snapshot_has_content(fallback):
+            return snapshot
+        out = dict(snapshot)
+        for key in (
+            "media_title",
+            "media_artist",
+            "media_album",
+            "media_cover_path",
+            "media_video_frame_path",
+            "media_source_url",
+        ):
+            current = str(out.get(key, "")).strip()
+            if current and current != "N/A":
+                continue
+            previous = str(fallback.get(key, "")).strip()
+            if previous and previous != "N/A":
+                out[key] = previous
+        current_app = str(out.get("media_app", "")).strip()
+        previous_app = str(fallback.get("media_app", "")).strip()
+        if (not current_app or current_app == "N/A") and previous_app and previous_app != "N/A":
+            out["media_app"] = previous_app
+        return out
+
+    @staticmethod
     def _media_priority(player_name: str, state: str, title: str) -> tuple[int, int, int]:
         p = player_name.lower()
         state_score = 3 if state == "playing" else (2 if state == "paused" else 1)
@@ -1551,7 +1591,7 @@ class StatsProvider:
         playerctl_cmd = self._playerctl_cmd()
 
         if not playerctl_cmd:
-            return self._read_media_now_playing_mpris(out)
+            return self._apply_recent_media_fallback(self._read_media_now_playing_mpris(out), max_age_s=8.0)
 
         try:
             payload = subprocess.check_output(
@@ -1605,9 +1645,7 @@ class StatsProvider:
                         out.get("media_source_url", ""),
                         out["media_cover_path"],
                     )
-                    if title or artist:
-                        self._last_media_snapshot = dict(out)
-                        self._last_media_at = time.time()
+                    self._remember_media_snapshot(out)
                     return out
         except Exception:
             pass
@@ -1638,20 +1676,8 @@ class StatsProvider:
             mpris_out = self._read_media_now_playing_mpris(dict(out))
             if mpris_out.get("media_app") != "N/A" or mpris_out.get("media_title") != "N/A":
                 return mpris_out
-        if out["media_state"] in {"playing", "paused"} and (time.time() - self._last_media_at) <= 600.0:
-            fallback = dict(self._last_media_snapshot)
-            if fallback.get("media_title") and fallback["media_title"] != "N/A":
-                out["media_title"] = fallback["media_title"]
-            if fallback.get("media_artist"):
-                out["media_artist"] = fallback["media_artist"]
-            if fallback.get("media_cover_path"):
-                out["media_cover_path"] = fallback["media_cover_path"]
-            if fallback.get("media_video_frame_path"):
-                out["media_video_frame_path"] = fallback["media_video_frame_path"]
-            if fallback.get("media_source_url"):
-                out["media_source_url"] = fallback["media_source_url"]
-            if out["media_app"] == "N/A" and fallback.get("media_app"):
-                out["media_app"] = fallback["media_app"]
+        if out["media_state"] in {"playing", "paused"}:
+            out = self._apply_recent_media_fallback(out)
         return out
 
     @staticmethod
@@ -1792,9 +1818,7 @@ class StatsProvider:
             out.get("media_source_url", ""),
             out["media_cover_path"],
         )
-        if title or artist:
-            self._last_media_snapshot = dict(out)
-            self._last_media_at = time.time()
+        self._remember_media_snapshot(out)
         return out
 
     def snapshot(self) -> StatsSnapshot:
