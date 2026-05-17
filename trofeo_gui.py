@@ -4217,8 +4217,10 @@ class TrofeoGui(QMainWindow):
         self.designer_preview_undo_btn = AnimatedToolbarButton("↶")
         self.designer_preview_redo_btn = AnimatedToolbarButton("↷")
         self.designer_align_left_btn = AnimatedToolbarButton("⟸")
+        self.designer_align_top_btn = AnimatedToolbarButton("⇑")
         self.designer_align_center_h_btn = AnimatedToolbarButton("↔")
         self.designer_align_center_v_btn = AnimatedToolbarButton("↕")
+        self.designer_align_bottom_btn = AnimatedToolbarButton("⇓")
         self.designer_align_right_btn = AnimatedToolbarButton("⟹")
         self.designer_crop_reset_btn.setObjectName("secondaryAccentButton")
         for btn in (
@@ -4238,8 +4240,10 @@ class TrofeoGui(QMainWindow):
             self.designer_preview_undo_btn,
             self.designer_preview_redo_btn,
             self.designer_align_left_btn,
+            self.designer_align_top_btn,
             self.designer_align_center_h_btn,
             self.designer_align_center_v_btn,
+            self.designer_align_bottom_btn,
             self.designer_align_right_btn,
         ):
             btn.setMinimumHeight(26)
@@ -4248,8 +4252,10 @@ class TrofeoGui(QMainWindow):
             self.designer_preview_undo_btn,
             self.designer_preview_redo_btn,
             self.designer_align_left_btn,
+            self.designer_align_top_btn,
             self.designer_align_center_h_btn,
             self.designer_align_center_v_btn,
+            self.designer_align_bottom_btn,
             self.designer_align_right_btn,
         ):
             btn.setMinimumWidth(30)
@@ -4258,8 +4264,10 @@ class TrofeoGui(QMainWindow):
         self.designer_preview_undo_btn.setToolTip(self._tr("Undo designer change", "Cofnij zmianę w projektancie"))
         self.designer_preview_redo_btn.setToolTip(self._tr("Redo designer change", "Ponów zmianę w projektancie"))
         self.designer_align_left_btn.setToolTip(self._tr("Align selected element to the left edge", "Wyrównaj zaznaczenie do lewej krawędzi"))
+        self.designer_align_top_btn.setToolTip(self._tr("Align selected element to the top edge", "Wyrównaj zaznaczenie do górnej krawędzi"))
         self.designer_align_center_h_btn.setToolTip(self._tr("Center selected element horizontally", "Wycentruj zaznaczenie w poziomie"))
         self.designer_align_center_v_btn.setToolTip(self._tr("Center selected element vertically", "Wycentruj zaznaczenie w pionie"))
+        self.designer_align_bottom_btn.setToolTip(self._tr("Align selected element to the bottom edge", "Wyrównaj zaznaczenie do dolnej krawędzi"))
         self.designer_align_right_btn.setToolTip(self._tr("Align selected element to the right edge", "Wyrównaj zaznaczenie do prawej krawędzi"))
         self.designer_tool_auto_btn.setToolTip(
             self._tr(
@@ -4298,8 +4306,10 @@ class TrofeoGui(QMainWindow):
         preview_tools_row.addWidget(self.designer_snap_spin)
         preview_tools_row.addSpacing(4)
         preview_tools_row.addWidget(self.designer_align_left_btn)
+        preview_tools_row.addWidget(self.designer_align_top_btn)
         preview_tools_row.addWidget(self.designer_align_center_h_btn)
         preview_tools_row.addWidget(self.designer_align_center_v_btn)
+        preview_tools_row.addWidget(self.designer_align_bottom_btn)
         preview_tools_row.addWidget(self.designer_align_right_btn)
         preview_tools_row.addSpacing(6)
         preview_tools_row.addWidget(self.designer_crop_reset_btn)
@@ -4423,8 +4433,10 @@ class TrofeoGui(QMainWindow):
         self.designer_preview_undo_btn.clicked.connect(self.undo_designer_change)
         self.designer_preview_redo_btn.clicked.connect(self.redo_designer_change)
         self.designer_align_left_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("left"))
+        self.designer_align_top_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("top"))
         self.designer_align_center_h_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("center-h"))
         self.designer_align_center_v_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("center-v"))
+        self.designer_align_bottom_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("bottom"))
         self.designer_align_right_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("right"))
         self.designer_snap_spin.valueChanged.connect(lambda value: self.preview_label.set_snap_threshold(int(value)))
         self.designer_snap_chk.toggled.connect(lambda _checked: self._update_preview_canvas_overlay())
@@ -4978,6 +4990,7 @@ class TrofeoGui(QMainWindow):
             crop_reset_btn.setEnabled(bool(has_crop))
         crop_btn = getattr(self, "designer_tool_crop_btn", None)
         if crop_btn is not None:
+            crop_btn.setEnabled(bool(crop_available))
             crop_btn.setToolTip(
                 self._tr(
                     "Draw a crop area on the preview for the selected image.",
@@ -4989,6 +5002,8 @@ class TrofeoGui(QMainWindow):
                     "Wybierz dokładnie jedną warstwę obrazu, aby kadrować ją na podglądzie.",
                 )
             )
+        if not crop_available and self._designer_preview_tool_mode() == "crop":
+            self._set_designer_mouse_tool("auto")
 
     def _set_designer_mouse_tool(self, mode: str) -> None:
         normalized = str(mode).strip().lower() or "auto"
