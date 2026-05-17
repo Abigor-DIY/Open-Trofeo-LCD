@@ -4145,12 +4145,13 @@ class TrofeoGui(QMainWindow):
         # PIONOWY SPLITTER DLA LCD I INSPECTORA
         self.designer_top_splitter = QSplitter(Qt.Vertical)
         self.designer_top_splitter.setChildrenCollapsible(False)
+        self.designer_top_splitter.splitterMoved.connect(lambda _pos, _idx: self._clamp_designer_splitter_later())
         studio_layout.addWidget(self.designer_top_splitter, 1)
 
         # LCD PREVIEW (Góra prawego panelu)
         self.designer_canvas_workbench = QFrame()
         self.designer_canvas_workbench.setObjectName("designerSectionBox")
-        self.designer_canvas_workbench.setMinimumHeight(260)
+        self.designer_canvas_workbench.setMinimumHeight(360)
         self.designer_canvas_workbench.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         canvas_vbox = QVBoxLayout(self.designer_canvas_workbench)
         canvas_vbox.setContentsMargins(0, 0, 0, 0) # Przejmujemy niewykorzystaną część
@@ -4264,8 +4265,9 @@ class TrofeoGui(QMainWindow):
 
         # INSPECTOR (Właściwości - Powiększony do góry)
         self.designer_inspector_container = QWidget()
-        self.designer_inspector_container.setMinimumHeight(220)
-        self.designer_inspector_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.designer_inspector_container.setMinimumHeight(180)
+        self.designer_inspector_container.setMaximumHeight(340)
+        self.designer_inspector_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._setup_inspector_tabs(QVBoxLayout(self.designer_inspector_container))
         self.designer_stat_display_combo.currentTextChanged.connect(
             lambda _t: self._update_gauge_stat_inspector_visibility()
@@ -4275,8 +4277,8 @@ class TrofeoGui(QMainWindow):
 
         # Ograniczamy wysokość Inspectora, dajemy więcej miejsca dla LCD
         self.designer_top_splitter.setStretchFactor(0, 5) # Canvas
-        self.designer_top_splitter.setStretchFactor(1, 2) # Inspector
-        self.designer_top_splitter.setSizes([640, 320])
+        self.designer_top_splitter.setStretchFactor(1, 0) # Inspector
+        self.designer_top_splitter.setSizes([720, 260])
 
         designer_tab_layout.addWidget(designer_box, 1)
 
@@ -5516,6 +5518,7 @@ class TrofeoGui(QMainWindow):
         self.inspector_tabs = QTabWidget()
         self.inspector_tabs.setDocumentMode(True)
         self.inspector_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.inspector_tabs.currentChanged.connect(lambda _idx: self._clamp_designer_splitter_later())
 
         def make_tab() -> tuple[QWidget, QFormLayout]:
             tab = QWidget()
@@ -6747,6 +6750,11 @@ class TrofeoGui(QMainWindow):
             self.designer_quick_add_toggle_btn.setMaximumHeight(26 if short else 28)
         if hasattr(self, "props_box"):
             self.props_box.setMinimumWidth(max(270, int((300 if compact else 360) * scale)))
+        min_canvas, max_inspector = self._designer_splitter_limits()
+        if hasattr(self, "designer_canvas_workbench"):
+            self.designer_canvas_workbench.setMinimumHeight(min_canvas)
+        if hasattr(self, "designer_inspector_container"):
+            self.designer_inspector_container.setMaximumHeight(max_inspector)
         if getattr(self, "studio_splitter", None) is not None:
             total = int((1480 if compact else 1760) * scale)
             self.studio_splitter.setSizes([max(980, total), 0])
@@ -6762,6 +6770,7 @@ class TrofeoGui(QMainWindow):
                 self.designer_assets_box.setMaximumHeight(210 if short else 260)
                 self.designer_animation_box.setMaximumHeight(170 if short else 220)
         self._apply_designer_aux_visibility(auto_short=short)
+        self._clamp_designer_splitter_later()
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
@@ -15237,11 +15246,12 @@ class TrofeoGui(QMainWindow):
         top_splitter = getattr(self, "designer_top_splitter", None)
         if top_splitter is not None:
             if preset_name == "canvas":
-                top_splitter.setSizes([1040, 300])
+                top_splitter.setSizes([1040, 240])
             elif preset_name == "compact":
-                top_splitter.setSizes([900, 250])
+                top_splitter.setSizes([900, 220])
             else:
-                top_splitter.setSizes([980, 320])
+                top_splitter.setSizes([980, 260])
+            self._clamp_designer_splitter_later()
 
     def apply_designer_mode(self, mode: str) -> None:
         simple = str(mode).lower() == "simple"
@@ -15283,6 +15293,42 @@ class TrofeoGui(QMainWindow):
                 self.inspector_tabs.setTabVisible(image_idx, (not simple) or current_collection == "images")
         self._refresh_inspector_music_layout()
         self._refresh_inspector_weather_layout()
+        self._clamp_designer_splitter_later()
+
+    def _designer_splitter_limits(self) -> tuple[int, int]:
+        height = max(760, int(self.height() or 0))
+        compact_height = height < 1040
+        min_canvas = 300 if compact_height else 360
+        max_inspector = 260 if compact_height else 340
+        return min_canvas, max_inspector
+
+    def _clamp_designer_splitter_later(self) -> None:
+        QTimer.singleShot(0, self._clamp_designer_splitter)
+
+    def _clamp_designer_splitter(self) -> None:
+        splitter = getattr(self, "designer_top_splitter", None)
+        inspector = getattr(self, "designer_inspector_container", None)
+        canvas = getattr(self, "designer_canvas_workbench", None)
+        if splitter is None or inspector is None or canvas is None or splitter.count() < 2:
+            return
+        min_canvas, max_inspector = self._designer_splitter_limits()
+        canvas.setMinimumHeight(min_canvas)
+        inspector.setMaximumHeight(max_inspector)
+        sizes = splitter.sizes()
+        if len(sizes) < 2:
+            return
+        total = max(sum(sizes), min_canvas + 180)
+        target_inspector = min(max_inspector, max(180, sizes[1]))
+        target_canvas = max(min_canvas, total - target_inspector)
+        if target_canvas + target_inspector > total:
+            target_inspector = max(180, total - target_canvas)
+        next_sizes = [target_canvas, target_inspector]
+        if sizes[:2] != next_sizes:
+            splitter.blockSignals(True)
+            try:
+                splitter.setSizes(next_sizes)
+            finally:
+                splitter.blockSignals(False)
 
     def _set_designer_inspector_docked_bottom(self, dock_bottom: bool) -> None:
         container = getattr(self, "designer_inspector_container", None)
@@ -15900,6 +15946,7 @@ class TrofeoGui(QMainWindow):
 
         if collection == "stats":
             self._update_gauge_stat_inspector_visibility()
+        self._clamp_designer_splitter_later()
 
     def load_selected_designer_item(self) -> None:
         collection = self._selected_collection()
@@ -16346,6 +16393,7 @@ class TrofeoGui(QMainWindow):
         )
         for row_label, widget in equalizer_rows:
             self._set_form_row_visible(music_layout, row_label, widget, show_equalizer)
+        self._clamp_designer_splitter_later()
 
     def _parse_color_line(self, value: str, fallback: list[int]) -> list[int]:
         raw = value.strip()
