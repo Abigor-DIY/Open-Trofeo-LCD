@@ -1856,12 +1856,14 @@ class TrofeoGui(QMainWindow):
     def __init__(self, base_url: str):
         super().__init__()
         self._ui_language = "en"
-        self.setWindowTitle("Open Trofeo LCD")
+        self.setWindowTitle("Open Trofeo LCD[*]")
         self.resize(1680, 1040)
         self.setMinimumSize(1480, 920)
         self._status_in_flight = False
         self.theme_items: dict[str, dict[str, Any]] = {}
         self.theme_doc_model: dict[str, Any] | None = None
+        self._theme_doc_dirty = False
+        self._theme_doc_editor_syncing = False
         self.theme_stat_sources = sorted(KNOWN_STAT_SOURCES)
         self._designer_updating = False
         self.layout_presets: dict[str, Any] = {}
@@ -1914,6 +1916,7 @@ class TrofeoGui(QMainWindow):
 
         self.client = BackendClient(base_url=base_url)
         self._build_ui(base_url)
+        self._update_theme_doc_save_state()
         self._restore_ui_state()
         self._setup_shortcuts()
         self._setup_tray()
@@ -3764,6 +3767,7 @@ class TrofeoGui(QMainWindow):
         self.theme_doc_editor.setPlaceholderText("{\n  \"schema_version\": 1,\n  ...\n}")
         self.theme_doc_editor.setMinimumHeight(460)
         self.theme_doc_editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.theme_doc_editor.textChanged.connect(self._handle_theme_doc_editor_changed)
         self.theme_doc_browse_btn.clicked.connect(self.browse_theme_doc_path)
         self.theme_doc_use_selected_btn.clicked.connect(self.use_selected_theme_doc)
         self.theme_doc_load_btn.clicked.connect(self.load_theme_doc)
@@ -4042,6 +4046,10 @@ class TrofeoGui(QMainWindow):
         self.designer_toolbar_feedback_timer = QTimer(self)
         self.designer_toolbar_feedback_timer.setSingleShot(True)
         self.designer_toolbar_feedback_timer.timeout.connect(lambda: self._set_designer_toolbar_feedback("", auto_clear_ms=None))
+        self.designer_save_state_label = QLabel("")
+        self.designer_save_state_label.setObjectName("layerBadgeLabel")
+        self.designer_save_state_label.setMinimumWidth(86)
+        self.designer_save_state_label.setAlignment(Qt.AlignCenter)
 
         # 2. GŁÓWNY UKŁAD (Sidebar + Content) Z UŻYCIEM SPLITTERÓW
         self.designer_main_splitter = QSplitter(Qt.Horizontal)
@@ -4117,6 +4125,8 @@ class TrofeoGui(QMainWindow):
         toolbar_layout.addWidget(self.designer_animation_mode_btn)
         toolbar_layout.addWidget(self.designer_assets_toggle_btn)
         toolbar_layout.addStretch(1)
+        toolbar_layout.addWidget(self.designer_save_state_label, 0, Qt.AlignVCenter)
+        toolbar_layout.addSpacing(6)
         toolbar_layout.addWidget(self.designer_toolbar_feedback_label, 0, Qt.AlignVCenter)
         toolbar_layout.addSpacing(8)
         toolbar_layout.addWidget(self.designer_preview_btn)
@@ -4700,6 +4710,9 @@ class TrofeoGui(QMainWindow):
             event.ignore()
             self.hide_to_tray()
             return
+        if not self._confirm_discard_unsaved_theme_changes(self._tr("close application", "zamknięcie aplikacji")):
+            event.ignore()
+            return
         self._save_ui_state()
         super().closeEvent(event)
 
@@ -4749,6 +4762,103 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         self.autosave_debounce.start(500)
+
+    def _handle_theme_doc_editor_changed(self) -> None:
+        if getattr(self, "_theme_doc_editor_syncing", False):
+            return
+        if self.theme_doc_editor.toPlainText().strip():
+            self._mark_theme_doc_dirty("json-editor")
+
+    def _mark_theme_doc_dirty(self, reason: str = "") -> None:
+        if self.theme_doc_model is None and not self.theme_doc_editor.toPlainText().strip():
+            return
+        if not self._theme_doc_dirty:
+            self._theme_doc_dirty = True
+            if reason:
+                self.append_log(f"[theme-doc] unsaved changes: {reason}")
+        self._update_theme_doc_save_state()
+        self._schedule_theme_autosave()
+
+    def _mark_theme_doc_clean(self) -> None:
+        self._theme_doc_dirty = False
+        self._update_theme_doc_save_state()
+        try:
+            if THEME_AUTOSAVE_PATH.exists():
+                THEME_AUTOSAVE_PATH.unlink()
+        except Exception as exc:
+            self.append_log(f"[autosave] cleanup-skip: {exc}")
+
+    def _update_theme_doc_save_state(self) -> None:
+        dirty = bool(getattr(self, "_theme_doc_dirty", False))
+        self.setWindowModified(dirty)
+        if hasattr(self, "designer_save_state_label"):
+            label = self.designer_save_state_label
+            if dirty:
+                label.setText(self._tr("Unsaved", "Niezapisane"))
+                label.setToolTip(self._tr("Theme has unsaved changes.", "Motyw ma niezapisane zmiany."))
+            else:
+                label.setText(self._tr("Saved", "Zapisane"))
+                label.setToolTip(self._tr("Theme is saved.", "Motyw jest zapisany."))
+
+    def _save_theme_doc_to_current_path_sync(self) -> bool:
+        path = self.theme_doc_path_edit.text().strip()
+        if not path:
+            QMessageBox.information(self, "Info", "Podaj ścieżkę do pliku motywu.")
+            return False
+        document = self._current_theme_document()
+        if document is None:
+            return False
+        resolved = Path(path).expanduser()
+        if not resolved.is_absolute():
+            resolved = (Path.cwd() / resolved).resolve()
+        try:
+            normalized = normalize_theme_document(deepcopy(document))
+            save_theme_document(resolved, normalized, include_doc_header=True)
+            self.theme_doc_path_edit.setText(str(resolved))
+            self.theme_doc_model = deepcopy(normalized)
+            self._set_theme_doc_editor_document(normalized)
+            self._mark_theme_doc_clean()
+            self._set_designer_toolbar_feedback(
+                self._tr(f"Theme saved: {resolved.name}", f"Motyw zapisany: {resolved.name}")
+            )
+            return True
+        except Exception as exc:
+            QMessageBox.warning(self, self._tr("Theme error", "Błąd motywu"), str(exc))
+            return False
+
+    def _confirm_discard_unsaved_theme_changes(self, action_label: str) -> bool:
+        if not bool(getattr(self, "_theme_doc_dirty", False)):
+            return True
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(self._tr("Unsaved theme", "Niezapisany motyw"))
+        box.setText(
+            self._tr(
+                f"The current theme has unsaved changes before: {action_label}.",
+                f"Aktualny motyw ma niezapisane zmiany przed akcją: {action_label}.",
+            )
+        )
+        box.setInformativeText(
+            self._tr(
+                "Save the theme now, discard changes, or cancel.",
+                "Zapisz motyw teraz, odrzuć zmiany albo anuluj.",
+            )
+        )
+        save_btn = box.addButton(self._tr("Save", "Zapisz"), QMessageBox.AcceptRole)
+        discard_btn = box.addButton(self._tr("Discard", "Odrzuć"), QMessageBox.DestructiveRole)
+        cancel_btn = box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(save_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked == save_btn:
+            return self._save_theme_doc_to_current_path_sync()
+        if clicked == discard_btn:
+            self._theme_doc_dirty = False
+            self._update_theme_doc_save_state()
+            return True
+        if clicked == cancel_btn:
+            return False
+        return False
 
     def _image_tools_available(self) -> bool:
         return prepare_image_for_canvas is not None and render_prepared_image is not None
@@ -11111,6 +11221,7 @@ class TrofeoGui(QMainWindow):
             self._load_background_fields()
             self.refresh_designer_element_list()
             self._update_preview_canvas_overlay()
+            self._mark_theme_doc_dirty("autosave-restore")
             self.append_log(f"[autosave] restored {THEME_AUTOSAVE_PATH}")
             self.preview_theme_doc()
             return True
@@ -11370,6 +11481,7 @@ class TrofeoGui(QMainWindow):
                         self._sync_designer_preview_policy()
                         self.load_selected_designer_item()
                         self._update_preview_canvas_overlay()
+                        self._mark_theme_doc_clean()
                 resolved_path = result.get("resolved_path")
                 if resolved_path:
                     self.theme_doc_path_edit.setText(str(resolved_path))
@@ -11377,6 +11489,8 @@ class TrofeoGui(QMainWindow):
                 if action == "theme-doc-load":
                     self._set_designer_toolbar_feedback(f"Wczytano motyw: {Path(str(resolved_path or self.theme_doc_path_edit.text())).name}")
                     self.preview_theme_doc()
+                elif action == "theme-doc-save":
+                    self._mark_theme_doc_clean()
         if action in {"studio-theme-save", "studio-theme-apply"}:
             result = data.get("result", {})
             if isinstance(result, dict):
@@ -11390,6 +11504,7 @@ class TrofeoGui(QMainWindow):
                 if resolved_path:
                     self.theme_path_edit.setText(str(resolved_path))
                 self._rebuild_theme_asset_gallery()
+                self._mark_theme_doc_clean()
                 if action == "studio-theme-save":
                     self._set_designer_toolbar_feedback("Motyw zapisany. Możesz od razu zastosować go na LCD.")
                 else:
@@ -13068,10 +13183,13 @@ class TrofeoGui(QMainWindow):
         self._load_background_fields()
         self._sync_designer_preview_policy()
         self.load_selected_designer_item()
+        self._mark_theme_doc_clean()
         if preview_after:
             self.preview_theme_doc()
 
     def browse_theme_doc_path(self) -> None:
+        if not self._confirm_discard_unsaved_theme_changes(self._tr("browse another theme", "wybór innego motywu")):
+            return
         selected, _ = QFileDialog.getOpenFileName(
             self,
             "Wybierz plik motywu",
@@ -13082,6 +13200,8 @@ class TrofeoGui(QMainWindow):
             self.theme_doc_path_edit.setText(selected)
 
     def use_selected_theme_doc(self) -> None:
+        if not self._confirm_discard_unsaved_theme_changes(self._tr("use selected theme", "użycie wybranego motywu")):
+            return
         name = self.theme_combo.currentText().strip()
         if not name:
             QMessageBox.information(self, "Info", "Najpierw wybierz motyw z listy.")
@@ -13121,7 +13241,11 @@ class TrofeoGui(QMainWindow):
         return document
 
     def _set_theme_doc_editor_document(self, document: dict[str, Any]) -> None:
-        self.theme_doc_editor.setPlainText(json.dumps(document, ensure_ascii=False, indent=2))
+        self._theme_doc_editor_syncing = True
+        try:
+            self.theme_doc_editor.setPlainText(json.dumps(document, ensure_ascii=False, indent=2))
+        finally:
+            self._theme_doc_editor_syncing = False
 
     def open_current_theme_json_externally(self, *, from_animation_studio: bool = False) -> None:
         if self.theme_doc_model is None:
@@ -13150,7 +13274,7 @@ class TrofeoGui(QMainWindow):
             self.theme_doc_model = normalized
             save_theme_document(resolved, normalized, include_doc_header=True)
             self._set_theme_doc_editor_document(normalized)
-            self._schedule_theme_autosave()
+            self._mark_theme_doc_clean()
         except Exception as exc:
             QMessageBox.warning(
                 self,
@@ -13230,8 +13354,12 @@ class TrofeoGui(QMainWindow):
         return deepcopy(normalized)
 
     def load_theme_doc(self) -> None:
+        if not self._confirm_discard_unsaved_theme_changes(self._tr("load theme", "wczytanie motywu")):
+            self._set_designer_toolbar_busy("theme-doc-load", False)
+            return
         theme_path = self.theme_doc_path_edit.text().strip()
         if not theme_path:
+            self._set_designer_toolbar_busy("theme-doc-load", False)
             QMessageBox.information(self, "Info", "Podaj ścieżkę do pliku motywu.")
             return
         self.api_call("theme-doc-load", "POST", "/v1/theme-doc/load", {"path": theme_path}, timeout=15.0)
@@ -13396,10 +13524,12 @@ class TrofeoGui(QMainWindow):
     def save_current_theme_to_library(self) -> None:
         theme_path = self.theme_doc_path_edit.text().strip()
         if not theme_path:
+            self._set_designer_toolbar_busy("studio-theme-save", False)
             QMessageBox.information(self, "Info", "Najpierw wybierz lub utwórz motyw.")
             return
         document = self._current_theme_document()
         if document is None:
+            self._set_designer_toolbar_busy("studio-theme-save", False)
             return
         self._run_theme_library_workflow(
             action="studio-theme-save",
@@ -14661,6 +14791,7 @@ class TrofeoGui(QMainWindow):
         self._sync_designer_theme_gauge_from_model()
         self.refresh_designer_element_list()
         self._update_preview_canvas_overlay()
+        self._mark_theme_doc_dirty("json-to-designer")
         self.preview_theme_doc()
 
     def write_designer_to_json(self) -> None:
@@ -14668,7 +14799,7 @@ class TrofeoGui(QMainWindow):
             QMessageBox.information(self, "Info", "Designer nie ma jeszcze wczytanego theme.")
             return
         self._set_theme_doc_editor_document(self.theme_doc_model)
-        self._schedule_theme_autosave()
+        self._mark_theme_doc_dirty("designer-change")
 
     def _display_name_for_item(self, item: dict[str, Any], collection: str, idx: int) -> str:
         ident = str(item.get("id", f"{collection}_{idx}")).strip() or f"{collection}_{idx}"
