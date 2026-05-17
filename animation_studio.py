@@ -237,6 +237,29 @@ class AnimationSequenceController:
         animation["current_frame"] = insert_at
         return self.normalize()
 
+    def close_loop_seam(self, indices: list[int] | None = None) -> AnimationSequence:
+        seq = self.normalize()
+        if seq.frame_count < 2:
+            return seq
+        rows = self._valid_indices(indices, seq.frame_count)
+        if len(rows) < 2:
+            rows = list(range(seq.frame_count))
+        first = rows[0]
+        insert_at = rows[-1] + 1
+        paths = list(seq.frame_paths)
+        durations = list(seq.frame_durations_ms)
+        paths.insert(insert_at, paths[first])
+        durations.insert(insert_at, durations[first])
+        animation = self.animation()
+        animation["frame_paths"] = paths
+        animation["frame_durations_ms"] = durations[: len(paths)]
+        animation["enabled"] = bool(paths)
+        animation["current_frame"] = insert_at
+        loop_start, loop_end = self._normalized_loop_range(animation, seq.frame_count)
+        if loop_start is not None and loop_end is not None and loop_start == rows[0] and loop_end == rows[-1]:
+            animation["loop_end"] = insert_at
+        return self.normalize()
+
     def repeat_timing(self, indices: list[int], multiplier: int) -> AnimationSequence:
         seq = self.normalize()
         repeat = max(1, int(multiplier))

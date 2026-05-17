@@ -4006,6 +4006,7 @@ class TrofeoGui(QMainWindow):
         self.animation_loop_in_btn = QPushButton("Set In")
         self.animation_loop_out_btn = QPushButton("Set Out")
         self.animation_loop_clear_btn = QPushButton("Clear Loop")
+        self.animation_loop_close_seam_btn = QPushButton("Close Seam")
         self.animation_loop_label = QLabel("Loop: full")
         self.animation_onion_skin_chk = QCheckBox("Onion skin")
         self.animation_onion_opacity_spin = QDoubleSpinBox()
@@ -4436,6 +4437,7 @@ class TrofeoGui(QMainWindow):
         self.animation_loop_in_btn.clicked.connect(self.set_animation_loop_in)
         self.animation_loop_out_btn.clicked.connect(self.set_animation_loop_out)
         self.animation_loop_clear_btn.clicked.connect(self.clear_animation_loop_range)
+        self.animation_loop_close_seam_btn.clicked.connect(self.close_animation_loop_seam)
         self.animation_onion_skin_chk.toggled.connect(lambda _checked: self._refresh_animation_studio_preview())
         self.animation_onion_opacity_spin.valueChanged.connect(lambda _value: self._refresh_animation_studio_preview())
         self.animation_select_range_btn.clicked.connect(self.select_animation_range_between_edges)
@@ -7599,6 +7601,8 @@ class TrofeoGui(QMainWindow):
             self.animation_studio_bulk_duration_label.setText(tr("Bulk duration (ms)", "Zbiorczy czas (ms)"))
         if hasattr(self, "animation_onion_skin_opacity_label"):
             self.animation_onion_skin_opacity_label.setText(tr("Opacity", "Przezrocz."))
+        if hasattr(self, "animation_loop_close_seam_btn"):
+            self.animation_loop_close_seam_btn.setText(tr("Close Seam", "Domknij pętlę"))
         combo = getattr(self, "animation_preview_scale_combo", None)
         if combo is not None and combo.count() >= 4:
             cur = combo.currentIndex()
@@ -8199,6 +8203,7 @@ class TrofeoGui(QMainWindow):
                     self.animation_loop_in_btn,
                     self.animation_loop_out_btn,
                     self.animation_loop_clear_btn,
+                    self.animation_loop_close_seam_btn,
                     self.animation_loop_from_selection_btn,
                     self.animation_select_range_btn,
                     self.animation_trim_selection_btn,
@@ -8756,6 +8761,37 @@ class TrofeoGui(QMainWindow):
             self._tr(
                 f"Preview loop set from selection: {loop_start + 1}-{loop_end + 1}.",
                 f"Pętla podglądu ustawiona z zaznaczenia: {loop_start + 1}-{loop_end + 1}.",
+            )
+        )
+        self.schedule_preview_theme_doc()
+
+    def close_animation_loop_seam(self) -> None:
+        controller = self._animation_controller()
+        if controller is None:
+            return
+        seq = controller.normalize()
+        if seq.frame_count < 2:
+            return
+        loop_range = self._current_animation_loop_range()
+        if loop_range is not None:
+            rows = list(range(loop_range[0], loop_range[1] + 1))
+        else:
+            rows = self._selected_animation_rows(fallback_current=False, fallback_all=True)
+        if len(rows) < 2:
+            return
+        self.push_designer_history()
+        result = controller.close_loop_seam(rows)
+        inserted = min(rows[-1] + 1, result.frame_count - 1)
+        self.write_designer_to_json()
+        self._refresh_animation_controls()
+        self._sync_designer_preview_policy()
+        self._refresh_animation_frame_list(preserve_selection=False)
+        self._set_animation_frame_selection([inserted])
+        self._maybe_warn_animation_frame_count(result.frame_count)
+        self.preview_info_label.setText(
+            self._tr(
+                f"Closed loop seam by appending frame {rows[0] + 1} after frame {rows[-1] + 1}.",
+                f"Domknięto pętlę: dodano klatkę {rows[0] + 1} za klatką {rows[-1] + 1}.",
             )
         )
         self.schedule_preview_theme_doc()
@@ -9566,6 +9602,8 @@ class TrofeoGui(QMainWindow):
             self.animation_loop_out_btn.setEnabled(has_frames)
         if hasattr(self, "animation_loop_clear_btn"):
             self.animation_loop_clear_btn.setEnabled(self._current_animation_loop_range() is not None)
+        if hasattr(self, "animation_loop_close_seam_btn"):
+            self.animation_loop_close_seam_btn.setEnabled(len(frame_paths) > 1)
         if hasattr(self, "animation_loop_label"):
             loop_range = self._current_animation_loop_range()
             if loop_range is None:
