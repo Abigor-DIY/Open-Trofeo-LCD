@@ -5618,6 +5618,38 @@ class TrofeoGui(QMainWindow):
         self.designer_nudge_left_btn.clicked.connect(lambda: self.nudge_selected_elements(-1, 0, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
         self.designer_nudge_right_btn.clicked.connect(lambda: self.nudge_selected_elements(1, 0, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
         self.designer_nudge_down_btn.clicked.connect(lambda: self.nudge_selected_elements(0, 1, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
+        layer_actions_row = QHBoxLayout()
+        layer_actions_row.setContentsMargins(0, 0, 0, 0)
+        layer_actions_row.setSpacing(5)
+        self.designer_layer_down_btn = QPushButton("−Z")
+        self.designer_layer_up_btn = QPushButton("+Z")
+        self.designer_layer_back_btn = QPushButton("Back")
+        self.designer_layer_front_btn = QPushButton("Front")
+        self.designer_visibility_toggle_btn = QPushButton("Show")
+        self.designer_lock_toggle_btn = QPushButton("Lock")
+        for btn in (
+            self.designer_layer_down_btn,
+            self.designer_layer_up_btn,
+            self.designer_layer_back_btn,
+            self.designer_layer_front_btn,
+            self.designer_visibility_toggle_btn,
+            self.designer_lock_toggle_btn,
+        ):
+            btn.setObjectName("quickAddButton")
+            btn.setMinimumHeight(24)
+        self.designer_layer_down_btn.clicked.connect(self.lower_designer_layer)
+        self.designer_layer_up_btn.clicked.connect(self.raise_designer_layer)
+        self.designer_layer_back_btn.clicked.connect(lambda: self.move_designer_layer_to_edge("back"))
+        self.designer_layer_front_btn.clicked.connect(lambda: self.move_designer_layer_to_edge("front"))
+        self.designer_visibility_toggle_btn.clicked.connect(self.toggle_selected_visible)
+        self.designer_lock_toggle_btn.clicked.connect(self.toggle_selected_locked)
+        layer_actions_row.addWidget(self.designer_layer_down_btn)
+        layer_actions_row.addWidget(self.designer_layer_up_btn)
+        layer_actions_row.addWidget(self.designer_layer_back_btn)
+        layer_actions_row.addWidget(self.designer_layer_front_btn)
+        layer_actions_row.addWidget(self.designer_visibility_toggle_btn)
+        layer_actions_row.addWidget(self.designer_lock_toggle_btn)
+        move_layout.addLayout(layer_actions_row)
         move_actions_row = QHBoxLayout()
         move_actions_row.setContentsMargins(0, 0, 0, 0)
         move_actions_row.setSpacing(6)
@@ -5633,7 +5665,7 @@ class TrofeoGui(QMainWindow):
         self.designer_remove_btn.clicked.connect(self.remove_designer_element)
         move_actions_row.addWidget(self.designer_remove_btn)
         move_layout.addLayout(move_actions_row)
-        move_box.setMaximumHeight(178)
+        move_box.setMaximumHeight(210)
         layout.addWidget(move_box)
         parent_layout.addWidget(box, 1)
 
@@ -7583,6 +7615,24 @@ class TrofeoGui(QMainWindow):
             self.geometry_preset_right_btn.setText(tr("Right", "Prawo"))
         if hasattr(self, "geometry_preset_center_btn"):
             self.geometry_preset_center_btn.setText(tr("Center", "Środek"))
+        if hasattr(self, "designer_layer_down_btn"):
+            self.designer_layer_down_btn.setText(tr("-Z", "-Z"))
+            self.designer_layer_down_btn.setToolTip(tr("Lower selected layer", "Przesuń warstwę niżej"))
+        if hasattr(self, "designer_layer_up_btn"):
+            self.designer_layer_up_btn.setText(tr("+Z", "+Z"))
+            self.designer_layer_up_btn.setToolTip(tr("Raise selected layer", "Przesuń warstwę wyżej"))
+        if hasattr(self, "designer_layer_back_btn"):
+            self.designer_layer_back_btn.setText(tr("Back", "Tył"))
+            self.designer_layer_back_btn.setToolTip(tr("Send selected layer to back", "Wyślij warstwę na tył"))
+        if hasattr(self, "designer_layer_front_btn"):
+            self.designer_layer_front_btn.setText(tr("Front", "Przód"))
+            self.designer_layer_front_btn.setToolTip(tr("Bring selected layer to front", "Przenieś warstwę na przód"))
+        if hasattr(self, "designer_visibility_toggle_btn"):
+            self.designer_visibility_toggle_btn.setText(tr("Show", "Pokaż"))
+            self.designer_visibility_toggle_btn.setToolTip(tr("Show or hide selected layers", "Pokaż lub ukryj zaznaczone warstwy"))
+        if hasattr(self, "designer_lock_toggle_btn"):
+            self.designer_lock_toggle_btn.setText(tr("Lock", "Blokuj"))
+            self.designer_lock_toggle_btn.setToolTip(tr("Lock or unlock selected layers", "Zablokuj lub odblokuj zaznaczone warstwy"))
         if hasattr(self, "cfg_weather_refresh_now_btn"):
             self.cfg_weather_refresh_now_btn.setText(tr("Refresh weather", "Odśwież pogodę"))
         if hasattr(self, "inspector_weather_hint"):
@@ -17562,6 +17612,43 @@ class TrofeoGui(QMainWindow):
 
     def lower_designer_layer(self) -> None:
         self._adjust_designer_layer(-1)
+
+    def move_designer_layer_to_edge(self, edge: str) -> None:
+        if self.theme_doc_model is None:
+            return
+        selected = self._selected_items_multi_any()
+        if not selected:
+            return
+        all_items = self._all_canvas_elements()
+        if not all_items:
+            return
+        self.push_designer_history()
+        first_collection, first_row, _first_item = selected[0]
+        z_values = [int(entry.get("z_index", 0)) for entry in all_items]
+        if str(edge).strip().lower() == "back":
+            next_z = min(z_values) - len(selected)
+            for collection, row, item in selected:
+                item["z_index"] = next_z
+                next_z += 1
+        else:
+            next_z = max(z_values) + 1
+            for collection, row, item in selected:
+                item["z_index"] = next_z
+                next_z += 1
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        if first_collection != self._selected_collection():
+            combo_index = self.designer_kind_combo.findData(first_collection)
+            if combo_index >= 0 and combo_index != self.designer_kind_combo.currentIndex():
+                self.designer_kind_combo.setCurrentIndex(combo_index)
+        self._set_designer_selection_group(
+            [(collection, row) for collection, row, _item in selected],
+            group_label=self._selection_group_label_for_entries([(collection, row) for collection, row, _item in selected]),
+        )
+        if 0 <= first_row < self.designer_element_list.count():
+            self.designer_element_list.setCurrentRow(first_row)
+        self._update_preview_canvas_overlay()
+        self.schedule_preview_theme_doc()
 
     def _adjust_designer_layer(self, delta: int) -> None:
         if self.theme_doc_model is None:
