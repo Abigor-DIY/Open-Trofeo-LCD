@@ -1637,31 +1637,103 @@ def _weather_icon_image(source: str, snapshot: dict[str, str], base_dir: Path, s
         return None
 
 
+def _weather_icon_context_text(source: str, snapshot: dict[str, str]) -> str:
+    keys = [source]
+    if source == "weather_icon":
+        keys.extend(("weather_condition", "weather_icon"))
+    elif source.startswith("weather_day_") and source.endswith("_icon"):
+        prefix = source[:-5]
+        keys.extend((f"{prefix}_condition", f"{prefix}_icon"))
+    else:
+        keys.extend(("weather_condition", "weather_icon"))
+    return " ".join(str(snapshot.get(key, "")) for key in keys).lower()
+
+
+def _icon_with_alpha(icon: Image.Image, alpha_scale: float) -> Image.Image:
+    faded = icon.copy()
+    alpha_scale = max(0.0, min(1.0, alpha_scale))
+    faded.putalpha(faded.getchannel("A").point(lambda a: int(a * alpha_scale)))
+    return faded
+
+
+def _animate_fog_icon(icon: Image.Image, phase: float) -> Image.Image:
+    w, h = icon.size
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    out.alpha_composite(_icon_with_alpha(icon.filter(ImageFilter.GaussianBlur(max(0.6, h * 0.012))), 0.30))
+    mist = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(mist)
+    colors = (
+        (230, 242, 250, 72),
+        (188, 214, 228, 62),
+        (255, 255, 255, 50),
+    )
+    for idx in range(6):
+        band_h = max(5, int(round(h * (0.070 + 0.012 * (idx % 2)))))
+        band_w = max(int(w * 0.42), int(w * (0.58 + 0.07 * (idx % 3))))
+        gap = max(8, int(w * 0.18))
+        speed = 6.0 + idx * 1.55
+        base_y = h * (0.24 + idx * 0.095)
+        drift_y = math.sin(phase * 0.75 + idx * 0.82) * h * 0.018
+        y = int(round(base_y + drift_y))
+        x0 = int(round(((phase * speed) + idx * w * 0.19) % (band_w + gap) - band_w))
+        color = colors[idx % len(colors)]
+        for x in range(x0, w + band_w, band_w + gap):
+            draw.rounded_rectangle(
+                (x, y, x + band_w, y + band_h),
+                radius=max(3, band_h // 2),
+                fill=color,
+            )
+    mist = mist.filter(ImageFilter.GaussianBlur(max(1.2, h * 0.022)))
+    out.alpha_composite(mist)
+    return out
+
+
+def _animate_precip_icon(icon: Image.Image, phase: float, snow: bool = False) -> Image.Image:
+    w, h = icon.size
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    out.alpha_composite(_icon_with_alpha(icon, 0.82))
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    count = 9 if snow else 7
+    travel = max(1, int(h * 0.34))
+    for idx in range(count):
+        x = int((idx * w * 0.17 + phase * (7.0 if snow else 11.0)) % max(1, w))
+        y = int((idx * h * 0.19 + phase * (9.0 if snow else 15.0)) % travel) + int(h * 0.50)
+        if snow:
+            radius = max(1, int(h * 0.022))
+            draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=(235, 248, 255, 142))
+        else:
+            length = max(5, int(h * 0.13))
+            draw.line((x, y, x - max(2, w // 18), y + length), fill=(94, 205, 255, 150), width=max(1, w // 34))
+    out.alpha_composite(layer)
+    return out
+
+
+def _animate_cloud_icon(icon: Image.Image, phase: float) -> Image.Image:
+    w, h = icon.size
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    offset = int(round(math.sin(phase * 1.25) * max(1, w * 0.030)))
+    out.alpha_composite(icon, (offset, 0))
+    glow = _icon_with_alpha(icon.filter(ImageFilter.GaussianBlur(max(1.0, h * 0.018))), 0.22)
+    out.alpha_composite(glow, (-offset, 0))
+    return out
+
+
 def _animate_weather_icon(icon: Image.Image, source: str, snapshot: dict[str, str], settings: dict[str, Any]) -> Image.Image:
     if not bool(settings.get("animate_icons", True)):
         return icon
     phase = time.time() * float(settings.get("icon_animation_speed", 1.0) or 1.0)
-    text = " ".join(
-        str(snapshot.get(key, ""))
-        for key in (
-            source,
-            "weather_condition",
-            "weather_icon",
-        )
-    ).lower()
+    text = _weather_icon_context_text(source, snapshot)
     w, h = icon.size
     out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    if any(token in text for token in ("rain", "drizzle", "sleet", "snow", "hail")):
-        offset = int((phase * 10) % max(1, h // 5))
-        out.alpha_composite(icon, (0, offset - max(1, h // 10)))
-        faded = icon.copy()
-        faded.putalpha(faded.getchannel("A").point(lambda a: int(a * 0.38)))
-        out.alpha_composite(faded, (0, offset + max(1, h // 12)))
-        return out
-    if any(token in text for token in ("cloud", "fog", "overcast")):
-        offset = int(round(math.sin(phase * 1.8) * max(1, w * 0.035)))
-        out.alpha_composite(icon, (offset, 0))
-        return out
+    if any(token in text for token in ("fog", "mist", "haze", "rime", "smog", "mgla", "zamg")):
+        return _animate_fog_icon(icon, phase)
+    if any(token in text for token in ("snow", "hail")):
+        return _animate_precip_icon(icon, phase, snow=True)
+    if any(token in text for token in ("rain", "drizzle", "sleet", "shower")):
+        return _animate_precip_icon(icon, phase, snow=False)
+    if any(token in text for token in ("cloud", "overcast")):
+        return _animate_cloud_icon(icon, phase)
     angle = math.sin(phase * 1.5) * 3.0
     scale = 1.0 + 0.035 * math.sin(phase * 2.0)
     resized = icon.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
