@@ -92,6 +92,9 @@
   - dodano kolejke/debounce generowania miniaturek klatek,
   - kolejne odswiezenia timeline nie uruchamiaja rownoleglych workerow dla tych samych obrazow,
   - cache miniaturek ma limit, zeby dlugie animacje nie rozpychaly pamieci GUI.
+- 2026-05-18:
+  - payload miniaturek aktualizuje tylko ikony listy i thumbnail map timeline,
+  - unikamy pelnej przebudowy `QListWidget` po kazdej paczce miniaturek.
 - Wydzielic kontroler sekwencji animacji z `trofeo_gui.py` do modulu animacji:
   - normalizacja `effects.animation`
   - wybor aktualnej klatki

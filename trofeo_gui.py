@@ -11503,6 +11503,7 @@ class TrofeoGui(QMainWindow):
         items = result.get("items", []) if isinstance(result, dict) else []
         if not isinstance(items, list) or not hasattr(self, "bg_animation_list"):
             return
+        timeline_updates: dict[int, QPixmap] = {}
         for entry in items:
             if not isinstance(entry, dict):
                 continue
@@ -11522,8 +11523,12 @@ class TrofeoGui(QMainWindow):
             self._image_thumbnail_cache = {key: val for key, val in self._image_thumbnail_cache.items() if key[0] != cache_key[0]}
             self._image_thumbnail_cache[cache_key] = pixmap
             item.setIcon(QIcon(pixmap))
+            timeline_updates[row] = pixmap
         self._trim_animation_thumbnail_cache()
-        self._refresh_animation_frame_list(preserve_selection=True)
+        timeline = getattr(self, "bg_animation_timeline", None)
+        if timeline is not None and hasattr(timeline, "update_thumbnails") and timeline_updates:
+            timeline.update_thumbnails(timeline_updates)
+        self._refresh_animation_controls()
 
     def _trim_animation_thumbnail_cache(self) -> None:
         max_items = 720

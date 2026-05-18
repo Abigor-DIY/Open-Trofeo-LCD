@@ -412,6 +412,17 @@ class AnimationTimelineWidget(QWidget):
         self.updateGeometry()
         self.update()
 
+    def update_thumbnails(self, thumbnails: dict[int, QPixmap]) -> None:
+        n = len(self._durations)
+        changed = False
+        for index, pixmap in thumbnails.items():
+            idx = int(index)
+            if 0 <= idx < n and isinstance(pixmap, QPixmap) and not pixmap.isNull():
+                self._thumbnails[idx] = pixmap
+                changed = True
+        if changed:
+            self.update()
+
     def set_playhead(self, index: int) -> None:
         n = len(self._durations)
         if not n:
