@@ -6119,6 +6119,11 @@ class TrofeoGui(QMainWindow):
         self.inspector_geometry_layout.addRow(self.row_geometry_w, self.designer_w_spin)
         self.row_geometry_h = make_label("Wysokość")
         self.inspector_geometry_layout.addRow(self.row_geometry_h, self.designer_h_spin)
+        self.geometry_group_bounds_label = QLabel("Group bounds: -")
+        self.geometry_group_bounds_label.setObjectName("selectionSummaryLabel")
+        self.geometry_group_bounds_label.setWordWrap(True)
+        self.row_geometry_group_bounds = make_label("Group")
+        self.inspector_geometry_layout.addRow(self.row_geometry_group_bounds, self.geometry_group_bounds_label)
         self.geometry_preset_top_btn = QPushButton("Top")
         self.geometry_preset_bottom_btn = QPushButton("Bottom")
         self.geometry_preset_left_btn = QPushButton("Left")
@@ -7280,6 +7285,7 @@ class TrofeoGui(QMainWindow):
             ("row_geometry_y", "Y", "Y"),
             ("row_geometry_w", "Width", "Szerokość"),
             ("row_geometry_h", "Height", "Wysokość"),
+            ("row_geometry_group_bounds", "Group", "Grupa"),
             ("row_geometry_presets", "Presets", "Presety"),
             ("row_motion_enabled", "Motion", "Ruch"),
             ("row_motion_range", "Frame range", "Zakres klatek"),
@@ -16235,6 +16241,12 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(geometry_layout, self.row_geometry_y, self.designer_y_spin, True)
         self._set_form_row_visible(geometry_layout, self.row_geometry_w, self.designer_w_spin, True)
         self._set_form_row_visible(geometry_layout, self.row_geometry_h, self.designer_h_spin, True)
+        self._set_form_row_visible(
+            geometry_layout,
+            getattr(self, "row_geometry_group_bounds", None),
+            getattr(self, "geometry_group_bounds_label", None),
+            False,
+        )
         self._set_form_row_visible(geometry_layout, self.row_motion_enabled, self.motion_enabled_chk, supports_motion)
         self._set_form_row_visible(geometry_layout, self.row_motion_range, self.motion_range_row, supports_motion)
         self._set_form_row_visible(geometry_layout, self.row_motion_target_x, self.motion_target_x_spin, supports_motion)
@@ -16300,6 +16312,16 @@ class TrofeoGui(QMainWindow):
                 self.inspector_selection_summary.setText(
                     "Dostępne są wspólne ustawienia: widoczność, blokada, warstwa i przesuwanie całej grupy."
                 )
+                bounds = self._selected_group_bounds(selected_multi_any)
+                if bounds is not None and hasattr(self, "geometry_group_bounds_label"):
+                    bx, by, bw, bh = bounds
+                    self.geometry_group_bounds_label.setText(f"x: {bx}, y: {by}, w: {bw}, h: {bh}")
+                    self._set_form_row_visible(
+                        self.inspector_geometry_layout,
+                        self.row_geometry_group_bounds,
+                        self.geometry_group_bounds_label,
+                        True,
+                    )
                 common_z = {int(sel_item.get('z_index', 0)) for _sel_collection, _sel_row, sel_item in selected_multi_any}
                 self.designer_id_edit.clear()
                 self.designer_text_edit.clear()
