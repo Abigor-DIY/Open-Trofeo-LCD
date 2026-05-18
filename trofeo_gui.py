@@ -15733,6 +15733,30 @@ class TrofeoGui(QMainWindow):
             max(1, int(item.get("box_height", 48))),
         )
 
+    def _selected_group_bounds(self, selected: list[tuple[str, int, dict[str, Any]]]) -> tuple[int, int, int, int] | None:
+        rects = [self._selected_item_rect(item, collection) for collection, _row, item in selected]
+        if not rects:
+            return None
+        left = min(rect[0] for rect in rects)
+        top = min(rect[1] for rect in rects)
+        right = max(rect[0] + rect[2] for rect in rects)
+        bottom = max(rect[1] + rect[3] for rect in rects)
+        return int(left), int(top), max(1, int(right - left)), max(1, int(bottom - top))
+
+    def _apply_item_rect(self, collection: str, item: dict[str, Any], rect: tuple[int, int, int, int]) -> None:
+        x, y, width, height = rect
+        x = self._snap_value(int(x))
+        y = self._snap_value(int(y))
+        width = max(1, self._snap_value(int(width)))
+        height = max(1, self._snap_value(int(height)))
+        if collection in {"images", "panels", "widgets"}:
+            item["rect"] = [x, y, width, height]
+        else:
+            item["x"] = x
+            item["y"] = y
+            item["box_width"] = width
+            item["box_height"] = height
+
     def _selected_nudge_step(self) -> int:
         combo = getattr(self, "designer_nudge_step_combo", None)
         if combo is None:
@@ -17492,11 +17516,11 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         selected = self._selected_items_multi_any()
-        if len(selected) != 1:
-            QMessageBox.information(self, "Info", self._tr("Select one element first.", "Najpierw zaznacz jeden element."))
+        if not selected:
+            QMessageBox.information(self, "Info", self._tr("Select one or more elements first.", "Najpierw zaznacz jeden lub więcej elementów."))
             return
-        collection, row, item = selected[0]
-        if bool(item.get("locked", False)):
+        editable = [(collection, row, item) for collection, row, item in selected if not bool(item.get("locked", False))]
+        if not editable:
             return
         canvas = self.theme_doc_model.get("canvas", {}) if isinstance(self.theme_doc_model, dict) else {}
         canvas_width = max(1, int(canvas.get("width", 1920)))
@@ -17504,7 +17528,10 @@ class TrofeoGui(QMainWindow):
         margin_x = 48
         margin_y = 24
         gap_y = 18
-        current_x, current_y, current_w, current_h = self._selected_item_rect(item, collection)
+        current_bounds = self._selected_group_bounds(editable)
+        if current_bounds is None:
+            return
+        current_x, current_y, current_w, current_h = current_bounds
         if preset == "top":
             next_rect = [margin_x, margin_y, max(1, canvas_width - margin_x * 2), max(1, min(current_h, 82))]
         elif preset == "bottom":
@@ -17524,13 +17551,20 @@ class TrofeoGui(QMainWindow):
         x, y, width, height = [self._snap_value(int(v)) for v in next_rect]
         width = max(1, width)
         height = max(1, height)
-        if collection in {"images", "panels", "widgets"}:
-            item["rect"] = [x, y, width, height]
-        else:
-            item["x"] = x
-            item["y"] = y
-            item["box_width"] = width
-            item["box_height"] = height
+        scale_x = width / max(1, current_w)
+        scale_y = height / max(1, current_h)
+        for collection, _row, item in editable:
+            item_x, item_y, item_w, item_h = self._selected_item_rect(item, collection)
+            rel_x = item_x - current_x
+            rel_y = item_y - current_y
+            next_item_rect = (
+                x + int(round(rel_x * scale_x)),
+                y + int(round(rel_y * scale_y)),
+                max(1, int(round(item_w * scale_x))),
+                max(1, int(round(item_h * scale_y))),
+            )
+            self._apply_item_rect(collection, item, next_item_rect)
+        first_collection, first_row, _first_item = selected[0]
         self._designer_updating = True
         try:
             self.designer_x_spin.setValue(x)
@@ -17540,7 +17574,20 @@ class TrofeoGui(QMainWindow):
         finally:
             self._designer_updating = False
         self.write_designer_to_json()
-        self._refresh_designer_list_row(row)
+        if len(selected) == 1:
+            self._refresh_designer_list_row(first_row)
+        else:
+            self.refresh_designer_element_list()
+            self._set_designer_selection_group(
+                [(collection, row) for collection, row, _item in selected],
+                group_label=self._selection_group_label_for_entries([(collection, row) for collection, row, _item in selected]),
+            )
+        if first_collection != self._selected_collection():
+            combo_index = self.designer_kind_combo.findData(first_collection)
+            if combo_index >= 0 and combo_index != self.designer_kind_combo.currentIndex():
+                self.designer_kind_combo.setCurrentIndex(combo_index)
+        if 0 <= first_row < self.designer_element_list.count():
+            self.designer_element_list.setCurrentRow(first_row)
         self._update_preview_canvas_overlay()
         self.schedule_preview_theme_doc()
 
