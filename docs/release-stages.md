@@ -83,7 +83,7 @@
 
 ## Etap 7 - Animation Studio
 
-- Status: w toku.
+- Status: zakonczony.
 - 2026-05-18:
   - dodano wspolny, deterministyczny snapshot danych dla podgladow GUI/dokumentacji,
   - galeria i okna podgladu renderuja motywy `theme-doc` jako pelna kompozycje z widgetami/statami,
@@ -95,29 +95,33 @@
 - 2026-05-18:
   - payload miniaturek aktualizuje tylko ikony listy i thumbnail map timeline,
   - unikamy pelnej przebudowy `QListWidget` po kazdej paczce miniaturek.
-- Wydzielic kontroler sekwencji animacji z `trofeo_gui.py` do modulu animacji:
+- 2026-05-18:
+  - dodano postep importu/eksportu animacji w statusie zadan,
+  - dodano anulowanie importu/eksportu, w tym przerywanie ffmpeg przy imporcie wideo,
+  - Etap 7 domkniety: kontroler animacji, podglady, hold/repeat, workery, narzedzia montazowe i ergonomia timeline sa wdrozone.
+- Zrobione: wydzielic kontroler sekwencji animacji z `trofeo_gui.py` do modulu animacji:
   - normalizacja `effects.animation`
   - wybor aktualnej klatki
   - usuwanie, przesuwanie i powtarzanie klatek
   - bezpieczne uzupelnianie `frame_durations_ms`
-- Rozdzielic podglad na dwa tryby:
+- Zrobione: rozdzielic podglad na dwa tryby:
   - `Frame preview` dla surowej klatki z dysku
   - `Composite preview` dla finalnego renderu motywu z overlayami
-- Dodac `hold / repeat` bez kopiowania plikow:
+- Zrobione: dodac `hold / repeat` bez kopiowania plikow:
   - wydluzanie czasu klatki przez `duration_ms`
   - osobna akcja fizycznego duplikowania assetu tylko gdy uzytkownik tego chce
-- Przeniesc ciezsze operacje poza glowny watek GUI:
+- Zrobione: przeniesc ciezsze operacje poza glowny watek GUI:
   - import klatek
   - ekstrakcja `.zt`
   - eksport ZIP
   - generowanie miniaturek
-- Dodac narzedzia montazowe:
+- Zrobione: dodac narzedzia montazowe:
   - reverse
   - ping-pong
   - normalize durations
   - retime selection
   - loop range in/out
-- Dodac komfort pracy:
+- Zrobione: dodac komfort pracy:
   - zoom timeline
   - onion skin
   - skroty transportu

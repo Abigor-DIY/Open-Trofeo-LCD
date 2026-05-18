@@ -1938,6 +1938,8 @@ class TrofeoGui(QMainWindow):
         self._animation_import_in_flight = False
         self._animation_duplicate_in_flight = False
         self._animation_stabilize_in_flight = False
+        self._animation_export_cancel_event: threading.Event | None = None
+        self._animation_import_cancel_event: threading.Event | None = None
         self._animation_worker_states: dict[str, str] = {}
         self._animation_thumbnail_generation = 0
         self._animation_thumbnail_in_flight = False
@@ -7747,6 +7749,14 @@ class TrofeoGui(QMainWindow):
             )
         if hasattr(self, "animation_worker_status_label"):
             self._refresh_animation_worker_status()
+        if hasattr(self, "animation_cancel_worker_btn"):
+            self.animation_cancel_worker_btn.setText(tr("Cancel task", "Anuluj zadanie"))
+            self.animation_cancel_worker_btn.setToolTip(
+                tr(
+                    "Request cancellation for the current animation import or export.",
+                    "Poproś o przerwanie bieżącego importu lub eksportu animacji.",
+                )
+            )
         if hasattr(self, "animation_preview_title_label"):
             self.animation_preview_title_label.setText(tr("Preview", "Podgląd"))
         if hasattr(self, "animation_auto_composite_chk"):
@@ -8500,6 +8510,11 @@ class TrofeoGui(QMainWindow):
         self.animation_worker_status_label.setMinimumWidth(180)
         self.animation_worker_status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         meta_row.addWidget(self.animation_worker_status_label)
+        self.animation_cancel_worker_btn = QPushButton("Cancel task")
+        self.animation_cancel_worker_btn.setObjectName("secondaryAccentButton")
+        self.animation_cancel_worker_btn.setVisible(False)
+        self.animation_cancel_worker_btn.clicked.connect(self.cancel_animation_background_tasks)
+        meta_row.addWidget(self.animation_cancel_worker_btn)
         lay.addLayout(meta_row)
 
         preview_row = QHBoxLayout()
@@ -9073,12 +9088,80 @@ class TrofeoGui(QMainWindow):
         if not active:
             self.animation_worker_status_label.setText(self._tr("Workers: idle", "Zadania: bezczynne"))
             self.animation_worker_status_label.setToolTip("")
+            if hasattr(self, "animation_cancel_worker_btn"):
+                self.animation_cancel_worker_btn.setVisible(False)
+                self.animation_cancel_worker_btn.setEnabled(False)
             return
         text = self._tr("Working: ", "Praca: ") + ", ".join(active[:2])
         if len(active) > 2:
             text += f" +{len(active) - 2}"
         self.animation_worker_status_label.setText(text)
         self.animation_worker_status_label.setToolTip("\n".join(active))
+        cancellable = bool(
+            getattr(self, "_animation_export_in_flight", False)
+            or getattr(self, "_animation_import_in_flight", False)
+        )
+        if hasattr(self, "animation_cancel_worker_btn"):
+            self.animation_cancel_worker_btn.setVisible(cancellable)
+            self.animation_cancel_worker_btn.setEnabled(cancellable)
+
+    def cancel_animation_background_tasks(self) -> None:
+        cancelled = False
+        for event in (
+            getattr(self, "_animation_export_cancel_event", None),
+            getattr(self, "_animation_import_cancel_event", None),
+        ):
+            if event is not None and not event.is_set():
+                event.set()
+                cancelled = True
+        if cancelled:
+            self._set_animation_worker_state(
+                "cancel",
+                self._tr("cancelling current task", "anulowanie zadania"),
+            )
+            if hasattr(self, "animation_cancel_worker_btn"):
+                self.animation_cancel_worker_btn.setEnabled(False)
+            if hasattr(self, "preview_info_label"):
+                self.preview_info_label.setText(self._tr("Cancelling animation task…", "Anuluję zadanie animacji…"))
+
+    def _animation_task_cancelled(self, event: threading.Event | None) -> bool:
+        return bool(event is not None and event.is_set())
+
+    def _raise_if_animation_task_cancelled(self, event: threading.Event | None) -> None:
+        if self._animation_task_cancelled(event):
+            raise RuntimeError("Animation task cancelled.")
+
+    def _emit_animation_progress(self, worker: str, current: int, total: int, label: str = "") -> None:
+        self.api_result.emit(
+            "animation-progress",
+            True,
+            {
+                "result": {
+                    "worker": worker,
+                    "current": max(0, int(current)),
+                    "total": max(0, int(total)),
+                    "label": str(label),
+                }
+            },
+        )
+
+    def _apply_animation_progress_payload(self, payload: object) -> None:
+        data = payload if isinstance(payload, dict) else {}
+        result = data.get("result", {})
+        if not isinstance(result, dict):
+            return
+        worker = str(result.get("worker", "task"))
+        current = int(result.get("current", 0) or 0)
+        total = int(result.get("total", 0) or 0)
+        label = str(result.get("label", "")).strip()
+        pct = int(round((current * 100.0) / total)) if total > 0 else 0
+        if label:
+            text = f"{label}: {current}/{total} ({pct}%)" if total else label
+        else:
+            text = f"{worker}: {current}/{total} ({pct}%)" if total else worker
+        self._set_animation_worker_state(worker, text)
+        if hasattr(self, "preview_info_label"):
+            self.preview_info_label.setText(text)
 
     def _selected_animation_rows(self, *, fallback_current: bool = True, fallback_all: bool = False) -> list[int]:
         controller = self._animation_controller()
@@ -9706,6 +9789,11 @@ class TrofeoGui(QMainWindow):
         except Exception:
             return str(path.resolve())
 
+    @staticmethod
+    def _raise_if_worker_cancelled(cancel_event: threading.Event | None) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError("Animation task cancelled.")
+
     @classmethod
     def _collect_animation_frame_paths_for_worker(
         cls,
@@ -9714,17 +9802,25 @@ class TrofeoGui(QMainWindow):
         target_dir: Path,
         theme_stem: str,
         base_dir: Path,
+        cancel_event: threading.Event | None = None,
+        progress_callback: Any | None = None,
     ) -> list[str]:
         copied_paths: list[str] = []
         target_dir.mkdir(parents=True, exist_ok=True)
         if len(sources) == 1 and sources[0].suffix.lower() == ".zt":
+            cls._raise_if_worker_cancelled(cancel_event)
             if extract_ttcr_zt_frames is None:
                 return []
             frames = extract_ttcr_zt_frames(sources[0], target_dir, f"{theme_stem}_anim")
             for frame in frames:
+                cls._raise_if_worker_cancelled(cancel_event)
                 copied_paths.append(cls._display_path_for_base(frame, base_dir))
+                if callable(progress_callback):
+                    progress_callback(len(copied_paths), max(1, len(frames)), "Import TTCR frames")
             return copied_paths
-        for source in sources:
+        total = max(1, len(sources))
+        for source_index, source in enumerate(sources):
+            cls._raise_if_worker_cancelled(cancel_event)
             if not source.exists():
                 continue
             stem = f"{theme_stem}_anim_{source.stem}"
@@ -9736,6 +9832,8 @@ class TrofeoGui(QMainWindow):
                 idx += 1
             shutil.copy2(source, candidate)
             copied_paths.append(cls._display_path_for_base(candidate, base_dir))
+            if callable(progress_callback):
+                progress_callback(source_index + 1, total, "Copy animation frames")
         return copied_paths
 
     def _render_current_animation_frame_image(self) -> "Image.Image | None":
@@ -11054,9 +11152,17 @@ class TrofeoGui(QMainWindow):
         frame_indices: list[int],
         scope_label: str,
     ) -> None:
+        cancel_event = self._animation_export_cancel_event
         def worker() -> None:
             try:
-                result = self._export_animation_sequence_zip(target, document, base_dir, frame_indices, scope_label)
+                result = self._export_animation_sequence_zip(
+                    target,
+                    document,
+                    base_dir,
+                    frame_indices,
+                    scope_label,
+                    cancel_event=cancel_event,
+                )
                 self.api_result.emit("animation-export", True, {"result": result})
             except Exception as exc:
                 self.api_result.emit("animation-export", False, str(exc))
@@ -11070,9 +11176,11 @@ class TrofeoGui(QMainWindow):
         base_dir: Path,
         frame_indices: list[int],
         scope_label: str,
+        cancel_event: threading.Event | None = None,
     ) -> dict[str, Any]:
         if render_theme_document is None:
             raise RuntimeError("Theme renderer is not available.")
+        self._raise_if_animation_task_cancelled(cancel_event)
         target.parent.mkdir(parents=True, exist_ok=True)
         animation = document.setdefault("effects", {}).setdefault("animation", {})
         if not isinstance(animation, dict):
@@ -11105,7 +11213,9 @@ class TrofeoGui(QMainWindow):
                 "frame_durations_ms": export_durations,
             }
             zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+            self._emit_animation_progress("export", 0, len(export_indices), self._tr("Exporting animation", "Eksport animacji"))
             for out_idx, source_idx in enumerate(export_indices):
+                self._raise_if_animation_task_cancelled(cancel_event)
                 theme_frame = deepcopy(document)
                 theme_frame.setdefault("effects", {}).setdefault("animation", {})
                 theme_frame["effects"]["animation"]["current_frame"] = source_idx
@@ -11117,6 +11227,13 @@ class TrofeoGui(QMainWindow):
                 buffer = io.BytesIO()
                 image.save(buffer, format="PNG")
                 zf.writestr(f"frames/frame_{out_idx:04d}.png", buffer.getvalue())
+                if out_idx == len(export_indices) - 1 or out_idx % max(1, len(export_indices) // 20) == 0:
+                    self._emit_animation_progress(
+                        "export",
+                        out_idx + 1,
+                        len(export_indices),
+                        self._tr("Exporting animation", "Eksport animacji"),
+                    )
         return {
             "target": str(target),
             "name": target.name,
@@ -11128,10 +11245,13 @@ class TrofeoGui(QMainWindow):
 
     def _set_animation_export_busy(self, busy: bool) -> None:
         self._animation_export_in_flight = bool(busy)
+        self._animation_export_cancel_event = threading.Event() if busy else None
         self._set_animation_worker_state(
             "export",
             self._tr("exporting ZIP", "eksport ZIP") if busy else None,
         )
+        if not busy:
+            self._set_animation_worker_state("cancel", None)
         if hasattr(self, "bg_animation_export_btn"):
             self.bg_animation_export_btn.setEnabled(not busy)
             self.bg_animation_export_btn.setText(
@@ -11232,6 +11352,7 @@ class TrofeoGui(QMainWindow):
             int(canvas.get("height", 462) or 462),
         )
         fps = float(self.bg_animation_fps_spin.value()) if hasattr(self, "bg_animation_fps_spin") else 12.0
+        cancel_event = self._animation_import_cancel_event
         self.preview_info_label.setText(
             self._tr(
                 f"Preparing animation frames in background ({len(sources)} source file(s)).",
@@ -11241,6 +11362,8 @@ class TrofeoGui(QMainWindow):
 
         def worker() -> None:
             try:
+                self._raise_if_animation_task_cancelled(cancel_event)
+                self._emit_animation_progress("import", 0, len(sources), self._tr("Preparing frames", "Przygotowanie klatek"))
                 import_payload = self._collect_animation_frame_import_payload_for_worker(
                     sources,
                     target_dir=target_dir,
@@ -11248,7 +11371,15 @@ class TrofeoGui(QMainWindow):
                     base_dir=base_dir,
                     fps=fps,
                     canvas_size=canvas_size,
+                    cancel_event=cancel_event,
+                    progress_callback=lambda current, total, label="": self._emit_animation_progress(
+                        "import",
+                        current,
+                        total,
+                        label or self._tr("Preparing frames", "Przygotowanie klatek"),
+                    ),
                 )
+                self._raise_if_animation_task_cancelled(cancel_event)
                 self.api_result.emit(
                     "animation-import",
                     True,
@@ -11269,6 +11400,8 @@ class TrofeoGui(QMainWindow):
         base_dir: Path,
         fps: float = 12.0,
         canvas_size: tuple[int, int] = (1920, 462),
+        cancel_event: threading.Event | None = None,
+        progress_callback: Any | None = None,
     ) -> dict[str, Any]:
         if len(sources) == 1 and sources[0].suffix.lower() == ".zip":
             return cls._collect_animation_zip_export_for_worker(
@@ -11276,6 +11409,8 @@ class TrofeoGui(QMainWindow):
                 target_dir=target_dir,
                 theme_stem=theme_stem,
                 base_dir=base_dir,
+                cancel_event=cancel_event,
+                progress_callback=progress_callback,
             )
         if any(source.suffix.lower() in VIDEO_BACKGROUND_EXTENSIONS for source in sources):
             return cls._collect_animation_video_frames_for_worker(
@@ -11285,12 +11420,16 @@ class TrofeoGui(QMainWindow):
                 base_dir=base_dir,
                 fps=fps,
                 canvas_size=canvas_size,
+                cancel_event=cancel_event,
+                progress_callback=progress_callback,
             )
         copied_paths = cls._collect_animation_frame_paths_for_worker(
             sources,
             target_dir=target_dir,
             theme_stem=theme_stem,
             base_dir=base_dir,
+            cancel_event=cancel_event,
+            progress_callback=progress_callback,
         )
         return {"frame_paths": copied_paths, "frame_durations_ms": []}
 
@@ -11304,6 +11443,8 @@ class TrofeoGui(QMainWindow):
         base_dir: Path,
         fps: float,
         canvas_size: tuple[int, int],
+        cancel_event: threading.Event | None = None,
+        progress_callback: Any | None = None,
     ) -> dict[str, Any]:
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
@@ -11317,11 +11458,10 @@ class TrofeoGui(QMainWindow):
         copied_paths: list[str] = []
         durations: list[int] = []
         truncated = False
-        for source_index, source in enumerate(sources):
-            if source.suffix.lower() not in VIDEO_BACKGROUND_EXTENSIONS:
-                continue
-            if not source.exists():
-                continue
+        video_sources = [source for source in sources if source.suffix.lower() in VIDEO_BACKGROUND_EXTENSIONS and source.exists()]
+        total_sources = max(1, len(video_sources))
+        for source_index, source in enumerate(video_sources):
+            cls._raise_if_worker_cancelled(cancel_event)
             prefix = target_dir / f"{safe_stem}_video_{source_index:02d}_%05d.png"
             vf = f"fps={fps_value:.3f},scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
             cmd = [
@@ -11338,15 +11478,35 @@ class TrofeoGui(QMainWindow):
                 str(max_frames),
                 str(prefix),
             ]
-            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            started_at = time.time()
+            while proc.poll() is None:
+                if cancel_event is not None and cancel_event.is_set():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=2.0)
+                    cls._raise_if_worker_cancelled(cancel_event)
+                if time.time() - started_at > 180:
+                    proc.kill()
+                    proc.wait(timeout=2.0)
+                    raise RuntimeError(f"ffmpeg timed out for {source}")
+                time.sleep(0.1)
+            stdout, stderr = proc.communicate()
+            cls._raise_if_worker_cancelled(cancel_event)
             if proc.returncode != 0:
-                raise RuntimeError(proc.stderr.strip() or f"ffmpeg failed for {source}")
+                raise RuntimeError((stderr or stdout or "").strip() or f"ffmpeg failed for {source}")
             frames = sorted(target_dir.glob(f"{safe_stem}_video_{source_index:02d}_*.png"))
             if len(frames) >= max_frames:
                 truncated = True
             for frame in frames:
+                cls._raise_if_worker_cancelled(cancel_event)
                 copied_paths.append(cls._display_path_for_base(frame, base_dir))
                 durations.append(max(1, int(round(1000.0 / fps_value))))
+            if callable(progress_callback):
+                progress_callback(source_index + 1, total_sources, "Import video frames")
         return {
             "frame_paths": copied_paths,
             "frame_durations_ms": durations[: len(copied_paths)],
@@ -11364,6 +11524,8 @@ class TrofeoGui(QMainWindow):
         target_dir: Path,
         theme_stem: str,
         base_dir: Path,
+        cancel_event: threading.Event | None = None,
+        progress_callback: Any | None = None,
     ) -> dict[str, Any]:
         copied_paths: list[str] = []
         durations: list[int] = []
@@ -11393,12 +11555,16 @@ class TrofeoGui(QMainWindow):
                 and Path(name).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
             ]
             names.sort()
+            total = max(1, len(names))
             for idx, name in enumerate(names):
+                cls._raise_if_worker_cancelled(cancel_event)
                 suffix = Path(name).suffix.lower() or ".png"
                 out = target_dir / f"{safe_stem}_zip_{idx:04d}{suffix}"
                 with zf.open(name, "r") as src, out.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
                 copied_paths.append(cls._display_path_for_base(out, base_dir))
+                if callable(progress_callback):
+                    progress_callback(idx + 1, total, "Import ZIP frames")
         return {"frame_paths": copied_paths, "frame_durations_ms": durations[: len(copied_paths)]}
 
     def _finish_animation_frame_import(
@@ -11478,10 +11644,13 @@ class TrofeoGui(QMainWindow):
 
     def _set_animation_import_busy(self, busy: bool) -> None:
         self._animation_import_in_flight = bool(busy)
+        self._animation_import_cancel_event = threading.Event() if busy else None
         self._set_animation_worker_state(
             "import",
             self._tr("preparing frames", "przygotowanie klatek") if busy else None,
         )
+        if not busy:
+            self._set_animation_worker_state("cancel", None)
         for button in (getattr(self, "bg_animation_import_btn", None), getattr(self, "bg_animation_add_btn", None)):
             if button is not None:
                 button.setEnabled(not busy)
@@ -11658,6 +11827,10 @@ class TrofeoGui(QMainWindow):
     def _on_api_result(self, action: str, ok: bool, payload: object) -> None:
         is_designer_preview = action.startswith("theme-doc-preview")
         is_animation_thumbnails = action.startswith("animation-thumbnails::")
+        if action == "animation-progress":
+            if ok:
+                self._apply_animation_progress_payload(payload)
+            return
         if action == "status":
             self._status_in_flight = False
         if action == "animation-export":
@@ -11691,6 +11864,10 @@ class TrofeoGui(QMainWindow):
 
         if action == "animation-export" and not ok:
             self.append_log(f"[{action}] ERROR: {payload}")
+            if "cancel" in str(payload).lower():
+                self.preview_info_label.setText(self._tr("Animation export cancelled.", "Eksport animacji anulowany."))
+                self._set_animation_worker_state("cancel", None)
+                return
             self.preview_info_label.setText(
                 self._tr(
                     f"Animation export failed: {str(payload)[:140]}",
@@ -11706,6 +11883,10 @@ class TrofeoGui(QMainWindow):
             return
         if action == "animation-import" and not ok:
             self.append_log(f"[{action}] ERROR: {payload}")
+            if "cancel" in str(payload).lower():
+                self.preview_info_label.setText(self._tr("Animation import cancelled.", "Import animacji anulowany."))
+                self._set_animation_worker_state("cancel", None)
+                return
             self.preview_info_label.setText(
                 self._tr(
                     f"Animation import failed: {str(payload)[:140]}",
