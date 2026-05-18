@@ -1761,6 +1761,8 @@ def _draw_media_widget_equalizer(
     snapshot: dict[str, str],
     fill_color: tuple[int, int, int, int],
     accent_color: tuple[int, int, int, int],
+    track_color: tuple[int, int, int, int],
+    widget_id: str,
     bars: int,
     gap: int,
     mirror: bool,
@@ -1769,12 +1771,12 @@ def _draw_media_widget_equalizer(
     if w <= 0 or h <= 0:
         return
     fake_item = {
-        "id": "widget_media_equalizer",
+        "id": widget_id,
         "x": x,
         "y": y,
         "box_width": w,
         "box_height": h,
-        "font_size": 12,
+        "font_size": 22,
         "font_family": "DejaVu Sans",
         "equalizer_bars": bars,
         "equalizer_gap": gap,
@@ -1795,7 +1797,7 @@ def _draw_media_widget_equalizer(
         max_value=100.0,
         label_fill=accent_color,
         value_fill=accent_color,
-        track_fill=(0, 0, 0, 0),
+        track_fill=track_color,
         fill_color=fill_color,
         snapshot=snapshot,
     )
@@ -1834,8 +1836,10 @@ def _render_media_now_playing_widget(canvas: Image.Image, item: dict[str, Any], 
     title_color = _rgba(settings.get("title_color", [244, 248, 255]))
     artist_color = _rgba(settings.get("artist_color", [210, 224, 240]))
     detail_color = _rgba(settings.get("detail_color", [160, 196, 232]))
-    eq_color = _rgba(settings.get("equalizer_color", settings.get("detail_color", [94, 205, 255, 210])))
-    eq_accent = _rgba(settings.get("equalizer_accent_color", settings.get("title_color", [244, 248, 255, 230])))
+    eq_color = _rgba(settings.get("equalizer_color", [102, 226, 120, 255]))
+    eq_accent = _rgba(settings.get("equalizer_accent_color", [246, 231, 152, 255]))
+    eq_track = _rgba(settings.get("equalizer_track_color", [0, 0, 0, 0]))
+    eq_widget_id = f"{item.get('id', 'media_now_playing')}::equalizer"
     media_title = str(snapshot.get("media_title", "N/A") or "N/A")
     media_artist = str(snapshot.get("media_artist", "N/A") or "N/A")
     media_app = str(snapshot.get("media_app", "N/A") or "N/A")
@@ -1872,7 +1876,7 @@ def _render_media_now_playing_widget(canvas: Image.Image, item: dict[str, Any], 
             _draw_media_widget_text(panel, x=text_x, y=artist_y, width=text_w, height=artist_h, text=media_artist, font=artist_font, fill=artist_color)
         if equalizer_enabled and eq_h >= 14:
             eq_top = (artist_y + artist_h + gap) if show_artist else (title_y + title_h + gap)
-            _draw_media_widget_equalizer(panel, rect=(text_x, eq_top, text_w, eq_h), snapshot=snapshot, fill_color=eq_color, accent_color=eq_accent, bars=int(settings.get("equalizer_bars", 20)), gap=int(settings.get("equalizer_gap", 3)), mirror=bool(settings.get("equalizer_mirror", False)))
+            _draw_media_widget_equalizer(panel, rect=(text_x, eq_top, text_w, eq_h), snapshot=snapshot, fill_color=eq_color, accent_color=eq_accent, track_color=eq_track, widget_id=eq_widget_id, bars=int(settings.get("equalizer_bars", 20)), gap=int(settings.get("equalizer_gap", 4)), mirror=bool(settings.get("equalizer_mirror", False)))
     else:
         cover_size = max(58, min(int(h * 0.78), int(w * 0.18)))
         cover_x = int(20 * scale)
@@ -1911,7 +1915,7 @@ def _render_media_now_playing_widget(canvas: Image.Image, item: dict[str, Any], 
         if detail_h > 0:
             _draw_media_widget_text(panel, x=text_x, y=detail_y, width=max_text_w, height=detail_h, text=f"{media_app} - {media_state}", font=detail_font, fill=detail_color)
         if equalizer_enabled and eq_h >= 18:
-            _draw_media_widget_equalizer(panel, rect=(text_x, eq_top, max_text_w, eq_h), snapshot=snapshot, fill_color=eq_color, accent_color=eq_accent, bars=int(settings.get("equalizer_bars", 24 if style == "hero" else 18)), gap=int(settings.get("equalizer_gap", 4)), mirror=bool(settings.get("equalizer_mirror", False)))
+            _draw_media_widget_equalizer(panel, rect=(text_x, eq_top, max_text_w, eq_h), snapshot=snapshot, fill_color=eq_color, accent_color=eq_accent, track_color=eq_track, widget_id=eq_widget_id, bars=int(settings.get("equalizer_bars", 20)), gap=int(settings.get("equalizer_gap", 4)), mirror=bool(settings.get("equalizer_mirror", False)))
     canvas.alpha_composite(panel, (x, y))
 
 
