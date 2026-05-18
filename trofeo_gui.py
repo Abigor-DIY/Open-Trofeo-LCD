@@ -3794,7 +3794,7 @@ class TrofeoGui(QMainWindow):
         designer_tab = QWidget()
         designer_tab_layout = QVBoxLayout(designer_tab)
         designer_tab_layout.setContentsMargins(0, 0, 0, 0)
-        designer_tab_layout.setSpacing(10)
+        designer_tab_layout.setSpacing(4)
         studio_left_tabs.addTab(designer_tab, "Designer")
         studio_left_tabs.addTab(json_tab, "JSON")
 
@@ -3859,7 +3859,7 @@ class TrofeoGui(QMainWindow):
         designer_box.setFlat(True)
         designer_outer = QVBoxLayout(designer_box)
         designer_outer.setContentsMargins(0, 0, 0, 0)
-        designer_outer.setSpacing(10)
+        designer_outer.setSpacing(4)
 
         # 1. INICJALIZACJA WSZYSTKICH WIDŻETÓW (BEZPIECZNIE NA POCZĄTKU)
         self.preview_label = PreviewLabel(self)
@@ -4117,7 +4117,7 @@ class TrofeoGui(QMainWindow):
         studio_right = QWidget()
         studio_layout = QVBoxLayout(studio_right)
         studio_layout.setContentsMargins(0, 0, 0, 0)
-        studio_layout.setSpacing(10)
+        studio_layout.setSpacing(4)
         self.designer_main_splitter.addWidget(studio_right)
 
         # Ustawienie domyślnych proporcji głównego splittera
@@ -4130,7 +4130,7 @@ class TrofeoGui(QMainWindow):
         toolbar_frame.setStyleSheet("background: rgba(30, 41, 59, 0.6); border-radius: 14px; border: 1px solid #334155;")
         toolbar_layout = QHBoxLayout(toolbar_frame)
         toolbar_layout.setContentsMargins(10, 8, 10, 8)
-        toolbar_layout.setSpacing(8)
+        toolbar_layout.setSpacing(6)
 
         self.designer_reload_btn = AnimatedToolbarButton("Load theme")
         self.designer_reload_btn.setObjectName("secondaryAccentButton")
@@ -4186,8 +4186,8 @@ class TrofeoGui(QMainWindow):
 
         theme_gauge_bar = QWidget()
         theme_gauge_layout = QHBoxLayout(theme_gauge_bar)
-        theme_gauge_layout.setContentsMargins(0, 2, 0, 4)
-        theme_gauge_layout.setSpacing(8)
+        theme_gauge_layout.setContentsMargins(0, 0, 0, 2)
+        theme_gauge_layout.setSpacing(6)
         self.designer_theme_gauge_bar_label = QLabel("Default gauge preset (meta.gauge_style):")
         theme_gauge_layout.addWidget(self.designer_theme_gauge_bar_label)
         theme_gauge_layout.addWidget(self.designer_theme_gauge_style_combo, 1)
@@ -4202,14 +4202,14 @@ class TrofeoGui(QMainWindow):
         # LCD PREVIEW (Góra prawego panelu)
         self.designer_canvas_workbench = QFrame()
         self.designer_canvas_workbench.setObjectName("designerSectionBox")
-        self.designer_canvas_workbench.setMinimumHeight(360)
+        self.designer_canvas_workbench.setMinimumHeight(300)
         self.designer_canvas_workbench.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         canvas_vbox = QVBoxLayout(self.designer_canvas_workbench)
         canvas_vbox.setContentsMargins(0, 0, 0, 0) # Przejmujemy niewykorzystaną część
-        canvas_vbox.setSpacing(6)
+        canvas_vbox.setSpacing(2)
 
         preview_tools_row = QHBoxLayout()
-        preview_tools_row.setContentsMargins(10, 10, 10, 0)
+        preview_tools_row.setContentsMargins(10, 6, 10, 0)
         preview_tools_row.setSpacing(6)
         self.preview_tools_label = QLabel("Mouse:")
         self.preview_tools_label.setObjectName("selectionSummaryLabel")
@@ -4360,7 +4360,7 @@ class TrofeoGui(QMainWindow):
         # INSPECTOR (Właściwości - Powiększony do góry)
         self.designer_inspector_container = QWidget()
         self.designer_inspector_container.setMinimumHeight(180)
-        self.designer_inspector_container.setMaximumHeight(340)
+        self.designer_inspector_container.setMaximumHeight(440)
         self.designer_inspector_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._setup_inspector_tabs(QVBoxLayout(self.designer_inspector_container))
         self.designer_stat_display_combo.currentTextChanged.connect(
@@ -4372,7 +4372,7 @@ class TrofeoGui(QMainWindow):
         # Ograniczamy wysokość Inspectora, dajemy więcej miejsca dla LCD
         self.designer_top_splitter.setStretchFactor(0, 5) # Canvas
         self.designer_top_splitter.setStretchFactor(1, 0) # Inspector
-        self.designer_top_splitter.setSizes([720, 260])
+        self.designer_top_splitter.setSizes([430, 360])
 
         designer_tab_layout.addWidget(designer_box, 1)
 
@@ -5571,8 +5571,8 @@ class TrofeoGui(QMainWindow):
         self.designer_move_box = move_box
         move_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         move_layout = QVBoxLayout(move_box)
-        move_layout.setContentsMargins(4, 4, 4, 4)
-        move_layout.setSpacing(2)
+        move_layout.setContentsMargins(6, 5, 6, 5)
+        move_layout.setSpacing(4)
         move_step_row = QHBoxLayout()
         move_step_row.setSpacing(5)
         self.designer_nudge_step_label = QLabel("Step:")
@@ -5624,9 +5624,14 @@ class TrofeoGui(QMainWindow):
         self.designer_nudge_left_btn.clicked.connect(lambda: self.nudge_selected_elements(-1, 0, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
         self.designer_nudge_right_btn.clicked.connect(lambda: self.nudge_selected_elements(1, 0, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
         self.designer_nudge_down_btn.clicked.connect(lambda: self.nudge_selected_elements(0, 1, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
-        layer_actions_row = QHBoxLayout()
-        layer_actions_row.setContentsMargins(0, 0, 0, 0)
-        layer_actions_row.setSpacing(5)
+        self.designer_layer_actions_label = QLabel("Layer actions")
+        self.designer_layer_actions_label.setObjectName("selectionSummaryLabel")
+        self.designer_layer_actions_label.setMaximumHeight(16)
+        move_layout.addWidget(self.designer_layer_actions_label)
+        layer_actions_grid = QGridLayout()
+        layer_actions_grid.setContentsMargins(0, 0, 0, 0)
+        layer_actions_grid.setHorizontalSpacing(5)
+        layer_actions_grid.setVerticalSpacing(4)
         self.designer_layer_down_btn = QPushButton("−Z")
         self.designer_layer_up_btn = QPushButton("+Z")
         self.designer_layer_back_btn = QPushButton("Back")
@@ -5643,19 +5648,24 @@ class TrofeoGui(QMainWindow):
         ):
             btn.setObjectName("quickAddButton")
             btn.setMinimumHeight(24)
+            btn.setMaximumHeight(28)
+            btn.setMinimumWidth(58)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.designer_layer_down_btn.clicked.connect(self.lower_designer_layer)
         self.designer_layer_up_btn.clicked.connect(self.raise_designer_layer)
         self.designer_layer_back_btn.clicked.connect(lambda: self.move_designer_layer_to_edge("back"))
         self.designer_layer_front_btn.clicked.connect(lambda: self.move_designer_layer_to_edge("front"))
         self.designer_visibility_toggle_btn.clicked.connect(self.toggle_selected_visible)
         self.designer_lock_toggle_btn.clicked.connect(self.toggle_selected_locked)
-        layer_actions_row.addWidget(self.designer_layer_down_btn)
-        layer_actions_row.addWidget(self.designer_layer_up_btn)
-        layer_actions_row.addWidget(self.designer_layer_back_btn)
-        layer_actions_row.addWidget(self.designer_layer_front_btn)
-        layer_actions_row.addWidget(self.designer_visibility_toggle_btn)
-        layer_actions_row.addWidget(self.designer_lock_toggle_btn)
-        move_layout.addLayout(layer_actions_row)
+        layer_actions_grid.addWidget(self.designer_layer_down_btn, 0, 0)
+        layer_actions_grid.addWidget(self.designer_layer_up_btn, 0, 1)
+        layer_actions_grid.addWidget(self.designer_layer_back_btn, 0, 2)
+        layer_actions_grid.addWidget(self.designer_layer_front_btn, 1, 0)
+        layer_actions_grid.addWidget(self.designer_visibility_toggle_btn, 1, 1)
+        layer_actions_grid.addWidget(self.designer_lock_toggle_btn, 1, 2)
+        for action_col in range(3):
+            layer_actions_grid.setColumnStretch(action_col, 1)
+        move_layout.addLayout(layer_actions_grid)
         move_actions_row = QHBoxLayout()
         move_actions_row.setContentsMargins(0, 0, 0, 0)
         move_actions_row.setSpacing(6)
@@ -5671,7 +5681,7 @@ class TrofeoGui(QMainWindow):
         self.designer_remove_btn.clicked.connect(self.remove_designer_element)
         move_actions_row.addWidget(self.designer_remove_btn)
         move_layout.addLayout(move_actions_row)
-        move_box.setMaximumHeight(210)
+        move_box.setMaximumHeight(270)
         layout.addWidget(move_box)
         parent_layout.addWidget(box, 1)
 
@@ -7574,6 +7584,8 @@ class TrofeoGui(QMainWindow):
             self.designer_nudge_right_btn.setToolTip(tr("Nudge right", "Przesuń w prawo"))
         if hasattr(self, "designer_nudge_down_btn"):
             self.designer_nudge_down_btn.setToolTip(tr("Nudge down", "Przesuń w dół"))
+        if hasattr(self, "designer_layer_actions_label"):
+            self.designer_layer_actions_label.setText(tr("Layer actions", "Akcje warstw"))
         if hasattr(self, "designer_remove_btn"):
             self.designer_remove_btn.setText(tr("🗑 Delete", "🗑 Usuń"))
         if hasattr(self, "props_box"):
@@ -15858,8 +15870,8 @@ class TrofeoGui(QMainWindow):
     def _designer_splitter_limits(self) -> tuple[int, int]:
         height = max(760, int(self.height() or 0))
         compact_height = height < 1040
-        min_canvas = 300 if compact_height else 360
-        max_inspector = 260 if compact_height else 340
+        min_canvas = 280 if compact_height else 320
+        max_inspector = 380 if compact_height else 460
         return min_canvas, max_inspector
 
     def _clamp_designer_splitter_later(self) -> None:
@@ -15872,16 +15884,19 @@ class TrofeoGui(QMainWindow):
         if splitter is None or inspector is None or canvas is None or splitter.count() < 2:
             return
         min_canvas, max_inspector = self._designer_splitter_limits()
+        max_canvas = 430 if (self.height() or 0) < 1040 else 500
         canvas.setMinimumHeight(min_canvas)
+        canvas.setMaximumHeight(max_canvas)
         inspector.setMaximumHeight(max_inspector)
         sizes = splitter.sizes()
         if len(sizes) < 2:
             return
         total = max(sum(sizes), min_canvas + 180)
         target_inspector = min(max_inspector, max(180, sizes[1]))
-        target_canvas = max(min_canvas, total - target_inspector)
-        if target_canvas + target_inspector > total:
-            target_inspector = max(180, total - target_canvas)
+        target_canvas = max(min_canvas, min(max_canvas, total - target_inspector))
+        target_inspector = max(180, min(max_inspector, total - target_canvas))
+        if target_canvas + target_inspector < total and target_inspector < max_inspector:
+            target_inspector = min(max_inspector, target_inspector + (total - target_canvas - target_inspector))
         next_sizes = [target_canvas, target_inspector]
         if sizes[:2] != next_sizes:
             splitter.blockSignals(True)
