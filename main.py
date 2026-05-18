@@ -9,6 +9,7 @@ import argparse
 import fcntl
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -23,6 +24,23 @@ BACKEND_URL = f"http://127.0.0.1:{BACKEND_PORT}"
 STATE_DIR = Path.home() / ".local/state/open-trofeo-lcd"
 MANAGED_BACKEND_PID = STATE_DIR / "launcher-backend.pid"
 INSTANCE_LOCK = STATE_DIR / "launcher.lock"
+BACKEND_ENV_FILE = WORKDIR / ".trofeo-backend.env"
+BACKEND_ENV_EXAMPLE = WORKDIR / ".trofeo-backend.env.example"
+
+BACKEND_ENV_DEFAULTS = {
+    "HOST": "127.0.0.1",
+    "PORT": "18777",
+    "PCAP_FILE": "dzis.pcapng",
+    "FRAME_INDEX": "0",
+    "ACK_TIMEOUT_MS": "500",
+    "INTER_PACKET_DELAY": "0.01",
+    "FRAME_DELAY": "0.02",
+    "CONNECT_RETRIES": "20",
+    "CONNECT_RETRY_DELAY": "0.5",
+    "THEMES_FILE": ".trofeo-themes.json",
+    "PLAYLIST_FILE": ".trofeo-playlist.json",
+    "AUTOSTART": "0",
+}
 
 def is_backend_running() -> bool:
     """Sprawdza, czy backend odpowiada na /health."""
@@ -83,10 +101,13 @@ def _acquire_instance_lock():
         except Exception:
             pid = None
         if pid:
+            cmdline = _process_cmdline(pid)
             print(f"[-] Open Trofeo LCD już działa albo launcher trzyma lock (PID: {pid}).")
+            if cmdline:
+                print(f"[-] Proces: {cmdline}")
         else:
             print("[-] Open Trofeo LCD już działa albo launcher trzyma lock bez zapisanego PID.")
-        print("[-] Jeśli użyłeś nuke i to nadal występuje, uruchom: scripts/trofeo_nuke.sh")
+        print("[-] Jeśli użyłeś nuke i to nadal występuje, sprawdź: scripts/trofeo_status.sh albo scripts/trofeo_nuke.sh")
         lock_handle.close()
         return None
     lock_handle.seek(0)
@@ -103,6 +124,96 @@ def _pid_is_alive(pid: int | None) -> bool:
         return True
     except Exception:
         return False
+
+def _process_cmdline(pid: int | None) -> str:
+    if not pid:
+        return ""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        return raw.replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
+    except Exception:
+        return ""
+
+def _read_backend_env() -> dict[str, str]:
+    values = dict(BACKEND_ENV_DEFAULTS)
+    if BACKEND_ENV_FILE.exists():
+        for line in BACKEND_ENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+            raw = line.strip()
+            if not raw or raw.startswith("#") or "=" not in raw:
+                continue
+            key, value = raw.split("=", 1)
+            values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+def _ensure_backend_env() -> None:
+    if BACKEND_ENV_FILE.exists():
+        return
+    if BACKEND_ENV_EXAMPLE.exists():
+        BACKEND_ENV_FILE.write_text(BACKEND_ENV_EXAMPLE.read_text(encoding="utf-8"), encoding="utf-8")
+        print(f"[+] Utworzono domyślny plik konfiguracji: {BACKEND_ENV_FILE}")
+
+def _env_bool(value: str | None, default: bool = False) -> bool:
+    if value is None or str(value).strip() == "":
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+def _runtime_check() -> list[tuple[str, bool, str]]:
+    checks = [
+        ("python3", bool(shutil.which("python3")), "wymagany do uruchomienia launchera/backendu"),
+        ("playerctl", bool(shutil.which("playerctl")), "Now Playing przez MPRIS"),
+        ("ffmpeg", bool(shutil.which("ffmpeg")), "import wideo MP4 i klatki video dla Now Playing"),
+        ("cava", bool(shutil.which("cava")), "realny EQ/audio spectrum"),
+        ("trcc", bool(shutil.which("trcc") or (WORKDIR / ".venv-trcc/bin/trcc").exists()), "szybsza komunikacja z LCD przez TRCC"),
+    ]
+    gui_python = Path(get_venv_python(".venv-gui"))
+    trcc_python = Path(get_venv_python(".venv-trcc"))
+    checks.append((".venv-gui", gui_python.exists(), "venv GUI/PySide6"))
+    checks.append((".venv-trcc", trcc_python.exists(), "venv backend/TRCC"))
+    return checks
+
+def print_runtime_status() -> None:
+    env = _read_backend_env()
+    print("Open Trofeo LCD runtime")
+    print(f"workdir: {WORKDIR}")
+    print(f"backend env: {BACKEND_ENV_FILE} ({'OK' if BACKEND_ENV_FILE.exists() else 'missing, will be created from example'})")
+    print(f"backend url: http://{env.get('HOST', '127.0.0.1')}:{env.get('PORT', '18777')}")
+    print(f"backend running: {'yes' if is_backend_running() else 'no'}")
+    reported = backend_workdir()
+    if reported:
+        print(f"backend workdir: {reported}")
+    pid = _read_managed_backend_pid()
+    if pid:
+        print(f"managed backend pid: {pid} ({'alive' if _pid_is_alive(pid) else 'stale'})")
+    print("dependencies:")
+    for name, ok, note in _runtime_check():
+        print(f"  {'OK' if ok else 'MISS'} {name}: {note}")
+
+def _backend_args_from_env(env: dict[str, str]) -> list[str]:
+    host = env.get("HOST", "127.0.0.1")
+    port = env.get("PORT", "18777")
+    args = [
+        "--workdir", str(WORKDIR),
+        "--host", host,
+        "--port", port,
+        "--pcap", env.get("PCAP_FILE", "dzis.pcapng"),
+        "--frame-index", env.get("FRAME_INDEX", "0"),
+        "--ack-timeout-ms", env.get("ACK_TIMEOUT_MS", "500"),
+        "--inter-packet-delay", env.get("INTER_PACKET_DELAY", "0.01"),
+        "--frame-delay", env.get("FRAME_DELAY", "0.02"),
+        "--connect-retries", env.get("CONNECT_RETRIES", "20"),
+        "--connect-retry-delay", env.get("CONNECT_RETRY_DELAY", "0.5"),
+        "--themes-file", env.get("THEMES_FILE", ".trofeo-themes.json"),
+        "--playlist-file", env.get("PLAYLIST_FILE", ".trofeo-playlist.json"),
+    ]
+    if _env_bool(env.get("AUTOSTART"), default=False) or _env_bool(os.environ.get("OPEN_TROFEO_BACKEND_AUTOSTART"), default=False):
+        args.append("--autostart")
+    display_backend = env.get("DISPLAY_BACKEND", "").strip()
+    if display_backend:
+        args.extend(["--display-backend", display_backend])
+    trcc_bin = env.get("TRCC_BIN", "").strip()
+    if trcc_bin:
+        args.extend(["--trcc-bin", trcc_bin])
+    return args
 
 def _shutdown_backend_api(timeout: float = 5.0) -> bool:
     try:
@@ -121,6 +232,8 @@ def get_venv_python(venv_name: str) -> str:
 
 def start_backend(force_replace: bool = False):
     """Uruchamia backend w tle, jeśli nie działa. Zwraca proces lub None."""
+    _ensure_backend_env()
+    backend_env = _read_backend_env()
     managed_pid = _read_managed_backend_pid()
     if is_backend_running():
         if force_replace:
@@ -155,18 +268,19 @@ def start_backend(force_replace: bool = False):
     log_file = STATE_DIR / "backend.log"
     
     python_bin = get_venv_python(".venv-trcc")
-    
-    env_args = []
-    if os.environ.get("OPEN_TROFEO_BACKEND_AUTOSTART", "").strip().lower() in {"1", "true", "yes", "on"}:
-        env_args.append("--autostart")
+    env = os.environ.copy()
+    env.update({key: str(value) for key, value in backend_env.items()})
+    env.setdefault("PYTHON_BIN", python_bin)
+    backend_args = _backend_args_from_env(backend_env)
     
     # Używamy start_new_session=True, aby backend nie zginął razem z launcherem 
     # przedwcześnie, ale będziemy go kontrolować.
     proc = subprocess.Popen(
-        [python_bin, str(WORKDIR / "trofeo_backend.py")] + env_args,
+        [python_bin, str(WORKDIR / "trofeo_backend.py")] + backend_args,
         stdout=open(log_file, "a"),
         stderr=subprocess.STDOUT,
         cwd=WORKDIR,
+        env=env,
         start_new_session=True 
     )
     _write_managed_backend_pid(proc.pid)
@@ -262,8 +376,16 @@ def main():
     parser.add_argument("--backend-only", action="store_true", help="Uruchom tylko backend")
     parser.add_argument("--gui-only", action="store_true", help="Uruchom tylko GUI")
     parser.add_argument("--replace-existing-backend", action="store_true", help="Wymuś restart istniejącego backendu")
+    parser.add_argument("--status", action="store_true", help="Pokaż status runtime i zależności")
+    parser.add_argument("--check-runtime", action="store_true", help="Sprawdź zależności runtime i zakończ")
     
     args, _ = parser.parse_known_args()
+
+    if args.status or args.check_runtime:
+        print_runtime_status()
+        if args.check_runtime and any(not ok for _name, ok, _note in _runtime_check()):
+            raise SystemExit(1)
+        return
     
     if args.cli:
         print("[!] Tryb CLI: uruchamianie trofeo_lcd.py...")

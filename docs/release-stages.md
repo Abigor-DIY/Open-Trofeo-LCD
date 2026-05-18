@@ -70,6 +70,13 @@
 
 ## Etap 6 - Wydanie
 
+- Status: w toku.
+- 2026-05-18:
+  - launcher lokalny tworzy `.trofeo-backend.env` z przykładu, jeżeli go brakuje,
+  - `main.py` uruchamia backend z tymi samymi parametrami co service script,
+  - dodano `--status` / `--check-runtime` do szybkiej diagnostyki zależności i aktywnego backendu,
+  - `scripts/run_trofeo_gui.sh` przepuszcza tryby diagnostyczne i backend-only do launchera,
+  - dodano `scripts/trofeo_status.sh` jako szybki status bez startowania GUI/backendu.
 - CI build dla artefaktow Linux.
 - Testy na Ubuntu / Debian, Fedora i Arch.
 - Checklista wydania:

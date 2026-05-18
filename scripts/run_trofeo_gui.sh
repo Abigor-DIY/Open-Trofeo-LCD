@@ -20,6 +20,10 @@ PYTHON_BIN="$(pick_python)"
 
 cd "${WORKDIR}"
 
+if [[ "${1:-}" == "--status" || "${1:-}" == "--check-runtime" || "${1:-}" == "--backend-only" || "${1:-}" == "--replace-existing-backend" ]]; then
+  exec "${PYTHON_BIN}" "${WORKDIR}/main.py" "$@"
+fi
+
 if [[ "${OPEN_TROFEO_GUI_ONLY:-0}" == "1" || "${1:-}" == "--gui-only" ]]; then
   shift || true
   BACKEND_URL="${1:-http://127.0.0.1:18777}"
