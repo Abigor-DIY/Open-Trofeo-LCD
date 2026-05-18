@@ -882,6 +882,31 @@ class PreviewLabel(QLabel):
         self.update()
 
 
+class LcdPreviewScrollArea(QScrollArea):
+    """Scroll area that keeps the LCD preview at the physical 1920x462 aspect."""
+
+    LCD_WIDTH = 1920
+    LCD_HEIGHT = 462
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumHeight(160)
+        self.setMaximumHeight(330)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._sync_aspect_height()
+
+    def _sync_aspect_height(self) -> None:
+        width = max(1, self.viewport().width() or self.width())
+        target = int(round(width * self.LCD_HEIGHT / self.LCD_WIDTH)) + 2
+        target = max(160, min(330, target))
+        if self.minimumHeight() != target or self.maximumHeight() != target:
+            self.setMinimumHeight(target)
+            self.setMaximumHeight(target)
+
+
 class LayerListWidget(QListWidget):
     rows_reordered = Signal()
 
@@ -4331,10 +4356,11 @@ class TrofeoGui(QMainWindow):
         preview_tools_row.addStretch(1)
         canvas_vbox.addLayout(preview_tools_row)
         
-        preview_scroll = QScrollArea()
+        preview_scroll = LcdPreviewScrollArea()
+        self.designer_preview_scroll = preview_scroll
         preview_scroll.setWidgetResizable(True); preview_scroll.setAlignment(Qt.AlignCenter)
         preview_scroll.setFrameShape(QFrame.NoFrame); preview_scroll.setWidget(self.preview_label)
-        canvas_vbox.addWidget(preview_scroll, 1)
+        canvas_vbox.addWidget(preview_scroll, 0)
         
         info_row = QHBoxLayout()
         info_row.setContentsMargins(10, 0, 10, 10)
@@ -14530,30 +14556,16 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         self.push_designer_history()
-        background = self.theme_doc_model.setdefault("background", {})
-        panels = background.setdefault("panels", [])
-        panels.append(
-            {
-                "id": self._next_item_id("panels", "panel_music_eq"),
-                "rect": [860, 276, 520, 108],
-                "radius": 18,
-                "fill": [8, 14, 24, 186],
-                "opacity": 1.0,
-                "z_index": 95,
-                "visible": True,
-                "locked": False,
-            }
-        )
         stats = self.theme_doc_model.setdefault("stats", [])
         stats.append(
             {
                 "id": self._next_item_id("stats", "stat_music_equalizer"),
-                "label": "EQ",
+                "label": "",
                 "source": "volume_percent",
                 "format": "{value}",
-                "x": 882,
-                "y": 294,
-                "box_width": 476,
+                "x": 1560,
+                "y": 356,
+                "box_width": 320,
                 "box_height": 72,
                 "font_family": "DejaVu Sans",
                 "font_size": 22,
@@ -14570,7 +14582,7 @@ class TrofeoGui(QMainWindow):
                 "track_color": [0, 0, 0, 0],
                 "fill_color": [102, 226, 120, 255],
                 "stroke_width": 0,
-                "show_value_text": True,
+                "show_value_text": False,
                 "equalizer_bars": 20,
                 "equalizer_gap": 4,
                 "equalizer_mirror": False,
@@ -15898,7 +15910,7 @@ class TrofeoGui(QMainWindow):
         if target_canvas + target_inspector < total and target_inspector < max_inspector:
             target_inspector = min(max_inspector, target_inspector + (total - target_canvas - target_inspector))
         next_sizes = [target_canvas, target_inspector]
-        if sizes[:2] != next_sizes:
+        if any(abs(sizes[idx] - next_sizes[idx]) > 8 for idx in range(2)):
             splitter.blockSignals(True)
             try:
                 splitter.setSizes(next_sizes)
