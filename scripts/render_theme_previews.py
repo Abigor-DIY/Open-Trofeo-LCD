@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 
 from theme_renderer import render_theme_document
 from theme_schema import load_theme_document
+from preview_stats import PreviewStatsProvider
 
 
 PREVIEW_NAMES = {
@@ -29,7 +30,7 @@ PREVIEW_NAMES = {
 
 def render_preview(theme_path: Path, out_path: Path, *, width: int | None) -> None:
     document = load_theme_document(theme_path)
-    image = render_theme_document(document, base_dir=theme_path.parent)
+    image = render_theme_document(document, base_dir=theme_path.parent, stats_provider=PreviewStatsProvider())
     if width is not None and width > 0 and image.width != width:
         height = max(1, int(round(image.height * (width / float(image.width)))))
         image = image.resize((width, height), Image.Resampling.LANCZOS)

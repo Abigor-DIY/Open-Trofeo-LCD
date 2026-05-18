@@ -83,6 +83,11 @@
 
 ## Etap 7 - Animation Studio
 
+- Status: w toku.
+- 2026-05-18:
+  - dodano wspolny, deterministyczny snapshot danych dla podgladow GUI/dokumentacji,
+  - galeria i okna podgladu renderuja motywy `theme-doc` jako pelna kompozycje z widgetami/statami,
+  - `Composite preview` w Animation Studio jest domyslnie wlaczony i nie odpytuje live zrodel danych.
 - Wydzielic kontroler sekwencji animacji z `trofeo_gui.py` do modulu animacji:
   - normalizacja `effects.animation`
   - wybor aktualnej klatki

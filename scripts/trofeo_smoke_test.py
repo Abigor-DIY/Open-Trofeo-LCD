@@ -20,69 +20,25 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from preview_stats import preview_stats_values
 from theme_renderer import render_theme_document
 from theme_schema import ThemeDocument, load_theme_document, normalize_theme_document
 
 
 def _synthetic_stats() -> dict[str, str]:
-    stats = {
-        "hostname": "smoke",
-        "ip_local": "127.0.0.1",
-        "time_hms": "12:34:56",
-        "date_ymd": "2026-05-16",
-        "cpu_usage_percent": "42%",
-        "cpu_core_avg_percent": "38%",
-        "cpu_core_max_percent": "71%",
-        "cpu_core_count": "16",
-        "cpu_freq_ghz": "4.20",
-        "cpu_temp_c": "55C",
-        "load_average": "0.42",
-        "mem_used_mb": "8192",
-        "mem_total_mb": "32768",
-        "mem_percent": "25%",
-        "disk_used_gb": "512",
-        "disk_total_gb": "2048",
-        "disk_percent": "25%",
-        "net_dl_kbps": "1200",
-        "net_ul_kbps": "180",
-        "volume_percent": "67%",
-        "volume_state": "on",
-        "gpu_name": "Smoke GPU",
-        "gpu_temp": "61C",
-        "gpu_load": "44%",
-        "vram_used_mb": "4096",
-        "vram_total_mb": "12288",
-        "vram_percent": "33%",
-        "uptime_human": "1d 2h",
-        "media_title": "Synthetic Track",
-        "media_artist": "Open Trofeo",
-        "media_album": "Smoke",
-        "media_app": "playerctl",
-        "media_state": "playing",
-        "media_cover_path": "",
-        "media_video_frame_path": "",
-        "weather_location": "Warszawa",
-        "weather_temp_c": "21C",
-        "weather_feels_like_c": "20C",
-        "weather_humidity_percent": "55%",
-        "weather_wind_kph": "12 km/h",
-        "weather_precip_mm": "0 mm",
-        "weather_cloud_percent": "25%",
-        "weather_code": "1",
-        "weather_condition": "Partly cloudy",
-        "weather_icon": "partly_cloudy",
-        "weather_icon_path": "",
-        "weather_is_day": "1",
-        "weather_daily_json": "[]",
-    }
-    for idx in range(7):
-        stats[f"weather_day_{idx}_label"] = f"D{idx + 1}"
-        stats[f"weather_day_{idx}_condition"] = "Cloudy"
-        stats[f"weather_day_{idx}_icon"] = "cloudy"
-        stats[f"weather_day_{idx}_icon_path"] = ""
-        stats[f"weather_day_{idx}_temp_min_c"] = f"{12 + idx}C"
-        stats[f"weather_day_{idx}_temp_max_c"] = f"{20 + idx}C"
-        stats[f"weather_day_{idx}_precip_mm"] = "0 mm"
+    stats = preview_stats_values()
+    stats.update(
+        {
+            "hostname": "smoke",
+            "ip_local": "127.0.0.1",
+            "time_hms": "12:34:56",
+            "date_ymd": "2026-05-16",
+            "media_title": "Synthetic Track",
+            "media_artist": "Open Trofeo",
+            "media_app": "playerctl",
+            "weather_location": "Warszawa",
+        }
+    )
     return stats
 
 

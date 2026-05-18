@@ -89,6 +89,7 @@ except ImportError:
     raise SystemExit(1)
 
 from gauge_presets import GAUGE_PRESETS, GAUGE_PRESET_LABELS, GAUGE_PRESET_ORDER, THEME_STYLE_PRESET
+from preview_stats import PreviewStatsProvider
 from theme_json_with_comments import parse_theme_json_text, theme_json_documentation_preamble
 from theme_schema import KNOWN_STAT_DISPLAY, KNOWN_STAT_SOURCES, ThemeDocument, normalize_theme_document, save_theme_document
 from stats_sources import StatsProvider
@@ -1932,6 +1933,7 @@ class TrofeoGui(QMainWindow):
         self._animation_syncing_from_timeline = False
         self._animation_studio_built = False
         self._animation_studio_shortcuts: list[QShortcut] = []
+        self._preview_stats_provider = PreviewStatsProvider()
         self._animation_export_in_flight = False
         self._animation_import_in_flight = False
         self._animation_duplicate_in_flight = False
@@ -8514,7 +8516,7 @@ class TrofeoGui(QMainWindow):
         self.animation_preview_scale_combo.currentIndexChanged.connect(lambda _idx: self._refresh_animation_studio_preview())
         preview_row.addWidget(self.animation_preview_scale_combo)
         self.animation_auto_composite_chk = QCheckBox("Auto composite")
-        self.animation_auto_composite_chk.setChecked(False)
+        self.animation_auto_composite_chk.setChecked(True)
         self.animation_auto_composite_chk.toggled.connect(lambda _checked: self._refresh_animation_studio_preview(force_composite=True))
         self.animation_refresh_composite_btn = QPushButton("Refresh composite")
         self.animation_refresh_composite_btn.setObjectName("secondaryAccentButton")
@@ -8903,7 +8905,11 @@ class TrofeoGui(QMainWindow):
             return QPixmap()
         try:
             document = normalize_theme_document(deepcopy(self.theme_doc_model))
-            image = render_theme_document(ThemeDocument(document), base_dir=self._theme_base_dir())
+            image = render_theme_document(
+                ThemeDocument(document),
+                base_dir=self._theme_base_dir(),
+                stats_provider=self._preview_stats_provider,
+            )
             buffer = io.BytesIO()
             image.save(buffer, format="PNG")
             pixmap = QPixmap()
@@ -9735,7 +9741,11 @@ class TrofeoGui(QMainWindow):
             return None
         try:
             document = normalize_theme_document(self.theme_doc_model)
-            return render_theme_document(ThemeDocument(document), base_dir=self._theme_base_dir())
+            return render_theme_document(
+                ThemeDocument(document),
+                base_dir=self._theme_base_dir(),
+                stats_provider=self._preview_stats_provider,
+            )
         except Exception:
             return None
 
@@ -11060,7 +11070,11 @@ class TrofeoGui(QMainWindow):
                 theme_frame = deepcopy(document)
                 theme_frame.setdefault("effects", {}).setdefault("animation", {})
                 theme_frame["effects"]["animation"]["current_frame"] = source_idx
-                image = render_theme_document(ThemeDocument(normalize_theme_document(theme_frame)), base_dir=base_dir)
+                image = render_theme_document(
+                    ThemeDocument(normalize_theme_document(theme_frame)),
+                    base_dir=base_dir,
+                    stats_provider=self._preview_stats_provider,
+                )
                 buffer = io.BytesIO()
                 image.save(buffer, format="PNG")
                 zf.writestr(f"frames/frame_{out_idx:04d}.png", buffer.getvalue())
@@ -12300,7 +12314,7 @@ class TrofeoGui(QMainWindow):
         if render_theme_file is None:
             return None
         try:
-            image = render_theme_file(template_path)
+            image = render_theme_file(template_path, stats_provider=self._preview_stats_provider)
             try:
                 raw = json.loads(Path(template_path).read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
@@ -12364,7 +12378,7 @@ class TrofeoGui(QMainWindow):
         theme_type = str(item.get("type", "image")).strip()
         if theme_type == "theme-doc" and render_theme_file is not None and path:
             try:
-                image = render_theme_file(path)
+                image = render_theme_file(path, stats_provider=self._preview_stats_provider)
                 try:
                     raw = parse_theme_json_text(Path(path).read_text(encoding="utf-8"))
                     if isinstance(raw, dict):
@@ -12435,7 +12449,7 @@ class TrofeoGui(QMainWindow):
         theme_type = str(item.get("type", "image")).strip()
         if theme_type == "theme-doc" and render_theme_file is not None and path:
             try:
-                image = render_theme_file(path)
+                image = render_theme_file(path, stats_provider=self._preview_stats_provider)
                 try:
                     raw = parse_theme_json_text(Path(path).read_text(encoding="utf-8"))
                     if isinstance(raw, dict):
@@ -18131,6 +18145,7 @@ class TrofeoGui(QMainWindow):
                 preview_image = render_theme_document(
                     ThemeDocument(normalize_theme_document(deepcopy(remapped))),
                     base_dir=Path.cwd(),
+                    stats_provider=self._preview_stats_provider,
                 )
                 preview_image.thumbnail((920, 240))
                 buffer = io.BytesIO()
