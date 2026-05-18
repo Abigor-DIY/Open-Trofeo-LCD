@@ -1940,6 +1940,8 @@ class TrofeoGui(QMainWindow):
         self._animation_stabilize_in_flight = False
         self._animation_worker_states: dict[str, str] = {}
         self._animation_thumbnail_generation = 0
+        self._animation_thumbnail_in_flight = False
+        self._animation_thumbnail_pending_jobs: dict[tuple[str, int], dict[str, Any]] = {}
         self._image_thumbnail_cache: dict[tuple[str, int], QPixmap] = {}
         self._preview_request_in_flight = False
         self._preview_request_queued = False
@@ -10067,11 +10069,40 @@ class TrofeoGui(QMainWindow):
             return str(path.resolve()), 0
 
     def _start_animation_thumbnail_worker(self, jobs: list[dict[str, Any]]) -> None:
-        self._animation_thumbnail_generation += 1
-        generation = self._animation_thumbnail_generation
         if not jobs:
+            if not getattr(self, "_animation_thumbnail_in_flight", False):
+                self._set_animation_worker_state("thumbnails", None)
+            return
+        pending = getattr(self, "_animation_thumbnail_pending_jobs", {})
+        if not isinstance(pending, dict):
+            pending = {}
+            self._animation_thumbnail_pending_jobs = pending
+        for job in jobs:
+            key = (str(job.get("path", "")), int(job.get("mtime", 0) or 0))
+            if key[0]:
+                pending[key] = job
+        if getattr(self, "_animation_thumbnail_in_flight", False):
+            self._set_animation_worker_state(
+                "thumbnails",
+                self._tr(
+                    f"thumbnail queue: {len(pending)} pending",
+                    f"kolejka miniaturek: {len(pending)}",
+                ),
+            )
+            return
+        self._drain_animation_thumbnail_queue()
+
+    def _drain_animation_thumbnail_queue(self) -> None:
+        pending = getattr(self, "_animation_thumbnail_pending_jobs", {})
+        if not isinstance(pending, dict) or not pending:
+            self._animation_thumbnail_in_flight = False
             self._set_animation_worker_state("thumbnails", None)
             return
+        jobs = list(pending.values())
+        pending.clear()
+        self._animation_thumbnail_generation += 1
+        generation = self._animation_thumbnail_generation
+        self._animation_thumbnail_in_flight = True
         self._set_animation_worker_state(
             "thumbnails",
             self._tr(f"building {len(jobs)} thumbnails", f"miniatury: {len(jobs)}"),
@@ -10097,6 +10128,14 @@ class TrofeoGui(QMainWindow):
             self.api_result.emit(f"animation-thumbnails::{generation}", True, {"result": {"items": results}})
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_animation_thumbnail_worker(self) -> None:
+        self._animation_thumbnail_in_flight = False
+        pending = getattr(self, "_animation_thumbnail_pending_jobs", {})
+        if isinstance(pending, dict) and pending:
+            QTimer.singleShot(0, self._drain_animation_thumbnail_queue)
+        else:
+            self._set_animation_worker_state("thumbnails", None)
 
     def _update_animation_preview_timer(self) -> None:
         animation = self._current_animation_effect()
@@ -11458,7 +11497,7 @@ class TrofeoGui(QMainWindow):
             return
         if generation != getattr(self, "_animation_thumbnail_generation", 0):
             return
-        self._set_animation_worker_state("thumbnails", None)
+        self._finish_animation_thumbnail_worker()
         data = payload if isinstance(payload, dict) else {}
         result = data.get("result", {})
         items = result.get("items", []) if isinstance(result, dict) else []
@@ -11483,7 +11522,16 @@ class TrofeoGui(QMainWindow):
             self._image_thumbnail_cache = {key: val for key, val in self._image_thumbnail_cache.items() if key[0] != cache_key[0]}
             self._image_thumbnail_cache[cache_key] = pixmap
             item.setIcon(QIcon(pixmap))
+        self._trim_animation_thumbnail_cache()
         self._refresh_animation_frame_list(preserve_selection=True)
+
+    def _trim_animation_thumbnail_cache(self) -> None:
+        max_items = 720
+        cache = getattr(self, "_image_thumbnail_cache", {})
+        if not isinstance(cache, dict) or len(cache) <= max_items:
+            return
+        keep = list(cache.items())[-max_items:]
+        self._image_thumbnail_cache = dict(keep)
 
     def clear_background_animation(self) -> None:
         if self.theme_doc_model is None:
@@ -11632,6 +11680,8 @@ class TrofeoGui(QMainWindow):
         if is_animation_thumbnails:
             if ok:
                 self._apply_animation_thumbnail_payload(action, payload)
+            else:
+                self._finish_animation_thumbnail_worker()
             return
 
         if action == "animation-export" and not ok:

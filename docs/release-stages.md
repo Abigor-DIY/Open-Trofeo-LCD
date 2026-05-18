@@ -88,6 +88,10 @@
   - dodano wspolny, deterministyczny snapshot danych dla podgladow GUI/dokumentacji,
   - galeria i okna podgladu renderuja motywy `theme-doc` jako pelna kompozycje z widgetami/statami,
   - `Composite preview` w Animation Studio jest domyslnie wlaczony i nie odpytuje live zrodel danych.
+- 2026-05-18:
+  - dodano kolejke/debounce generowania miniaturek klatek,
+  - kolejne odswiezenia timeline nie uruchamiaja rownoleglych workerow dla tych samych obrazow,
+  - cache miniaturek ma limit, zeby dlugie animacje nie rozpychaly pamieci GUI.
 - Wydzielic kontroler sekwencji animacji z `trofeo_gui.py` do modulu animacji:
   - normalizacja `effects.animation`
   - wybor aktualnej klatki
