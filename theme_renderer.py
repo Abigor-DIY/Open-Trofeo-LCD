@@ -8,6 +8,7 @@ Stage 3.2: render a validated theme document into a 1920x462 image.
 from __future__ import annotations
 
 import argparse
+import colorsys
 from copy import deepcopy
 import json
 import math
@@ -875,6 +876,15 @@ def _draw_stat_equalizer(
     start_x = plot_left + max(0, (content_w - total_w) // 2)
     mid_y = plot_top + plot_h / 2.0
     live_levels = _resampled_audio_eq_levels(snapshot, bars)
+    preset = str(item.get("equalizer_color_preset", "custom")).strip().lower()
+    threshold = max(0.0, min(1.0, float(item.get("equalizer_threshold", 1.0) or 1.0)))
+    threshold_rgba = _rgba(item.get("equalizer_threshold_color", [255, 86, 96, 255]))
+    threshold_color = (
+        threshold_rgba[0],
+        threshold_rgba[1],
+        threshold_rgba[2],
+        min(threshold_rgba[3], max(fill_color[3], value_fill[3])),
+    )
     seed = (sum(ord(ch) for ch in str(item.get("id", "eq"))) % 31) / 7.0
     phase_t = time.time() * (3.6 if is_playing else 1.2)
     for idx in range(bars):
@@ -898,7 +908,16 @@ def _draw_stat_equalizer(
                 level = min(0.34, 0.05 + combined * 0.16 * weight)
             else:
                 level = 0.06 + combined * 0.06 * weight
-        bar_fill = _lerp_rgba(fill_color, value_fill, max(0.0, min(1.0, level)) * 0.72)
+        bar_fill = _equalizer_bar_color(
+            preset=preset,
+            index=idx,
+            bars=bars,
+            level=level,
+            fill_color=fill_color,
+            value_fill=value_fill,
+            threshold=threshold,
+            threshold_color=threshold_color,
+        )
         if mirror:
             half_h = max(2, int(round((plot_h * 0.48) * level)))
             top = int(round(mid_y - half_h))
@@ -912,6 +931,42 @@ def _draw_stat_equalizer(
             radius=max(2, min(6, bar_width // 2)),
             fill=bar_fill,
         )
+
+
+def _equalizer_bar_color(
+    *,
+    preset: str,
+    index: int,
+    bars: int,
+    level: float,
+    fill_color: tuple[int, int, int, int],
+    value_fill: tuple[int, int, int, int],
+    threshold: float,
+    threshold_color: tuple[int, int, int, int],
+) -> tuple[int, int, int, int]:
+    normalized = max(0.0, min(1.0, level))
+    if 0.0 <= threshold < 1.0 and normalized >= threshold:
+        return threshold_color
+    preset = preset if preset in {"neon", "cyan", "rainbow", "thermal"} else "custom"
+    if preset == "rainbow":
+        pos = index / float(max(1, bars - 1))
+        hue = (0.68 - 0.68 * pos) % 1.0
+        red, green, blue = colorsys.hsv_to_rgb(hue, 0.72, 1.0)
+        alpha = max(fill_color[3], value_fill[3])
+        return int(red * 255), int(green * 255), int(blue * 255), alpha
+    if preset == "thermal":
+        alpha = max(fill_color[3], value_fill[3])
+        low = (90, 220, 132, alpha)
+        mid = (246, 231, 112, alpha)
+        high = (255, 86, 96, alpha)
+        if normalized < 0.58:
+            return _lerp_rgba(low, mid, normalized / 0.58)
+        return _lerp_rgba(mid, high, (normalized - 0.58) / 0.42)
+    if preset == "cyan":
+        return _lerp_rgba((70, 190, 255, fill_color[3]), (230, 248, 255, value_fill[3]), normalized * 0.68)
+    if preset == "neon":
+        return _lerp_rgba((102, 226, 120, fill_color[3]), (246, 231, 152, value_fill[3]), normalized * 0.72)
+    return _lerp_rgba(fill_color, value_fill, normalized * 0.72)
 
 
 def _motion_progress(track: dict[str, Any], frame_index: int) -> float:
@@ -1763,6 +1818,9 @@ def _draw_media_widget_equalizer(
     accent_color: tuple[int, int, int, int],
     track_color: tuple[int, int, int, int],
     widget_id: str,
+    color_preset: str,
+    threshold: float,
+    threshold_color: tuple[int, int, int, int],
     bars: int,
     gap: int,
     mirror: bool,
@@ -1781,6 +1839,9 @@ def _draw_media_widget_equalizer(
         "equalizer_bars": bars,
         "equalizer_gap": gap,
         "equalizer_mirror": mirror,
+        "equalizer_color_preset": color_preset,
+        "equalizer_threshold": threshold,
+        "equalizer_threshold_color": list(threshold_color),
         "show_value_text": False,
     }
     value = str(snapshot.get("volume_percent", "65"))
@@ -1839,6 +1900,9 @@ def _render_media_now_playing_widget(canvas: Image.Image, item: dict[str, Any], 
     eq_color = _rgba(settings.get("equalizer_color", [102, 226, 120, 255]))
     eq_accent = _rgba(settings.get("equalizer_accent_color", [246, 231, 152, 255]))
     eq_track = _rgba(settings.get("equalizer_track_color", [0, 0, 0, 0]))
+    eq_preset = str(settings.get("equalizer_color_preset", "neon")).strip().lower()
+    eq_threshold = max(0.0, min(1.0, float(settings.get("equalizer_threshold", 1.0) or 1.0)))
+    eq_threshold_color = _rgba(settings.get("equalizer_threshold_color", [255, 86, 96, 255]))
     eq_widget_id = f"{item.get('id', 'media_now_playing')}::equalizer"
     media_title = str(snapshot.get("media_title", "N/A") or "N/A")
     media_artist = str(snapshot.get("media_artist", "N/A") or "N/A")
@@ -1876,7 +1940,7 @@ def _render_media_now_playing_widget(canvas: Image.Image, item: dict[str, Any], 
             _draw_media_widget_text(panel, x=text_x, y=artist_y, width=text_w, height=artist_h, text=media_artist, font=artist_font, fill=artist_color)
         if equalizer_enabled and eq_h >= 14:
             eq_top = (artist_y + artist_h + gap) if show_artist else (title_y + title_h + gap)
-            _draw_media_widget_equalizer(panel, rect=(text_x, eq_top, text_w, eq_h), snapshot=snapshot, fill_color=eq_color, accent_color=eq_accent, track_color=eq_track, widget_id=eq_widget_id, bars=int(settings.get("equalizer_bars", 20)), gap=int(settings.get("equalizer_gap", 4)), mirror=bool(settings.get("equalizer_mirror", False)))
+            _draw_media_widget_equalizer(panel, rect=(text_x, eq_top, text_w, eq_h), snapshot=snapshot, fill_color=eq_color, accent_color=eq_accent, track_color=eq_track, widget_id=eq_widget_id, color_preset=eq_preset, threshold=eq_threshold, threshold_color=eq_threshold_color, bars=int(settings.get("equalizer_bars", 20)), gap=int(settings.get("equalizer_gap", 4)), mirror=bool(settings.get("equalizer_mirror", False)))
     else:
         cover_size = max(58, min(int(h * 0.78), int(w * 0.18)))
         cover_x = int(20 * scale)
@@ -1915,7 +1979,7 @@ def _render_media_now_playing_widget(canvas: Image.Image, item: dict[str, Any], 
         if detail_h > 0:
             _draw_media_widget_text(panel, x=text_x, y=detail_y, width=max_text_w, height=detail_h, text=f"{media_app} - {media_state}", font=detail_font, fill=detail_color)
         if equalizer_enabled and eq_h >= 18:
-            _draw_media_widget_equalizer(panel, rect=(text_x, eq_top, max_text_w, eq_h), snapshot=snapshot, fill_color=eq_color, accent_color=eq_accent, track_color=eq_track, widget_id=eq_widget_id, bars=int(settings.get("equalizer_bars", 20)), gap=int(settings.get("equalizer_gap", 4)), mirror=bool(settings.get("equalizer_mirror", False)))
+            _draw_media_widget_equalizer(panel, rect=(text_x, eq_top, max_text_w, eq_h), snapshot=snapshot, fill_color=eq_color, accent_color=eq_accent, track_color=eq_track, widget_id=eq_widget_id, color_preset=eq_preset, threshold=eq_threshold, threshold_color=eq_threshold_color, bars=int(settings.get("equalizer_bars", 20)), gap=int(settings.get("equalizer_gap", 4)), mirror=bool(settings.get("equalizer_mirror", False)))
     canvas.alpha_composite(panel, (x, y))
 
 

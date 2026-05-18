@@ -181,6 +181,48 @@ THEME_COLOR_PRESETS = {
         "panel": [0, 0, 0],
     },
 }
+EQUALIZER_COLOR_PRESETS = {
+    "custom": {
+        "label": "Custom",
+        "fill": [102, 226, 120, 255],
+        "value": [246, 231, 152, 255],
+        "track": [0, 0, 0, 0],
+        "threshold": 1.0,
+        "threshold_color": [255, 86, 96, 255],
+    },
+    "neon": {
+        "label": "Neon green",
+        "fill": [102, 226, 120, 255],
+        "value": [246, 231, 152, 255],
+        "track": [0, 0, 0, 0],
+        "threshold": 0.78,
+        "threshold_color": [255, 86, 96, 255],
+    },
+    "cyan": {
+        "label": "Cyan",
+        "fill": [70, 190, 255, 255],
+        "value": [230, 248, 255, 255],
+        "track": [0, 0, 0, 0],
+        "threshold": 0.82,
+        "threshold_color": [255, 220, 92, 255],
+    },
+    "rainbow": {
+        "label": "Rainbow",
+        "fill": [102, 226, 120, 255],
+        "value": [246, 231, 152, 255],
+        "track": [0, 0, 0, 0],
+        "threshold": 1.0,
+        "threshold_color": [255, 255, 255, 255],
+    },
+    "thermal": {
+        "label": "Thermal",
+        "fill": [90, 220, 132, 255],
+        "value": [246, 231, 112, 255],
+        "track": [0, 0, 0, 0],
+        "threshold": 0.76,
+        "threshold_color": [255, 86, 96, 255],
+    },
+}
 THEME_TEMPLATE_CATALOG = [
     {
         "title": "Heritage Duality",
@@ -905,6 +947,9 @@ class LcdPreviewScrollArea(QScrollArea):
         if self.minimumHeight() != target or self.maximumHeight() != target:
             self.setMinimumHeight(target)
             self.setMaximumHeight(target)
+            window = self.window()
+            if hasattr(window, "_clamp_designer_splitter_later"):
+                window._clamp_designer_splitter_later()
 
 
 class LayerListWidget(QListWidget):
@@ -3970,6 +4015,18 @@ class TrofeoGui(QMainWindow):
         self.designer_equalizer_gap_spin.setValue(4)
         self.designer_equalizer_mirror_chk = QCheckBox("Mirror from center")
         self.designer_equalizer_mirror_chk.setChecked(False)
+        self.designer_equalizer_transparent_bg_chk = QCheckBox("Transparent background")
+        self.designer_equalizer_transparent_bg_chk.setChecked(True)
+        self.designer_equalizer_preset_combo = QComboBox()
+        for preset_id, preset in EQUALIZER_COLOR_PRESETS.items():
+            self.designer_equalizer_preset_combo.addItem(str(preset["label"]), preset_id)
+        self.designer_equalizer_threshold_spin = QDoubleSpinBox()
+        self.designer_equalizer_threshold_spin.setRange(0.0, 100.0)
+        self.designer_equalizer_threshold_spin.setDecimals(0)
+        self.designer_equalizer_threshold_spin.setSingleStep(5.0)
+        self.designer_equalizer_threshold_spin.setSuffix("%")
+        self.designer_equalizer_threshold_spin.setValue(100.0)
+        self.designer_equalizer_threshold_color_edit = QLineEdit()
         self.widget_title_font_spin = QSpinBox(); self.widget_title_font_spin.setRange(6, 120); self.widget_title_font_spin.setValue(28)
         self.widget_body_font_spin = QSpinBox(); self.widget_body_font_spin.setRange(6, 120); self.widget_body_font_spin.setValue(22)
         self.widget_detail_font_spin = QSpinBox(); self.widget_detail_font_spin.setRange(6, 120); self.widget_detail_font_spin.setValue(18)
@@ -4362,24 +4419,34 @@ class TrofeoGui(QMainWindow):
         preview_scroll.setFrameShape(QFrame.NoFrame); preview_scroll.setWidget(self.preview_label)
         canvas_vbox.addWidget(preview_scroll, 0)
         
-        info_row = QHBoxLayout()
-        info_row.setContentsMargins(10, 0, 10, 10)
+        self.preview_status_bar = QFrame()
+        self.preview_status_bar.setObjectName("previewStatusBar")
+        self.preview_status_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.preview_status_bar.setMinimumHeight(28)
+        self.preview_status_bar.setMaximumHeight(30)
+        info_row = QHBoxLayout(self.preview_status_bar)
+        info_row.setContentsMargins(8, 0, 8, 0)
+        info_row.setSpacing(6)
         self.preview_info_label = QLabel("💡 Wskazówka: Możesz przesuwać elementy bezpośrednio na podglądzie.")
         self.preview_info_label.setObjectName("previewHintLabel")
         self.preview_info_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.preview_info_label.setMaximumHeight(24)
         self.preview_coords_label = QLabel("x: -, y: -")
         self.preview_coords_label.setObjectName("previewHintLabel")
+        self.preview_coords_label.setMaximumHeight(24)
         self.preview_delta_label = QLabel("Δx: 0, Δy: 0")
         self.preview_delta_label.setObjectName("previewHintLabel")
+        self.preview_delta_label.setMaximumHeight(24)
         self.preview_guides_chk = QCheckBox("Show layer bounds")
         self.preview_guides_chk.setChecked(True)
+        self.preview_guides_chk.setMaximumHeight(24)
         self.preview_guides_chk.toggled.connect(self._update_preview_canvas_overlay)
         
         info_row.addWidget(self.preview_info_label, 1)
         info_row.addWidget(self.preview_guides_chk)
         info_row.addWidget(self.preview_coords_label)
         info_row.addWidget(self.preview_delta_label)
-        canvas_vbox.addLayout(info_row)
+        canvas_vbox.addWidget(self.preview_status_bar, 0)
         
         self.designer_top_splitter.addWidget(self.designer_canvas_workbench)
 
@@ -4527,6 +4594,9 @@ class TrofeoGui(QMainWindow):
             (self.designer_equalizer_bars_spin, "valueChanged"),
             (self.designer_equalizer_gap_spin, "valueChanged"),
             (self.designer_equalizer_mirror_chk, "toggled"),
+            (self.designer_equalizer_transparent_bg_chk, "toggled"),
+            (self.designer_equalizer_threshold_spin, "valueChanged"),
+            (self.designer_equalizer_threshold_color_edit, "textChanged"),
             (self.widget_title_font_spin, "valueChanged"),
             (self.widget_body_font_spin, "valueChanged"),
             (self.widget_detail_font_spin, "valueChanged"),
@@ -4551,6 +4621,7 @@ class TrofeoGui(QMainWindow):
         ]:
             try: getattr(widget, signal).connect(self.on_designer_field_changed)
             except: pass
+        self.designer_equalizer_preset_combo.currentIndexChanged.connect(self._on_equalizer_preset_changed)
         self.bg_animation_timeline.selection_changed.connect(self._on_animation_timeline_selection_changed)
         self.layout_preset_save_btn.clicked.connect(self.save_layout_preset)
         self.layout_preset_load_btn.clicked.connect(self.load_layout_preset)
@@ -6100,6 +6171,19 @@ class TrofeoGui(QMainWindow):
         self.designer_fill_color_row, self.designer_fill_color_btn = add_color_row(self.designer_fill_color_edit)
         self.row_appearance_fill_color = make_label("Kolor linii / wypełnienia / wartości")
         self.inspector_appearance_layout.addRow(self.row_appearance_fill_color, self.designer_fill_color_row)
+        self.equalizer_style_row = wrap_row(
+            self.designer_equalizer_transparent_bg_chk,
+            self.designer_equalizer_preset_combo,
+            self.designer_equalizer_threshold_spin,
+            stretch_first=False,
+        )
+        self.row_equalizer_style = make_label("EQ style")
+        self.inspector_appearance_layout.addRow(self.row_equalizer_style, self.equalizer_style_row)
+        self.designer_equalizer_threshold_color_row, self.designer_equalizer_threshold_color_btn = add_color_row(
+            self.designer_equalizer_threshold_color_edit
+        )
+        self.row_equalizer_threshold_color = make_label("EQ high color")
+        self.inspector_appearance_layout.addRow(self.row_equalizer_threshold_color, self.designer_equalizer_threshold_color_row)
         self.row_sparkline_points = make_label("Punkty historii")
         self.inspector_appearance_layout.addRow(self.row_sparkline_points, self.designer_sparkline_points_spin)
         self.row_sparkline_fill_opacity = make_label("Przezrocz. wypełnienia")
@@ -7307,6 +7391,8 @@ class TrofeoGui(QMainWindow):
             ("row_appearance_value_color", "Value color", "Kolor wartości"),
             ("row_appearance_track_color", "Track / chart background", "Kolor tła gauge / paska / wykresu"),
             ("row_appearance_fill_color", "Line / fill color", "Kolor linii / wypełnienia / wartości"),
+            ("row_equalizer_style", "EQ style", "Styl EQ"),
+            ("row_equalizer_threshold_color", "EQ high color", "Kolor wysokiego EQ"),
             ("row_sparkline_points", "History points", "Punkty historii"),
             ("row_sparkline_fill_opacity", "Fill opacity", "Przezrocz. wypełnienia"),
             ("row_sparkline_show_points", "Endpoint marker", "Punkt końcowy"),
@@ -7718,6 +7804,10 @@ class TrofeoGui(QMainWindow):
             self.log_search_label.setText(tr("Search:", "Szukaj:"))
         if hasattr(self, "preview_guides_chk"):
             self.preview_guides_chk.setText(tr("Show layer bounds", "Pokaż ramki warstw"))
+        if hasattr(self, "designer_equalizer_transparent_bg_chk"):
+            self.designer_equalizer_transparent_bg_chk.setText(tr("Transparent background", "Przezroczyste tło"))
+        if hasattr(self, "designer_equalizer_mirror_chk"):
+            self.designer_equalizer_mirror_chk.setText(tr("Mirror from center", "Lustro od środka"))
         if hasattr(self, "theme_doc_manual_json_label"):
             self.theme_doc_manual_json_label.setText(tr("Manual JSON:", "JSON ręczny:"))
         if hasattr(self, "theme_doc_open_external_btn"):
@@ -9671,10 +9761,31 @@ class TrofeoGui(QMainWindow):
             (getattr(self, "designer_gauge_low_btn", None), getattr(self, "designer_gauge_low_edit", None)),
             (getattr(self, "designer_gauge_mid_btn", None), getattr(self, "designer_gauge_mid_edit", None)),
             (getattr(self, "designer_gauge_high_btn", None), getattr(self, "designer_gauge_high_edit", None)),
+            (getattr(self, "designer_track_color_btn", None), getattr(self, "designer_track_color_edit", None)),
+            (getattr(self, "designer_fill_color_btn", None), getattr(self, "designer_fill_color_edit", None)),
+            (getattr(self, "designer_equalizer_threshold_color_btn", None), getattr(self, "designer_equalizer_threshold_color_edit", None)),
         ]
         for button, edit in mapping:
             if button is not None and edit is not None:
                 self._apply_color_preview_style(button, edit)
+
+    def _on_equalizer_preset_changed(self, _idx: int) -> None:
+        if bool(getattr(self, "_designer_updating", False)):
+            return
+        preset_id = str(self.designer_equalizer_preset_combo.currentData() or "custom")
+        preset = EQUALIZER_COLOR_PRESETS.get(preset_id)
+        if not preset:
+            return
+        self.designer_fill_color_edit.setText(json.dumps(preset["fill"], ensure_ascii=False))
+        self.designer_value_color_edit.setText(json.dumps(preset["value"], ensure_ascii=False))
+        if bool(self.designer_equalizer_transparent_bg_chk.isChecked()):
+            self.designer_track_color_edit.setText(json.dumps([0, 0, 0, 0], ensure_ascii=False))
+        else:
+            self.designer_track_color_edit.setText(json.dumps(preset["track"], ensure_ascii=False))
+        self.designer_equalizer_threshold_spin.setValue(float(preset["threshold"]) * 100.0)
+        self.designer_equalizer_threshold_color_edit.setText(json.dumps(preset["threshold_color"], ensure_ascii=False))
+        self._refresh_all_color_previews()
+        self.on_designer_field_changed()
 
     def apply_theme_color_preset(self, preset_name: str) -> None:
         preset = THEME_COLOR_PRESETS.get(preset_name)
@@ -14404,6 +14515,9 @@ class TrofeoGui(QMainWindow):
                 "equalizer_color": [102, 226, 120, 255],
                 "equalizer_accent_color": [246, 231, 152, 255],
                 "equalizer_track_color": [0, 0, 0, 0],
+                "equalizer_color_preset": "neon",
+                "equalizer_threshold": 0.78,
+                "equalizer_threshold_color": [255, 86, 96, 255],
             },
             "opacity": 1.0,
             "z_index": 210,
@@ -14589,6 +14703,9 @@ class TrofeoGui(QMainWindow):
                 "equalizer_bars": 20,
                 "equalizer_gap": 4,
                 "equalizer_mirror": False,
+                "equalizer_color_preset": "neon",
+                "equalizer_threshold": 0.78,
+                "equalizer_threshold_color": [255, 86, 96, 255],
                 "align": "left",
                 "z_index": 214,
                 "visible": True,
@@ -15889,6 +16006,16 @@ class TrofeoGui(QMainWindow):
         max_inspector = 380 if compact_height else 460
         return min_canvas, max_inspector
 
+    def _designer_canvas_content_height(self) -> int:
+        preview_scroll = getattr(self, "designer_preview_scroll", None)
+        if preview_scroll is None:
+            return 0
+        preview_h = max(int(preview_scroll.minimumHeight()), int(preview_scroll.maximumHeight()))
+        toolbar_h = 34
+        status_bar = getattr(self, "preview_status_bar", None)
+        status_h = int(status_bar.maximumHeight()) if status_bar is not None else 30
+        return preview_h + toolbar_h + status_h + 8
+
     def _clamp_designer_splitter_later(self) -> None:
         QTimer.singleShot(0, self._clamp_designer_splitter)
 
@@ -15900,6 +16027,9 @@ class TrofeoGui(QMainWindow):
             return
         min_canvas, max_inspector = self._designer_splitter_limits()
         max_canvas = 430 if (self.height() or 0) < 1040 else 500
+        content_height = self._designer_canvas_content_height()
+        if content_height > 0:
+            max_canvas = min(max_canvas, max(min_canvas, content_height))
         canvas.setMinimumHeight(min_canvas)
         canvas.setMaximumHeight(max_canvas)
         inspector.setMaximumHeight(max_inspector)
@@ -16749,6 +16879,16 @@ class TrofeoGui(QMainWindow):
                 self.designer_equalizer_bars_spin.setValue(int(active_item.get("equalizer_bars", 18)))
                 self.designer_equalizer_gap_spin.setValue(int(active_item.get("equalizer_gap", 4)))
                 self.designer_equalizer_mirror_chk.setChecked(bool(active_item.get("equalizer_mirror", False)))
+                eq_preset = str(active_item.get("equalizer_color_preset", "custom")).strip().lower() or "custom"
+                eq_idx = self.designer_equalizer_preset_combo.findData(eq_preset)
+                self.designer_equalizer_preset_combo.setCurrentIndex(eq_idx if eq_idx >= 0 else 0)
+                track_color = active_item.get("track_color", [34, 44, 58, 210])
+                track_alpha = track_color[3] if isinstance(track_color, list) and len(track_color) > 3 else 255
+                self.designer_equalizer_transparent_bg_chk.setChecked(int(track_alpha) <= 0)
+                self.designer_equalizer_threshold_spin.setValue(float(active_item.get("equalizer_threshold", 1.0)) * 100.0)
+                self.designer_equalizer_threshold_color_edit.setText(
+                    json.dumps(active_item.get("equalizer_threshold_color", [255, 86, 96, 255]), ensure_ascii=False)
+                )
             else:
                 self.designer_stat_stroke_width_spin.setValue(12)
                 self._clear_stat_gauge_fields()
@@ -16893,6 +17033,10 @@ class TrofeoGui(QMainWindow):
         self.designer_equalizer_bars_spin.setValue(18)
         self.designer_equalizer_gap_spin.setValue(4)
         self.designer_equalizer_mirror_chk.setChecked(False)
+        self.designer_equalizer_transparent_bg_chk.setChecked(True)
+        self.designer_equalizer_preset_combo.setCurrentIndex(0)
+        self.designer_equalizer_threshold_spin.setValue(100.0)
+        self.designer_equalizer_threshold_color_edit.setText(json.dumps([255, 86, 96, 255], ensure_ascii=False))
 
     def _load_widget_style_fields(self, item: dict[str, Any] | None) -> None:
         if item is None or str(item.get("kind", "")).strip().lower() not in {"weather_current", "weather_forecast_7d", "media_now_playing"}:
@@ -17011,6 +17155,12 @@ class TrofeoGui(QMainWindow):
         )
         for row_label, widget in sparkline_rows:
             self._set_form_row_visible(appearance_layout, row_label, widget, show_sparkline)
+        equalizer_style_rows = (
+            (self.row_equalizer_style, self.equalizer_style_row),
+            (self.row_equalizer_threshold_color, self.designer_equalizer_threshold_color_row),
+        )
+        for row_label, widget in equalizer_style_rows:
+            self._set_form_row_visible(appearance_layout, row_label, widget, show_equalizer)
         music_layout = self.inspector_music_layout
         equalizer_rows = (
             (self.row_music_equalizer_bars, self.designer_equalizer_bars_spin),
@@ -17254,6 +17404,12 @@ class TrofeoGui(QMainWindow):
                 item["equalizer_bars"] = int(self.designer_equalizer_bars_spin.value())
                 item["equalizer_gap"] = int(self.designer_equalizer_gap_spin.value())
                 item["equalizer_mirror"] = bool(self.designer_equalizer_mirror_chk.isChecked())
+                item["equalizer_color_preset"] = str(self.designer_equalizer_preset_combo.currentData() or "custom")
+                item["equalizer_threshold"] = max(0.0, min(1.0, float(self.designer_equalizer_threshold_spin.value()) / 100.0))
+                item["equalizer_threshold_color"] = self._parse_color_line(
+                    self.designer_equalizer_threshold_color_edit.text(),
+                    item.get("equalizer_threshold_color", [255, 86, 96, 255]),
+                )
                 self._designer_updating = True
                 try:
                     self.designer_w_spin.setValue(ew)
@@ -17271,10 +17427,19 @@ class TrofeoGui(QMainWindow):
                 self.designer_value_color_edit.text(),
                 item.get("value_color", [220, 220, 220]),
             )
-            item["track_color"] = self._parse_color_line(
-                self.designer_track_color_edit.text(),
-                item.get("track_color", [34, 44, 58, 210]),
-            )
+            if item.get("display") == "equalizer" and bool(self.designer_equalizer_transparent_bg_chk.isChecked()):
+                item["track_color"] = [0, 0, 0, 0]
+                if self.designer_track_color_edit.text().strip() != "[0, 0, 0, 0]":
+                    self._designer_updating = True
+                    try:
+                        self.designer_track_color_edit.setText(json.dumps(item["track_color"], ensure_ascii=False))
+                    finally:
+                        self._designer_updating = False
+            else:
+                item["track_color"] = self._parse_color_line(
+                    self.designer_track_color_edit.text(),
+                    item.get("track_color", [34, 44, 58, 210]),
+                )
             item["fill_color"] = self._parse_color_line(
                 self.designer_fill_color_edit.text(),
                 item.get("fill_color", item.get("value_color", [220, 220, 220])),

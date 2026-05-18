@@ -319,6 +319,11 @@ def _normalize_stat_item(raw: Any, idx: int) -> dict[str, Any]:
     equalizer_bars = max(6, min(64, equalizer_bars))
     equalizer_gap = int(_expect_number(data.get("equalizer_gap", 4), f"{path}.equalizer_gap"))
     equalizer_gap = max(0, min(16, equalizer_gap))
+    equalizer_color_preset = str(data.get("equalizer_color_preset", "custom")).strip().lower() or "custom"
+    if equalizer_color_preset not in {"custom", "neon", "cyan", "rainbow", "thermal"}:
+        equalizer_color_preset = "custom"
+    equalizer_threshold = float(_expect_number(data.get("equalizer_threshold", 1.0), f"{path}.equalizer_threshold"))
+    equalizer_threshold = max(0.0, min(1.0, equalizer_threshold))
 
     return {
         "id": str(data.get("id", f"stat_{idx}")).strip() or f"stat_{idx}",
@@ -363,6 +368,12 @@ def _normalize_stat_item(raw: Any, idx: int) -> dict[str, Any]:
         "equalizer_bars": equalizer_bars,
         "equalizer_gap": equalizer_gap,
         "equalizer_mirror": bool(data.get("equalizer_mirror", False)),
+        "equalizer_color_preset": equalizer_color_preset,
+        "equalizer_threshold": equalizer_threshold,
+        "equalizer_threshold_color": _normalize_color(
+            data.get("equalizer_threshold_color", [255, 86, 96, 255]),
+            f"{path}.equalizer_threshold_color",
+        ),
         "align": align,
         "z_index": int(_expect_number(data.get("z_index", 220), f"{path}.z_index")),
         "visible": bool(data.get("visible", True)),
