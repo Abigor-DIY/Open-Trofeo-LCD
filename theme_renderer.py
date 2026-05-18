@@ -36,6 +36,7 @@ FONT_FAMILY_FILES = {
     "Noto Serif": "/usr/share/fonts/truetype/noto/NotoSerif-Regular.ttf",
 }
 _WEATHER_ICON_IMAGE_CACHE: dict[tuple[str, int, int, int, int], Image.Image] = {}
+_WEATHER_ICON_FRAME_CACHE: dict[tuple[str, int, int, int, int], Image.Image] = {}
 
 
 def _rgba(color: list[int]) -> tuple[int, int, int, int]:
@@ -1637,6 +1638,58 @@ def _weather_icon_image(source: str, snapshot: dict[str, str], base_dir: Path, s
         return None
 
 
+def _weather_icon_path_for_source(source: str, snapshot: dict[str, str], base_dir: Path) -> Path | None:
+    icon_path_key = "weather_icon_path" if source == "weather_icon" else f"{source}_path"
+    icon_path = str(snapshot.get(icon_path_key, "")).strip()
+    if not icon_path:
+        return None
+    src_path = _resolve_asset_path(base_dir, icon_path)
+    return src_path if src_path.exists() else None
+
+
+def _weather_icon_frame_image(source: str, snapshot: dict[str, str], base_dir: Path, size: tuple[int, int], settings: dict[str, Any]) -> Image.Image | None:
+    if not bool(settings.get("animate_icons", True)):
+        return None
+    src_path = _weather_icon_path_for_source(source, snapshot, base_dir)
+    if src_path is None:
+        return None
+    frame_dir = src_path.parent.parent / "frames" / src_path.stem
+    if not frame_dir.exists():
+        return None
+    frame_paths = sorted(frame_dir.glob("frame_*.png"))
+    if not frame_paths:
+        return None
+    fps = max(1.0, min(30.0, float(settings.get("icon_frame_fps", 12.0) or 12.0)))
+    frame_path = frame_paths[int(time.time() * fps) % len(frame_paths)]
+    try:
+        stat = frame_path.stat()
+        cache_key = (str(frame_path), int(stat.st_mtime_ns), int(stat.st_size), int(size[0]), int(size[1]))
+    except OSError:
+        return None
+    cached = _WEATHER_ICON_FRAME_CACHE.get(cache_key)
+    if cached is not None:
+        return cached.copy()
+    try:
+        with Image.open(frame_path) as src:
+            fitted = _fit_image(src.convert("RGBA"), size[0], size[1], "contain")
+        if len(_WEATHER_ICON_FRAME_CACHE) > 192:
+            _WEATHER_ICON_FRAME_CACHE.clear()
+        _WEATHER_ICON_FRAME_CACHE[cache_key] = fitted
+        return fitted.copy()
+    except Exception:
+        return None
+
+
+def _weather_widget_icon_image(source: str, snapshot: dict[str, str], base_dir: Path, size: tuple[int, int], settings: dict[str, Any]) -> Image.Image | None:
+    animated = _weather_icon_frame_image(source, snapshot, base_dir, size, settings)
+    if animated is not None:
+        return animated
+    icon = _weather_icon_image(source, snapshot, base_dir, size)
+    if icon is not None and bool(settings.get("animate_icons", True)):
+        return _animate_weather_icon(icon, source, snapshot, settings)
+    return icon
+
+
 def _weather_icon_context_text(source: str, snapshot: dict[str, str]) -> str:
     keys = [source]
     if source == "weather_icon":
@@ -1755,9 +1808,8 @@ def _render_weather_current_widget(canvas: Image.Image, item: dict[str, Any], ba
     icon_size = max(42, min(int(h * 0.62), int(w * 0.22)))
     icon_x = int(24 * scale)
     icon_y = max(8, (h - icon_size) // 2)
-    icon = _weather_icon_image("weather_icon", snapshot, base_dir, (icon_size, icon_size))
+    icon = _weather_widget_icon_image("weather_icon", snapshot, base_dir, (icon_size, icon_size), settings)
     if icon is not None:
-        icon = _animate_weather_icon(icon, "weather_icon", snapshot, settings)
         panel.alpha_composite(icon, (icon_x, icon_y))
     text_x = icon_x + icon_size + int(18 * scale)
     right_x = max(text_x + int(180 * scale), int(w * 0.63))
@@ -1794,9 +1846,8 @@ def _render_weather_forecast_widget(canvas: Image.Image, item: dict[str, Any], b
     for idx in range(7):
         dx = int(28 * scale) + idx * day_w
         _draw_widget_text(pdraw, (dx, top), snapshot.get(f"weather_day_{idx}_label", "N/A"), font=label_font, fill=_rgba(settings.get("day_color", [160, 196, 232])), max_width=day_w - 4)
-        icon = _weather_icon_image(f"weather_day_{idx}_icon", snapshot, base_dir, (icon_size, icon_size))
+        icon = _weather_widget_icon_image(f"weather_day_{idx}_icon", snapshot, base_dir, (icon_size, icon_size), settings)
         if icon is not None:
-            icon = _animate_weather_icon(icon, f"weather_day_{idx}_icon", snapshot, settings)
             panel.alpha_composite(icon, (dx, top + int(24 * scale)))
         _draw_widget_text(pdraw, (dx + icon_size + int(6 * scale), top + int(23 * scale)), snapshot.get(f"weather_day_{idx}_temp_max_c", "N/A"), font=hi_font, fill=_rgba(settings.get("temp_max_color", [246, 231, 152])), max_width=day_w - icon_size - 6)
         _draw_widget_text(pdraw, (dx + icon_size + int(48 * scale), top + int(29 * scale)), snapshot.get(f"weather_day_{idx}_temp_min_c", "N/A"), font=lo_font, fill=_rgba(settings.get("temp_min_color", [180, 206, 232])), max_width=day_w - icon_size - 48)
