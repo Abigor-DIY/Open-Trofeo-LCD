@@ -51,9 +51,9 @@
     </screenshot>
   </screenshots>
   <releases>
-    <release version="0.1.0-dev" date="2026-05-13">
+    <release version="0.1.0-dev" date="2026-05-19">
       <description>
-        <p>Initial public development preview with source launch flow and experimental Flatpak packaging.</p>
+        <p>Development preview with six starter themes, Theme Designer, Animation Studio, weather widgets, Now Playing/EQ improvements and experimental Linux packaging.</p>
       </description>
     </release>
   </releases>

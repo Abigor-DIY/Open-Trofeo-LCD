@@ -37,6 +37,8 @@ Short-term publication plan:
 5. Build test packages: Flatpak first, then portable `tar.gz`, then DEB/RPM skeleton packages.
 6. Publish downloadable artifacts on GitHub Releases after local install, udev and backend startup are verified.
 
+Current release candidate: `v0.1.0-dev` targeting May 19, 2026.
+
 Flatpak packaging checklist:
 - Bundle Python dependencies or use pinned modules from `requirements.txt`.
 - Include PySide6/Qt runtime dependencies.
