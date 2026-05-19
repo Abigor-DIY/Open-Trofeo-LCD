@@ -16,6 +16,12 @@ flatpak install flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.
 
 ## Build And Install Locally
 
+Before building, validate the release inputs from the repository root:
+
+```bash
+python3 scripts/check_linux_release.py
+```
+
 Run from the repository root:
 
 ```bash
@@ -30,6 +36,33 @@ Download `open-trofeo-lcd-0.1.0-dev.flatpak` from the GitHub Release page, then:
 ```bash
 flatpak install --user ./open-trofeo-lcd-0.1.0-dev.flatpak
 flatpak run io.github.AbigorDIY.OpenTrofeoLCD
+```
+
+## Portable Tarball
+
+The portable package is source-based: it contains the tracked checkout, bundled
+themes, docs, launch scripts and release metadata. It does not include Python
+virtual environments, build directories, Flatpak caches, packet captures or
+local `.trofeo-*` state.
+
+Create it from a clean commit:
+
+```bash
+./scripts/build_portable_release.sh 0.1.0-dev
+```
+
+The script writes:
+
+```bash
+dist/open-trofeo-lcd-0.1.0-dev-portable.tar.gz
+dist/open-trofeo-lcd-0.1.0-dev-portable.tar.gz.sha256
+```
+
+After extraction, run:
+
+```bash
+./scripts/run_trofeo_gui.sh --check-runtime
+./scripts/run_trofeo_gui.sh
 ```
 
 If your environment does not expose `/dev/fuse`, use:

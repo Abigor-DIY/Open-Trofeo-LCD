@@ -39,14 +39,21 @@
 
 ## Etap 4 - Przygotowanie publikacji Linux
 
+- Status: w toku.
+- 2026-05-19:
+  - rootowy `open-trofeo-lcd.desktop` nie zawiera juz lokalnych sciezek `/home/...`,
+  - Flatpak manifest wyklucza lokalne katalogi robocze i duze capture/cache z paczki,
+  - dodano `scripts/check_linux_release.py` do walidacji motywow, screenow, metainfo, desktop entry i manifestu,
+  - dodano `scripts/build_portable_release.sh` do tworzenia portable `tar.gz` z aktualnego commita,
+  - dokumentacja opisuje walidacje Linux release i portable tarball.
 - Uporzadkowac strukturę:
   - `open-trofeo-lcd.desktop`
   - ikona aplikacji
   - katalog `packaging/`
 - Przygotowac pakiety:
+  - `tar.gz` portable
   - `deb`
   - `rpm`
-  - `tar.gz` portable
   - opcjonalnie `AppImage`
 - Zdecydowac model runtime:
   - systemowy Python + zaleznosci

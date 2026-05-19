@@ -23,7 +23,7 @@ Known development areas:
 - Theme Designer layout and editor tooling are still being refined.
 - Animation Studio is functional, but timeline UX, stabilization and export workflow are still evolving.
 - Some advanced widgets may need tuning for LCD refresh performance.
-- Planned widget: configurable weather block using a free API, with provider/API key/location settings in the UI.
+- Weather widgets are available, including current conditions, 7-day forecast, city search and animated icons.
 - Experimental Flatpak packaging is available for local testing, but source/venv launch is still the recommended path for now.
 - DEB/RPM packages are planned after the Flatpak runtime layout is stable.
 
@@ -33,8 +33,9 @@ Short-term publication plan:
 1. Push the current development preview to GitHub with this README warning.
 2. Keep source installation as the primary supported method for early testers.
 3. Add a Flatpak manifest with explicit USB device access notes.
-4. Build test packages: Flatpak first, then DEB/RPM if the runtime layout is stable.
-5. Publish downloadable artifacts on GitHub Releases after local install, udev and backend startup are verified.
+4. Validate release inputs with `python3 scripts/check_linux_release.py`.
+5. Build test packages: Flatpak first, then portable `tar.gz`, then DEB/RPM if the runtime layout is stable.
+6. Publish downloadable artifacts on GitHub Releases after local install, udev and backend startup are verified.
 
 Flatpak packaging checklist:
 - Bundle Python dependencies or use pinned modules from `requirements.txt`.
