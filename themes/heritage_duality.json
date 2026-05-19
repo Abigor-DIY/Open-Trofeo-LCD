@@ -1114,7 +1114,7 @@
       "format": "{value}",
       "x": 1346,
       "y": 304,
-      "box_width": 250,
+      "box_width": 236,
       "box_height": 46,
       "font_family": "DejaVu Sans",
       "font_size": 18,
@@ -1332,9 +1332,9 @@
       "source": "volume_percent",
       "format": "{value}",
       "x": 1500,
-      "y": 332,
+      "y": 354,
       "box_width": 318,
-      "box_height": 70,
+      "box_height": 58,
       "font_family": "DejaVu Sans",
       "font_size": 19,
       "font_bold": true,
@@ -1588,14 +1588,14 @@
           0
         ],
         "equalizer_color_preset": "thermal",
-        "equalizer_threshold": 0.78,
+        "equalizer_threshold": 0.74,
         "equalizer_threshold_color": [
           255,
           86,
           96,
           255
         ],
-        "equalizer_bars": 24,
+        "equalizer_bars": 28,
         "equalizer_gap": 4,
         "hide_title_prefix": true
       },

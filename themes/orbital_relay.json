@@ -1272,14 +1272,14 @@
           0
         ],
         "equalizer_color_preset": "cyan",
-        "equalizer_threshold": 0.78,
+        "equalizer_threshold": 0.82,
         "equalizer_threshold_color": [
           255,
           86,
           96,
           255
         ],
-        "equalizer_bars": 24,
+        "equalizer_bars": 28,
         "equalizer_gap": 4,
         "hide_title_prefix": true
       },

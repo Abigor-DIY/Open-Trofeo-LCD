@@ -1354,9 +1354,9 @@ class StatsProvider:
             return dict(self._last_volume_snapshot)
 
         out = {"volume_percent": "N/A", "volume_state": "N/A"}
-        try:
-            wpctl = self._local_or_host_cmd("wpctl")
-            if wpctl:
+        wpctl = self._local_or_host_cmd("wpctl")
+        if wpctl:
+            try:
                 payload = subprocess.check_output(
                     wpctl + ["get-volume", "@DEFAULT_AUDIO_SINK@"],
                     encoding="utf-8",
@@ -1367,9 +1367,13 @@ class StatsProvider:
                 if match:
                     out["volume_percent"] = f"{int(round(float(match.group(1)) * 100.0))}%"
                 out["volume_state"] = "muted" if "MUTED" in payload.upper() else "active"
-            else:
-                pactl = self._local_or_host_cmd("pactl")
-                if pactl:
+            except Exception:
+                pass
+
+        if out["volume_percent"] == "N/A":
+            pactl = self._local_or_host_cmd("pactl")
+            if pactl:
+                try:
                     vol_payload = subprocess.check_output(
                         pactl + ["get-sink-volume", "@DEFAULT_SINK@"],
                         encoding="utf-8",
@@ -1386,26 +1390,30 @@ class StatsProvider:
                         timeout=0.35,
                     ).strip()
                     out["volume_state"] = "muted" if "yes" in mute_payload.lower() else "active"
-                else:
-                    pamixer = self._local_or_host_cmd("pamixer")
-                    if pamixer:
-                        volume_value = subprocess.check_output(
-                            pamixer + ["--get-volume"],
-                            encoding="utf-8",
-                            stderr=subprocess.DEVNULL,
-                            timeout=0.35,
-                        ).strip()
-                        if volume_value.isdigit():
-                            out["volume_percent"] = f"{int(volume_value)}%"
-                        mute_value = subprocess.check_output(
-                            pamixer + ["--get-mute"],
-                            encoding="utf-8",
-                            stderr=subprocess.DEVNULL,
-                            timeout=0.35,
-                        ).strip()
-                        out["volume_state"] = "muted" if mute_value.lower() == "true" else "active"
-        except Exception:
-            pass
+                except Exception:
+                    pass
+
+        if out["volume_percent"] == "N/A":
+            pamixer = self._local_or_host_cmd("pamixer")
+            if pamixer:
+                try:
+                    volume_value = subprocess.check_output(
+                        pamixer + ["--get-volume"],
+                        encoding="utf-8",
+                        stderr=subprocess.DEVNULL,
+                        timeout=0.35,
+                    ).strip()
+                    if volume_value.isdigit():
+                        out["volume_percent"] = f"{int(volume_value)}%"
+                    mute_value = subprocess.check_output(
+                        pamixer + ["--get-mute"],
+                        encoding="utf-8",
+                        stderr=subprocess.DEVNULL,
+                        timeout=0.35,
+                    ).strip()
+                    out["volume_state"] = "muted" if mute_value.lower() == "true" else "active"
+                except Exception:
+                    pass
 
         self._last_volume_snapshot = dict(out)
         self._last_volume_at = now

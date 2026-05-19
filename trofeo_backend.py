@@ -42,9 +42,9 @@ from theme_schema import (
 
 DEFAULT_LIVE_REFRESH_INTERVAL_S = 1.0
 FAST_VISUAL_REFRESH_INTERVAL_S = 0.25
-FAST_AUDIO_EQ_REFRESH_INTERVAL_S = 0.10
+FAST_AUDIO_EQ_REFRESH_INTERVAL_S = 0.075
 MIN_LIVE_REFRESH_INTERVAL_S = 0.15
-FAST_VISUAL_FULL_STATS_INTERVAL_S = 1.5
+FAST_VISUAL_FULL_STATS_INTERVAL_S = 1.0
 MEDIA_TRANSIENT_GRACE_S = 8.0
 LIVE_REFRESH_LOG_INTERVAL_S = 5.0
 LIVE_REFRESH_SLOW_STAGE_MS = 120.0
@@ -1261,8 +1261,8 @@ class ReplayController:
             except (TypeError, ValueError):
                 value = 0.0
             peak = max(peak, value)
-            values.append(int(round(value * 24.0)))
-        if peak < 0.015:
+            values.append(int(round(value * 48.0)))
+        if peak < 0.008:
             return None
         return tuple(values)
 
@@ -1553,6 +1553,10 @@ class ReplayController:
                 values.update(self.stats_provider.read_audio_eq_stats())
             except Exception:
                 pass
+            try:
+                values.update(self.stats_provider.read_volume_stats())
+            except Exception:
+                pass
             values.update({str(key): str(value) for key, value in media_override.items()})
             return values
 
@@ -1779,8 +1783,9 @@ class ReplayController:
                     overlay_render_ms = None
                     compose_ms = None
                     full_render_ms = None
+                    full_stats_due = (time.time() - last_full_stats_at) >= full_stats_interval_s
                     if fast_visual_refresh:
-                        if refresh_reason == "periodic":
+                        if refresh_reason == "periodic" or full_stats_due:
                             merged_stats = _refresh_full_live_stats(media_cache)
                         else:
                             merged_stats = _cached_live_stats(media_cache)
@@ -2367,7 +2372,7 @@ class ReplayController:
             str(WINDOWS_CAPTURE_INTER_PACKET_DELAY_S),
             "--loop",
             "--interval",
-            "0.075",
+            "0.050",
             "--skip-unchanged",
             "--keepalive-interval",
             "0.5",
@@ -2690,6 +2695,7 @@ class ReplayController:
                 "config": {
                     **self.cfg.as_json(),
                     "weather": self.stats_provider.weather_status(),
+                    "volume": self.stats_provider.read_volume_stats(),
                     "audio_eq": self.stats_provider.audio_eq_status(),
                 },
             }
@@ -2758,6 +2764,7 @@ class ReplayController:
                 "config": {
                     **self.cfg.as_json(),
                     "weather": self.stats_provider.weather_status(),
+                    "volume": self.stats_provider.read_volume_stats(),
                     "audio_eq": self.stats_provider.audio_eq_status(),
                 },
             }
