@@ -7,8 +7,9 @@ Type=simple
 WorkingDirectory=__WORKDIR__
 EnvironmentFile=__WORKDIR__/.trofeo-backend.env
 ExecStart=/bin/bash __WORKDIR__/scripts/run_backend_service.sh
-Restart=always
+Restart=on-failure
 RestartSec=2
+TimeoutStopSec=10
 StandardOutput=journal
 StandardError=journal
 

@@ -3078,6 +3078,7 @@ def main() -> None:
     parser.add_argument("--display-backend", choices=("native", "trcc"), default=None)
     parser.add_argument("--trcc-bin", default=str(Path(".venv-trcc/bin/trcc")))
     parser.add_argument("--autostart", action="store_true")
+    parser.add_argument("--startup-theme", default=os.environ.get("OPEN_TROFEO_STARTUP_THEME", ""))
     args = parser.parse_args()
 
     workdir = Path(args.workdir).expanduser().resolve()
@@ -3170,7 +3171,14 @@ def main() -> None:
         flush=True,
     )
 
-    if args.autostart:
+    startup_theme = str(args.startup_theme or "").strip()
+    if startup_theme:
+        try:
+            controller.apply_theme(startup_theme, resume_loop=False, timeout_s=45.0)
+        except Exception as exc:
+            controller.last_error = f"startup theme failed: {exc}"
+            print(f"[{now_iso()}] startup theme failed: {exc}", flush=True)
+    elif args.autostart:
         try:
             controller.start_loop()
         except Exception as exc:
