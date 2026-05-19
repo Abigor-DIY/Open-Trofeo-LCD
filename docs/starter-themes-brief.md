@@ -25,6 +25,7 @@
 - Podglady generuje `python3 scripts/render_theme_previews.py`.
 - Domyslny render ma szerokosc `1920 px` i zachowuje proporcje canvasu.
 - Generator renderuje te same elementy, ktore widac na LCD: tla, panele, staty, widzety, widgety pogody, now playing, EQ, zegary i gauge.
+- Generator kompensuje `canvas.rotation`, wiec miniatury sa zapisane w orientacji widocznej w GUI.
 - Po zmianie layoutu motywu uruchom generator i sprawdz `docs/screenshots/`.
 
 ## Pakiet dystrybucyjny: 6 motywow
@@ -32,11 +33,11 @@
 Te motywy zostaja w paczce startowej:
 
 - `Heritage Duality` (`themes/heritage_duality.json`)
-- `Linux Matrix Blue` (`themes/linux_matrix_blue.json`)
-- `Linux Matrix Green` (`themes/linux_matrix_green.json`)
-- `New Theme` (`themes/new_theme_minimal.json`)
-- `Theme` (`themes/theme_ttcr_import_4.json`)
-- `Verdant Bloom` (`themes/PerunStatic.json`)
+- `Matrix Green` (`themes/linux_matrix_green.json`)
+- `Verdant Bloom` (`themes/verdant_bloom.json`)
+- `Wolfstorm Forge` (`themes/wolfstorm_forge.json`)
+- `Orbital Relay` (`themes/orbital_relay.json`)
+- `Obsidian Pulse` (`themes/obsidian_pulse.json`)
 
 ## Gotowe komponenty w Theme Designer
 

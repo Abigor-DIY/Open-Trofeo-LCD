@@ -19,18 +19,27 @@ from preview_stats import PreviewStatsProvider
 
 
 PREVIEW_NAMES = {
-    "PerunStatic.json": "theme-verdant-bloom.png",
     "heritage_duality.json": "theme-heritage-duality.png",
-    "linux_matrix_blue.json": "theme-linux-matrix-blue.png",
-    "linux_matrix_green.json": "theme-linux-matrix-green.png",
-    "new_theme_minimal.json": "theme-new-theme.png",
-    "theme_ttcr_import_4.json": "theme-ttcr-import.png",
+    "linux_matrix_green.json": "theme-matrix-green.png",
+    "obsidian_pulse.json": "theme-obsidian-pulse.png",
+    "orbital_relay.json": "theme-orbital-relay.png",
+    "verdant_bloom.json": "theme-verdant-bloom.png",
+    "wolfstorm_forge.json": "theme-wolfstorm-forge.png",
 }
 
 
 def render_preview(theme_path: Path, out_path: Path, *, width: int | None) -> None:
     document = load_theme_document(theme_path)
     image = render_theme_document(document, base_dir=theme_path.parent, stats_provider=PreviewStatsProvider())
+    rotation = int(document.data.get("canvas", {}).get("rotation", 0)) % 360
+    if rotation:
+        image = image.transpose(
+            {
+                90: Image.Transpose.ROTATE_270,
+                180: Image.Transpose.ROTATE_180,
+                270: Image.Transpose.ROTATE_90,
+            }[rotation]
+        )
     if width is not None and width > 0 and image.width != width:
         height = max(1, int(round(image.height * (width / float(image.width)))))
         image = image.resize((width, height), Image.Resampling.LANCZOS)

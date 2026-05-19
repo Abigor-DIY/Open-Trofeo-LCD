@@ -1,14 +1,17 @@
 {
   "schema_version": 1,
   "meta": {
-    "name": "Linux Matrix Green",
-    "description": "Static green Linux monitor theme without overlays or transparency.",
+    "name": "Matrix Green",
+    "description": "Static command deck tuned for dense telemetry and low visual noise.",
     "author": "Open-Trofeo-LCD",
     "tags": [
-      "monitor",
-      "safe-pack",
-      "static"
-    ]
+      "theme",
+      "local",
+      "static",
+      "dashboard",
+      "starter-pack"
+    ],
+    "gauge_style": "matrix"
   },
   "canvas": {
     "width": 1920,
@@ -18,7 +21,7 @@
   "background": {
     "kind": "image",
     "base_color": [
-      8,
+      5,
       10,
       14
     ],
@@ -28,149 +31,84 @@
       112
     ],
     "texture_alpha": 0.0,
+    "panels": [],
     "path": "linux_matrix_green_assets/2026-05-09/image/background_flat.png",
     "fit": "stretch",
-    "opacity": 1.0,
-    "panels": [
-      {
-        "id": "header",
-        "rect": [
-          82,
-          18,
-          1756,
-          58
-        ],
-        "radius": 24,
-        "fill": [
-          10,
-          14,
-          20,
-          214
-        ],
-        "z_index": 80,
-        "visible": true,
-        "locked": false
-      },
-      {
-        "id": "stats_left",
-        "rect": [
-          88,
-          294,
-          666,
-          120
-        ],
-        "radius": 24,
-        "fill": [
-          8,
-          18,
-          28,
-          220
-        ],
-        "z_index": 80,
-        "visible": true,
-        "locked": false
-      },
-      {
-        "id": "stats_right",
-        "rect": [
-          812,
-          294,
-          1018,
-          120
-        ],
-        "radius": 24,
-        "fill": [
-          18,
-          18,
-          22,
-          214
-        ],
-        "z_index": 80,
-        "visible": true,
-        "locked": false
-      },
-      {
-        "id": "accent_left",
-        "rect": [
-          92,
-          96,
-          342,
-          118
-        ],
-        "radius": 26,
-        "fill": [
-          82,
-          232,
-          112,
-          226
-        ],
-        "z_index": 78,
-        "visible": true,
-        "locked": false
-      },
-      {
-        "id": "accent_right",
-        "rect": [
-          1472,
-          102,
-          306,
-          108
-        ],
-        "radius": 26,
-        "fill": [
-          126,
-          255,
-          192,
-          224
-        ],
-        "z_index": 78,
-        "visible": true,
-        "locked": false
-      }
-    ]
+    "opacity": 1.0
   },
   "texts": [
     {
       "id": "title",
-      "text": "LINUX MATRIX GREEN",
-      "x": 616,
-      "y": 26,
-      "box_width": 688,
-      "box_height": 42,
-      "font_family": "Ubuntu",
-      "font_size": 30,
+      "text": "MATRIX GREEN COMMAND DECK",
+      "x": 600,
+      "y": 28,
+      "box_width": 720,
+      "box_height": 34,
+      "font_family": "DejaVu Sans",
+      "font_size": 28,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
       "color": [
         246,
-        242,
-        232
+        248,
+        252,
+        255
       ],
       "align": "center",
-      "z_index": 200,
+      "z_index": 205,
       "visible": true,
       "locked": false
     },
     {
       "id": "subtitle",
-      "text": "STABLE STATIC EDITION",
-      "x": 628,
+      "text": "PLAYER  WEATHER  SYSTEM TELEMETRY",
+      "x": 600,
       "y": 62,
-      "box_width": 664,
+      "box_width": 720,
       "box_height": 20,
-      "font_family": "Ubuntu",
-      "font_size": 16,
+      "font_family": "DejaVu Sans",
+      "font_size": 13,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
       "color": [
-        192,
-        206,
-        216
+        72,
+        236,
+        142,
+        255
       ],
       "align": "center",
-      "z_index": 200,
+      "z_index": 205,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "io_label",
+      "text": "I/O  GPU  STORAGE",
+      "x": 506,
+      "y": 278,
+      "box_width": 360,
+      "box_height": 22,
+      "font_family": "DejaVu Sans",
+      "font_size": 15,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
+      "color": [
+        72,
+        236,
+        142,
+        255
+      ],
+      "align": "left",
+      "z_index": 205,
       "visible": true,
       "locked": false
     }
@@ -181,29 +119,144 @@
       "label": "",
       "source": "hostname",
       "format": "{value}",
-      "x": 112,
-      "y": 34,
-      "box_width": 330,
-      "box_height": 28,
-      "font_family": "Ubuntu",
-      "font_size": 22,
+      "x": 78,
+      "y": 31,
+      "box_width": 280,
+      "box_height": 30,
+      "font_family": "DejaVu Sans",
+      "font_size": 20,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
-      "marquee_speed": 62.0,
+      "marquee_speed": 58.0,
       "label_color": [
-        242,
-        246,
-        248
+        190,
+        210,
+        225,
+        255
       ],
       "value_color": [
-        242,
         246,
-        248
+        248,
+        252,
+        255
+      ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        10,
+        18,
+        28,
+        210
+      ],
+      "fill_color": [
+        90,
+        220,
+        180,
+        255
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
       ],
       "align": "left",
-      "z_index": 210,
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "date",
+      "label": "",
+      "source": "date_ymd",
+      "format": "{value}",
+      "x": 1594,
+      "y": 30,
+      "box_width": 180,
+      "box_height": 22,
+      "font_family": "DejaVu Sans",
+      "font_size": 15,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
+      "label_color": [
+        190,
+        210,
+        225,
+        255
+      ],
+      "value_color": [
+        190,
+        210,
+        225,
+        255
+      ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        10,
+        18,
+        28,
+        210
+      ],
+      "fill_color": [
+        90,
+        220,
+        180,
+        255
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
+      ],
+      "align": "center",
+      "z_index": 220,
       "visible": true,
       "locked": false
     },
@@ -212,256 +265,1360 @@
       "label": "",
       "source": "time_hms",
       "format": "{value}",
-      "x": 1410,
-      "y": 22,
-      "box_width": 330,
-      "box_height": 46,
-      "font_family": "Ubuntu",
-      "font_size": 50,
+      "x": 1616,
+      "y": 52,
+      "box_width": 244,
+      "box_height": 44,
+      "font_family": "DejaVu Sans",
+      "font_size": 40,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
-      "marquee_speed": 62.0,
+      "marquee_speed": 58.0,
       "label_color": [
-        250,
-        236,
-        196
+        190,
+        210,
+        225,
+        255
       ],
       "value_color": [
-        250,
+        72,
         236,
-        196
+        142,
+        255
       ],
-      "align": "center",
-      "z_index": 210,
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        10,
+        18,
+        28,
+        210
+      ],
+      "fill_color": [
+        90,
+        220,
+        180,
+        255
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
+      ],
+      "align": "right",
+      "z_index": 220,
       "visible": true,
       "locked": false
     },
     {
-      "id": "cpu_usage",
+      "id": "cpu_gauge",
       "label": "CPU",
       "source": "cpu_usage_percent",
       "format": "{value}",
-      "x": 120,
-      "y": 324,
-      "box_width": 178,
-      "box_height": 36,
-      "font_family": "Ubuntu",
-      "font_size": 32,
+      "x": 78,
+      "y": 126,
+      "box_width": 126,
+      "box_height": 126,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
-      "marquee_speed": 62.0,
+      "marquee_speed": 58.0,
       "label_color": [
-        236,
-        242,
-        246
+        190,
+        210,
+        225,
+        255
       ],
       "value_color": [
-        82,
-        232,
-        112
+        246,
+        248,
+        252,
+        255
+      ],
+      "display": "gauge",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        10,
+        18,
+        28,
+        210
+      ],
+      "fill_color": [
+        90,
+        220,
+        180,
+        255
+      ],
+      "stroke_width": 18,
+      "show_value_text": true,
+      "gauge_preset": "cyber",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": false,
+      "gauge_color_low": [
+        34,
+        211,
+        238,
+        255
+      ],
+      "gauge_color_mid": [
+        96,
+        165,
+        250,
+        255
+      ],
+      "gauge_color_high": [
+        244,
+        114,
+        182,
+        255
+      ],
+      "gauge_ring_size": 108,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 0.62,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
       ],
       "align": "left",
-      "z_index": 210,
+      "z_index": 220,
       "visible": true,
       "locked": false
     },
     {
-      "id": "gpu_usage",
-      "label": "GPU",
-      "source": "gpu_load",
-      "format": "{value}",
-      "x": 322,
-      "y": 324,
-      "box_width": 178,
-      "box_height": 36,
-      "font_family": "Ubuntu",
-      "font_size": 32,
-      "font_bold": true,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": false,
-      "marquee_speed": 62.0,
-      "label_color": [
-        236,
-        242,
-        246
-      ],
-      "value_color": [
-        82,
-        232,
-        112
-      ],
-      "align": "left",
-      "z_index": 210,
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "ram_usage",
+      "id": "ram_gauge",
       "label": "RAM",
       "source": "mem_percent",
       "format": "{value}",
-      "x": 524,
-      "y": 324,
-      "box_width": 178,
-      "box_height": 36,
-      "font_family": "Ubuntu",
-      "font_size": 32,
+      "x": 218,
+      "y": 126,
+      "box_width": 126,
+      "box_height": 126,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
-      "marquee_speed": 62.0,
+      "marquee_speed": 58.0,
       "label_color": [
-        236,
-        242,
-        246
+        190,
+        210,
+        225,
+        255
       ],
       "value_color": [
-        126,
+        246,
+        248,
+        252,
+        255
+      ],
+      "display": "gauge",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        10,
+        18,
+        28,
+        210
+      ],
+      "fill_color": [
+        90,
+        220,
+        180,
+        255
+      ],
+      "stroke_width": 18,
+      "show_value_text": true,
+      "gauge_preset": "cyber",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": false,
+      "gauge_color_low": [
+        34,
+        211,
+        238,
+        255
+      ],
+      "gauge_color_mid": [
+        96,
+        165,
+        250,
+        255
+      ],
+      "gauge_color_high": [
+        244,
+        114,
+        182,
+        255
+      ],
+      "gauge_ring_size": 108,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 0.62,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
         255,
-        192
+        86,
+        96,
+        255
       ],
       "align": "left",
-      "z_index": 210,
+      "z_index": 220,
       "visible": true,
       "locked": false
     },
     {
-      "id": "cpu_temp",
+      "id": "temp_gauge",
       "label": "TEMP",
       "source": "cpu_temp_c",
       "format": "{value}",
-      "x": 848,
-      "y": 318,
-      "box_width": 196,
-      "box_height": 32,
-      "font_family": "Ubuntu",
-      "font_size": 26,
+      "x": 358,
+      "y": 126,
+      "box_width": 126,
+      "box_height": 126,
+      "font_family": "DejaVu Sans",
+      "font_size": 22,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
-      "marquee_speed": 62.0,
+      "marquee_speed": 58.0,
       "label_color": [
-        236,
-        242,
-        246
+        190,
+        210,
+        225,
+        255
       ],
       "value_color": [
-        126,
+        246,
+        248,
+        252,
+        255
+      ],
+      "display": "gauge",
+      "min_value": 30.0,
+      "max_value": 95.0,
+      "track_color": [
+        10,
+        18,
+        28,
+        210
+      ],
+      "fill_color": [
+        90,
+        220,
+        180,
+        255
+      ],
+      "stroke_width": 18,
+      "show_value_text": true,
+      "gauge_preset": "thermal",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": false,
+      "gauge_color_low": [
+        34,
+        197,
+        94,
+        255
+      ],
+      "gauge_color_mid": [
+        250,
+        204,
+        21,
+        255
+      ],
+      "gauge_color_high": [
+        239,
+        68,
+        68,
+        255
+      ],
+      "gauge_ring_size": 108,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 0.62,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
         255,
-        192
+        86,
+        96,
+        255
       ],
       "align": "left",
-      "z_index": 210,
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "load",
+      "label": "LOAD",
+      "source": "load_average",
+      "format": "{value}",
+      "x": 78,
+      "y": 278,
+      "box_width": 204,
+      "box_height": 26,
+      "font_family": "DejaVu Sans",
+      "font_size": 16,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
+      "label_color": [
+        190,
+        210,
+        225,
+        255
+      ],
+      "value_color": [
+        72,
+        236,
+        142,
+        255
+      ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        10,
+        18,
+        28,
+        210
+      ],
+      "fill_color": [
+        90,
+        220,
+        180,
+        255
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
+      ],
+      "align": "left",
+      "z_index": 220,
       "visible": true,
       "locked": false
     },
     {
       "id": "uptime",
-      "label": "UPTIME",
+      "label": "UP",
       "source": "uptime_human",
       "format": "{value}",
-      "x": 1076,
-      "y": 318,
-      "box_width": 326,
-      "box_height": 32,
-      "font_family": "Ubuntu",
-      "font_size": 26,
+      "x": 78,
+      "y": 310,
+      "box_width": 236,
+      "box_height": 26,
+      "font_family": "DejaVu Sans",
+      "font_size": 16,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
-      "marquee_speed": 62.0,
+      "marquee_speed": 58.0,
       "label_color": [
-        236,
-        242,
-        246
+        190,
+        210,
+        225,
+        255
       ],
       "value_color": [
-        236,
-        242,
-        246
+        210,
+        224,
+        240,
+        255
+      ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        10,
+        18,
+        28,
+        210
+      ],
+      "fill_color": [
+        90,
+        220,
+        180,
+        255
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
       ],
       "align": "left",
-      "z_index": 210,
+      "z_index": 220,
       "visible": true,
       "locked": false
     },
     {
-      "id": "ip_local",
+      "id": "freq",
+      "label": "CPU GHz",
+      "source": "cpu_freq_ghz",
+      "format": "{value}",
+      "x": 292,
+      "y": 278,
+      "box_width": 180,
+      "box_height": 26,
+      "font_family": "DejaVu Sans",
+      "font_size": 16,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
+      "label_color": [
+        190,
+        210,
+        225,
+        255
+      ],
+      "value_color": [
+        72,
+        236,
+        142,
+        255
+      ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        10,
+        18,
+        28,
+        210
+      ],
+      "fill_color": [
+        90,
+        220,
+        180,
+        255
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "ip",
       "label": "IP",
       "source": "ip_local",
       "format": "{value}",
-      "x": 848,
-      "y": 364,
-      "box_width": 358,
-      "box_height": 28,
-      "font_family": "Ubuntu",
-      "font_size": 22,
+      "x": 292,
+      "y": 310,
+      "box_width": 180,
+      "box_height": 26,
+      "font_family": "DejaVu Sans",
+      "font_size": 16,
       "font_bold": true,
       "font_italic": false,
       "font_underline": false,
       "marquee": false,
-      "marquee_speed": 62.0,
+      "marquee_speed": 58.0,
       "label_color": [
-        194,
-        206,
-        214
+        190,
+        210,
+        225,
+        255
       ],
       "value_color": [
-        194,
-        206,
-        214
+        210,
+        224,
+        240,
+        255
+      ],
+      "display": "text",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        10,
+        18,
+        28,
+        210
+      ],
+      "fill_color": [
+        90,
+        220,
+        180,
+        255
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
       ],
       "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "gpu_load",
+      "label": "GPU",
+      "source": "gpu_load",
+      "format": "{value}",
+      "x": 506,
+      "y": 304,
+      "box_width": 250,
+      "box_height": 46,
+      "font_family": "DejaVu Sans",
+      "font_size": 18,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
+      "label_color": [
+        190,
+        210,
+        225,
+        255
+      ],
+      "value_color": [
+        245,
+        248,
+        252,
+        255
+      ],
+      "display": "progress",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        16,
+        24,
+        36,
+        220
+      ],
+      "fill_color": [
+        72,
+        236,
+        142,
+        255
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "gpu_temp",
+      "label": "GPU TEMP",
+      "source": "gpu_temp",
+      "format": "{value}",
+      "x": 786,
+      "y": 304,
+      "box_width": 250,
+      "box_height": 46,
+      "font_family": "DejaVu Sans",
+      "font_size": 18,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
+      "label_color": [
+        190,
+        210,
+        225,
+        255
+      ],
+      "value_color": [
+        245,
+        248,
+        252,
+        255
+      ],
+      "display": "progress",
+      "min_value": 0.0,
+      "max_value": 95.0,
+      "track_color": [
+        16,
+        24,
+        36,
+        220
+      ],
+      "fill_color": [
+        255,
+        132,
+        142,
+        255
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "disk",
+      "label": "DISK",
+      "source": "disk_percent",
+      "format": "{value}",
+      "x": 1066,
+      "y": 304,
+      "box_width": 250,
+      "box_height": 46,
+      "font_family": "DejaVu Sans",
+      "font_size": 18,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
+      "label_color": [
+        190,
+        210,
+        225,
+        255
+      ],
+      "value_color": [
+        245,
+        248,
+        252,
+        255
+      ],
+      "display": "progress",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        16,
+        24,
+        36,
+        220
+      ],
+      "fill_color": [
+        246,
+        222,
+        112,
+        255
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "volume",
+      "label": "VOL",
+      "source": "volume_percent",
+      "format": "{value}",
+      "x": 1346,
+      "y": 304,
+      "box_width": 250,
+      "box_height": 46,
+      "font_family": "DejaVu Sans",
+      "font_size": 18,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
+      "label_color": [
+        190,
+        210,
+        225,
+        255
+      ],
+      "value_color": [
+        245,
+        248,
+        252,
+        255
+      ],
+      "display": "progress",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        16,
+        24,
+        36,
+        220
+      ],
+      "fill_color": [
+        102,
+        226,
+        160,
+        255
+      ],
+      "stroke_width": 12,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "net_dl",
+      "label": "DL",
+      "source": "net_dl_kbps",
+      "format": "{value}",
+      "x": 506,
+      "y": 362,
+      "box_width": 300,
+      "box_height": 54,
+      "font_family": "DejaVu Sans",
+      "font_size": 20,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
+      "label_color": [
+        190,
+        210,
+        225,
+        255
+      ],
+      "value_color": [
+        245,
+        248,
+        252,
+        255
+      ],
+      "display": "sparkline",
+      "min_value": 0.0,
+      "max_value": 5000.0,
+      "track_color": [
+        8,
+        16,
+        24,
+        150
+      ],
+      "fill_color": [
+        72,
+        236,
+        142,
+        255
+      ],
+      "stroke_width": 3,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 96,
+      "sparkline_fill_opacity": 0.22,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "net_ul",
+      "label": "UL",
+      "source": "net_ul_kbps",
+      "format": "{value}",
+      "x": 830,
+      "y": 362,
+      "box_width": 300,
+      "box_height": 54,
+      "font_family": "DejaVu Sans",
+      "font_size": 20,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
+      "label_color": [
+        190,
+        210,
+        225,
+        255
+      ],
+      "value_color": [
+        245,
+        248,
+        252,
+        255
+      ],
+      "display": "sparkline",
+      "min_value": 0.0,
+      "max_value": 2000.0,
+      "track_color": [
+        8,
+        16,
+        24,
+        150
+      ],
+      "fill_color": [
+        102,
+        226,
+        160,
+        255
+      ],
+      "stroke_width": 3,
+      "show_value_text": true,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 96,
+      "sparkline_fill_opacity": 0.22,
+      "sparkline_show_points": false,
+      "equalizer_bars": 24,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "neon",
+      "equalizer_threshold": 0.78,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "music_eq",
+      "label": "",
+      "source": "volume_percent",
+      "format": "{value}",
+      "x": 1496,
+      "y": 332,
+      "box_width": 324,
+      "box_height": 72,
+      "font_family": "DejaVu Sans",
+      "font_size": 19,
+      "font_bold": true,
+      "font_italic": false,
+      "font_underline": false,
+      "marquee": false,
+      "marquee_speed": 58.0,
+      "label_color": [
+        190,
+        210,
+        225,
+        255
+      ],
+      "value_color": [
+        245,
+        248,
+        252,
+        255
+      ],
+      "display": "equalizer",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "track_color": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "fill_color": [
+        102,
+        226,
+        120,
+        255
+      ],
+      "stroke_width": 12,
+      "show_value_text": false,
+      "gauge_preset": "",
+      "gauge_smooth": 0.26,
+      "gauge_match_value_color": true,
+      "gauge_color_low": null,
+      "gauge_color_mid": null,
+      "gauge_color_high": null,
+      "gauge_ring_size": null,
+      "gauge_value_layout": "center",
+      "gauge_inner_alpha": 1.0,
+      "sparkline_points": 72,
+      "sparkline_fill_opacity": 0.16,
+      "sparkline_show_points": false,
+      "equalizer_bars": 28,
+      "equalizer_gap": 4,
+      "equalizer_mirror": false,
+      "equalizer_color_preset": "rainbow",
+      "equalizer_threshold": 0.84,
+      "equalizer_threshold_color": [
+        255,
+        86,
+        96,
+        255
+      ],
+      "align": "left",
+      "z_index": 220,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "images": [
+    {
+      "id": "panel_overlay",
+      "path": "linux_matrix_green_assets/2026-05-19/overlay/matrix_green_overlay.png",
+      "source": "",
+      "rect": [
+        0,
+        0,
+        1920,
+        462
+      ],
+      "fit": "stretch",
+      "opacity": 1.0,
+      "radius": 0,
+      "border_width": 0,
+      "border_color": [
+        255,
+        255,
+        255,
+        0
+      ],
+      "glow_radius": 0,
+      "glow_opacity": 0.0,
+      "clock_style": "classic",
+      "clock_show_second_hand": true,
+      "clock_face_color": [
+        13,
+        18,
+        28,
+        220
+      ],
+      "clock_tick_color": [
+        220,
+        232,
+        245,
+        220
+      ],
+      "clock_hand_color": [
+        240,
+        244,
+        250,
+        255
+      ],
+      "clock_second_color": [
+        255,
+        92,
+        92,
+        255
+      ],
+      "clock_center_color": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "crop_box": null,
+      "rotation": 0,
+      "z_index": 86,
+      "visible": true,
+      "locked": true
+    }
+  ],
+  "widgets": [
+    {
+      "id": "media",
+      "kind": "media_now_playing",
+      "rect": [
+        520,
+        114,
+        648,
+        140
+      ],
+      "style": "standard",
+      "settings": {
+        "panel_enabled": true,
+        "panel_fill": [
+          6,
+          14,
+          20,
+          214
+        ],
+        "backdrop_enabled": true,
+        "backdrop_opacity": 0.26,
+        "cover_enabled": true,
+        "cover_placeholder_enabled": true,
+        "title_font_size": 28,
+        "artist_font_size": 20,
+        "detail_font_size": 15,
+        "title_color": [
+          244,
+          255,
+          248,
+          255
+        ],
+        "artist_color": [
+          210,
+          224,
+          240,
+          255
+        ],
+        "detail_color": [
+          150,
+          184,
+          208,
+          255
+        ],
+        "title_marquee": true,
+        "title_marquee_speed": 62.0,
+        "equalizer_enabled": true,
+        "equalizer_color": [
+          72,
+          236,
+          142,
+          255
+        ],
+        "equalizer_accent_color": [
+          246,
+          231,
+          152,
+          255
+        ],
+        "equalizer_track_color": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "equalizer_color_preset": "neon",
+        "equalizer_threshold": 0.78,
+        "equalizer_threshold_color": [
+          255,
+          86,
+          96,
+          255
+        ],
+        "equalizer_bars": 24,
+        "equalizer_gap": 4,
+        "hide_title_prefix": true
+      },
+      "opacity": 1.0,
       "z_index": 210,
       "visible": true,
       "locked": false
     },
     {
-      "id": "date_ymd",
-      "label": "DATE",
-      "source": "date_ymd",
-      "format": "{value}",
-      "x": 1234,
-      "y": 364,
-      "box_width": 300,
-      "box_height": 28,
-      "font_family": "Ubuntu",
-      "font_size": 22,
-      "font_bold": true,
-      "font_italic": false,
-      "font_underline": false,
-      "marquee": false,
-      "marquee_speed": 62.0,
-      "label_color": [
-        194,
-        206,
-        214
+      "id": "weather",
+      "kind": "weather_current",
+      "rect": [
+        1218,
+        114,
+        610,
+        140
       ],
-      "value_color": [
-        194,
-        206,
-        214
-      ],
-      "align": "left",
+      "style": "compact",
+      "settings": {
+        "panel_enabled": true,
+        "panel_fill": [
+          6,
+          14,
+          20,
+          198
+        ],
+        "font_family": "DejaVu Sans",
+        "location_font_size": 18,
+        "temp_font_size": 36,
+        "condition_font_size": 18,
+        "detail_font_size": 15,
+        "location_color": [
+          216,
+          255,
+          232,
+          255
+        ],
+        "temp_color": [
+          190,
+          255,
+          124,
+          255
+        ],
+        "condition_color": [
+          210,
+          224,
+          240,
+          255
+        ],
+        "detail_color": [
+          182,
+          204,
+          220,
+          255
+        ],
+        "animate_icons": true,
+        "icon_animation_speed": 1.0,
+        "icon_frame_fps": 12.0
+      },
+      "opacity": 1.0,
       "z_index": 210,
       "visible": true,
       "locked": false
     }
   ],
-  "images": [],
   "effects": {
+    "show_grid": false,
+    "show_safe_area": false,
     "animation": {
       "enabled": false,
+      "use_as_background": true,
+      "fps": 12.0,
       "current_frame": 0,
-      "frame_paths": []
-    }
+      "loop": true,
+      "smooth_loop": true,
+      "frame_paths": [],
+      "frame_durations_ms": []
+    },
+    "slideshow": {
+      "enabled": false
+    },
+    "motion_tracks": [],
+    "import_report": {}
   }
 }

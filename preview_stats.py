@@ -67,18 +67,27 @@ def preview_stats_values() -> dict[str, str]:
         "weather_code": "1",
         "weather_condition": "Partly cloudy",
         "weather_icon": "partly_cloudy",
-        "weather_icon_path": "",
+        "weather_icon_path": "../assets/weather/icons/meteocons/png/partly-cloudy-day.png",
         "weather_is_day": "1",
         "weather_daily_json": "[]",
     }
     labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     conditions = ["Cloudy", "Clear", "Rain", "Cloudy", "Sunny", "Wind", "Clear"]
-    icons = ["cloudy", "clear", "rain", "cloudy", "clear", "wind", "clear"]
+    icons = ["cloudy", "clear-day", "rain", "cloudy", "clear-day", "wind", "clear-night"]
+    icon_paths = [
+        "../assets/weather/icons/meteocons/png/cloudy.png",
+        "../assets/weather/icons/meteocons/png/clear-day.png",
+        "../assets/weather/icons/meteocons/png/rain.png",
+        "../assets/weather/icons/meteocons/png/cloudy.png",
+        "../assets/weather/icons/meteocons/png/clear-day.png",
+        "../assets/weather/icons/meteocons/png/wind.png",
+        "../assets/weather/icons/meteocons/png/clear-night.png",
+    ]
     for idx in range(7):
         values[f"weather_day_{idx}_label"] = labels[idx]
         values[f"weather_day_{idx}_condition"] = conditions[idx]
         values[f"weather_day_{idx}_icon"] = icons[idx]
-        values[f"weather_day_{idx}_icon_path"] = ""
+        values[f"weather_day_{idx}_icon_path"] = icon_paths[idx]
         values[f"weather_day_{idx}_temp_min_c"] = f"{12 + idx}C"
         values[f"weather_day_{idx}_temp_max_c"] = f"{20 + idx}C"
         values[f"weather_day_{idx}_precip_mm"] = "2 mm" if idx == 2 else "0 mm"

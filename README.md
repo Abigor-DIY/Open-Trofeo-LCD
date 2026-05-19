@@ -59,13 +59,13 @@ Theme previews rendered from bundled starter themes:
 
 ![Heritage Duality theme preview](docs/screenshots/theme-heritage-duality.png)
 
-![Linux Matrix Command Deck theme preview](docs/screenshots/theme-linux-matrix-blue.png)
+![Matrix Green theme preview](docs/screenshots/theme-matrix-green.png)
 
-![Linux Matrix Green theme preview](docs/screenshots/theme-linux-matrix-green.png)
+![Wolfstorm Forge theme preview](docs/screenshots/theme-wolfstorm-forge.png)
 
-![New Theme preview](docs/screenshots/theme-new-theme.png)
+![Orbital Relay theme preview](docs/screenshots/theme-orbital-relay.png)
 
-![TTCR Import theme preview](docs/screenshots/theme-ttcr-import.png)
+![Obsidian Pulse theme preview](docs/screenshots/theme-obsidian-pulse.png)
 
 ## Support
 

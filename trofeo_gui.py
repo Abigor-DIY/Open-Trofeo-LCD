@@ -226,21 +226,39 @@ EQUALIZER_COLOR_PRESETS = {
 THEME_TEMPLATE_CATALOG = [
     {
         "title": "Heritage Duality",
-        "description": "Animowany motyw panoramiczny z gotowym ukladem dashboardu i widgetami.",
+        "description": "Cieply animowany dashboard z odtwarzaczem, pogoda i telemetria.",
         "path": "themes/heritage_duality.json",
-        "accent": "#59b7ff",
+        "accent": "#f6be70",
     },
     {
-        "title": "Linux Matrix Blue",
-        "description": "Statyczny motyw techniczny z czytelnymi statystykami systemu.",
-        "path": "themes/linux_matrix_blue.json",
-        "accent": "#8fd878",
+        "title": "Matrix Green",
+        "description": "Statyczny command deck z gesta telemetria i czytelnym EQ.",
+        "path": "themes/linux_matrix_green.json",
+        "accent": "#48ec8e",
     },
     {
-        "title": "New Theme",
-        "description": "Animowany motyw startowy do dalszego dopracowania w projektancie.",
-        "path": "themes/new_theme_minimal.json",
-        "accent": "#f1b15b",
+        "title": "Verdant Bloom",
+        "description": "Zielony motyw pogodowy z prognoza, playerem i gauge.",
+        "path": "themes/verdant_bloom.json",
+        "accent": "#7ce89c",
+    },
+    {
+        "title": "Wolfstorm Forge",
+        "description": "Animowany motyw media-first z pogoda i statystykami systemu.",
+        "path": "themes/wolfstorm_forge.json",
+        "accent": "#f2b052",
+    },
+    {
+        "title": "Orbital Relay",
+        "description": "Animowany panel orbitalny z prognoza i monitorowaniem sieci.",
+        "path": "themes/orbital_relay.json",
+        "accent": "#56d2ff",
+    },
+    {
+        "title": "Obsidian Pulse",
+        "description": "Ciemny minimalistyczny dashboard z transparentnym EQ.",
+        "path": "themes/obsidian_pulse.json",
+        "accent": "#6ce8de",
     },
 ]
 
@@ -3871,7 +3889,7 @@ class TrofeoGui(QMainWindow):
         self.theme_doc_box = QGroupBox("Theme")
         theme_doc_grid = QGridLayout(self.theme_doc_box)
         theme_doc_grid.setColumnStretch(1, 1)
-        self.theme_doc_path_edit = QLineEdit(str(Path("themes/linux_matrix_blue.json")))
+        self.theme_doc_path_edit = QLineEdit(str(Path("themes/obsidian_pulse.json")))
         self.theme_doc_browse_btn = QPushButton("Browse theme…")
         self.theme_doc_use_selected_btn = QPushButton("From active theme")
         self.theme_doc_load_btn = QPushButton("Load")
