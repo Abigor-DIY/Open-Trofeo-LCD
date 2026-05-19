@@ -73,6 +73,12 @@ Current status:
 - TRCC remains optional because `trcc-linux` is not currently available as a
   normal Ubuntu package; the DEB defaults to the native PyUSB display backend.
 
+Ubuntu Software, KDE Discover and other AppStream-aware package managers use
+`packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.metainfo.xml` for the app
+summary, icon and screenshots. Keep `docs/screenshots/*.png` current before a
+PPA upload, because the metainfo points package managers to those GitHub-hosted
+images.
+
 ## RPM Skeleton
 
 Files live in `packaging/rpm`.

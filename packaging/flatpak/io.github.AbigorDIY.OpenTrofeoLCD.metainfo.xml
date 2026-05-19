@@ -27,31 +27,31 @@
   </description>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/open-trofeo-lcd-animation-studio.png</image>
+      <image type="source" width="3589" height="1523">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/open-trofeo-lcd-animation-studio.png</image>
       <caption>Open Trofeo LCD Animation Studio</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-verdant-bloom.png</image>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-verdant-bloom.png</image>
       <caption>Bundled Verdant Bloom theme preview</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-heritage-duality.png</image>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-heritage-duality.png</image>
       <caption>Bundled Heritage Duality theme preview</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-matrix-green.png</image>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-matrix-green.png</image>
       <caption>Bundled Matrix Green theme preview</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-wolfstorm-forge.png</image>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-wolfstorm-forge.png</image>
       <caption>Bundled Wolfstorm Forge theme preview</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-orbital-relay.png</image>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-orbital-relay.png</image>
       <caption>Bundled Orbital Relay theme preview</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-obsidian-pulse.png</image>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/main/docs/screenshots/theme-obsidian-pulse.png</image>
       <caption>Bundled Obsidian Pulse theme preview</caption>
     </screenshot>
   </screenshots>
