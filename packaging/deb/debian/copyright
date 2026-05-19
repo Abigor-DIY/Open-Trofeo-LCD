@@ -1,0 +1,23 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Open Trofeo LCD
+Source: https://github.com/Abigor-DIY/Open-Trofeo-LCD
+
+Files: *
+Copyright: 2026 Abigor-DIY and Open Trofeo LCD contributors
+License: GPL-3.0-only
+
+Files: assets/weather/icons/meteocons/*
+Copyright: Bas Milius and Meteocons contributors
+License: MIT
+
+License: GPL-3.0-only
+ This package is distributed under the GNU General Public License version 3
+ only. See /usr/share/common-licenses/GPL-3.
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files, to deal in the Software
+ without restriction, including without limitation the rights to use, copy,
+ modify, merge, publish, distribute, sublicense, and/or sell copies of the
+ Software, subject to the copyright notice and permission notice being included
+ in all copies or substantial portions of the Software.

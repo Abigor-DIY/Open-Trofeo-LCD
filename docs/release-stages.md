@@ -46,6 +46,12 @@
   - dodano `scripts/check_linux_release.py` do walidacji motywow, screenow, metainfo, desktop entry i manifestu,
   - dodano `scripts/build_portable_release.sh` do tworzenia portable `tar.gz` z aktualnego commita,
   - dokumentacja opisuje walidacje Linux release i portable tarball.
+- 2026-05-19:
+  - dodano wspolny wrapper systemowy `packaging/linux/open-trofeo-lcd`, ktory kopiuje `/usr/share/open-trofeo-lcd` do zapisywalnego workdir uzytkownika,
+  - dodano szkielet DEB w `packaging/deb/debian`,
+  - dodano szkielet RPM w `packaging/rpm/open-trofeo-lcd.spec`,
+  - dodano `scripts/build_deb_package.sh` i `scripts/build_rpm_package.sh`,
+  - dodano `docs/linux-packaging.md` z opisem runtime layoutu i ryzyk przed publikacja.
 - Uporzadkowac strukturę:
   - `open-trofeo-lcd.desktop`
   - ikona aplikacji

@@ -1,8 +1,11 @@
-# Experimental Flatpak Packaging
+# Experimental Linux Packaging
 
 Open Trofeo LCD currently ships an experimental Flatpak manifest for local
 testing. The source/venv launcher is still the primary supported path until USB
 access and runtime permissions are verified on more systems.
+
+DEB/RPM/portable package skeletons are documented separately in
+`docs/linux-packaging.md`.
 
 ## Install Build Tools
 
@@ -123,4 +126,5 @@ LCD.
   hashes.
 - The package has not yet been validated on clean systems without the source
   checkout.
-- DEB/RPM packages are planned after the Flatpak runtime layout is stable.
+- DEB/RPM skeletons are available for local packaging work, but dependency names
+  and clean VM install behavior still need distro-specific validation.

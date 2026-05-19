@@ -1,0 +1,15 @@
+*.py usr/share/open-trofeo-lcd/
+*.md usr/share/open-trofeo-lcd/
+LICENSE usr/share/open-trofeo-lcd/
+requirements.txt usr/share/open-trofeo-lcd/
+.trofeo-backend.env.example usr/share/open-trofeo-lcd/
+99-trofeo-lcd.rules usr/lib/udev/rules.d/
+assets usr/share/open-trofeo-lcd/
+docs usr/share/open-trofeo-lcd/
+packaging usr/share/open-trofeo-lcd/
+scripts usr/share/open-trofeo-lcd/
+themes usr/share/open-trofeo-lcd/
+packaging/linux/open-trofeo-lcd usr/bin/
+open-trofeo-lcd.desktop usr/share/applications/
+packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.svg usr/share/icons/hicolor/scalable/apps/
+packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.metainfo.xml usr/share/metainfo/

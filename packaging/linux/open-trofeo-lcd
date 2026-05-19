@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_SOURCE="${OPEN_TROFEO_APP_SOURCE:-/usr/share/open-trofeo-lcd}"
+APP_WORKDIR="${OPEN_TROFEO_WORKDIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/open-trofeo-lcd-workdir}"
+VERSION_FILE="${APP_WORKDIR}/.system-package-version"
+SOURCE_VERSION="$(cat "${APP_SOURCE}/.package-source-version" 2>/dev/null || stat -c '%Y' "${APP_SOURCE}/main.py" 2>/dev/null || echo system)"
+
+if [[ ! -f "${APP_SOURCE}/main.py" ]]; then
+  echo "[-] Open Trofeo LCD source tree not found at ${APP_SOURCE}" >&2
+  exit 2
+fi
+
+mkdir -p "${APP_WORKDIR}"
+
+if [[ ! -f "${VERSION_FILE}" ]] || [[ "$(cat "${VERSION_FILE}" 2>/dev/null || true)" != "${SOURCE_VERSION}" ]]; then
+  rm -rf \
+    "${APP_WORKDIR}/assets" \
+    "${APP_WORKDIR}/docs" \
+    "${APP_WORKDIR}/packaging" \
+    "${APP_WORKDIR}/scripts" \
+    "${APP_WORKDIR}/themes" \
+    "${APP_WORKDIR}/__pycache__"
+  find "${APP_WORKDIR}" -maxdepth 1 -type f \( -name '*.py' -o -name '*.md' -o -name 'requirements*.txt' \) -delete
+  cp -a "${APP_SOURCE}/." "${APP_WORKDIR}/"
+  printf '%s\n' "${SOURCE_VERSION}" > "${VERSION_FILE}"
+fi
+
+cd "${APP_WORKDIR}"
+export OPEN_TROFEO_SYSTEM_PACKAGE=1
+exec python3 "${APP_WORKDIR}/main.py" "$@"

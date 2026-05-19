@@ -49,6 +49,35 @@ REQUIRED_FLATPAK_SKIPS = {
     "backups",
 }
 
+REQUIRED_PACKAGE_FILES = {
+    "packaging/linux/open-trofeo-lcd",
+    "packaging/deb/README.md",
+    "packaging/deb/debian/changelog",
+    "packaging/deb/debian/control",
+    "packaging/deb/debian/copyright",
+    "packaging/deb/debian/rules",
+    "packaging/deb/debian/open-trofeo-lcd.install",
+    "packaging/deb/debian/open-trofeo-lcd.postinst",
+    "packaging/deb/debian/open-trofeo-lcd.postrm",
+    "packaging/deb/debian/source/format",
+    "packaging/rpm/README.md",
+    "packaging/rpm/open-trofeo-lcd.spec",
+    "scripts/build_deb_package.sh",
+    "scripts/build_rpm_package.sh",
+    "scripts/build_portable_release.sh",
+    "docs/linux-packaging.md",
+}
+
+REQUIRED_EXECUTABLES = {
+    "packaging/linux/open-trofeo-lcd",
+    "packaging/deb/debian/rules",
+    "packaging/deb/debian/open-trofeo-lcd.postinst",
+    "packaging/deb/debian/open-trofeo-lcd.postrm",
+    "scripts/build_deb_package.sh",
+    "scripts/build_rpm_package.sh",
+    "scripts/build_portable_release.sh",
+}
+
 
 def rel(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
@@ -158,6 +187,34 @@ def main() -> int:
     if portable_script.exists():
         warn(portable_script.stat().st_mode & 0o111 != 0, "portable release builder is not executable")
 
+    for path_text in sorted(REQUIRED_PACKAGE_FILES):
+        require((ROOT / path_text).exists(), f"missing package skeleton file: {path_text}")
+
+    for path_text in sorted(REQUIRED_EXECUTABLES):
+        path = ROOT / path_text
+        if path.exists():
+            require(path.stat().st_mode & 0o111 != 0, f"package helper is not executable: {path_text}")
+
+    wrapper_path = ROOT / "packaging/linux/open-trofeo-lcd"
+    if wrapper_path.exists():
+        wrapper_text = wrapper_path.read_text(encoding="utf-8", errors="replace")
+        require("/usr/share/open-trofeo-lcd" in wrapper_text, "system wrapper must default to /usr/share/open-trofeo-lcd")
+        require("open-trofeo-lcd-workdir" in wrapper_text, "system wrapper must use writable user workdir")
+        require("/home/" not in wrapper_text, "system wrapper must not contain user-local /home paths")
+
+    deb_control = ROOT / "packaging/deb/debian/control"
+    if deb_control.exists():
+        deb_text = deb_control.read_text(encoding="utf-8", errors="replace")
+        require("Package: open-trofeo-lcd" in deb_text, "DEB control missing binary package")
+        require("python3" in deb_text, "DEB control missing python3 dependency")
+
+    rpm_spec = ROOT / "packaging/rpm/open-trofeo-lcd.spec"
+    if rpm_spec.exists():
+        spec_text = rpm_spec.read_text(encoding="utf-8", errors="replace")
+        require("Name:           open-trofeo-lcd" in spec_text, "RPM spec name mismatch")
+        require("%files" in spec_text, "RPM spec missing %files section")
+        require("%{_bindir}/open-trofeo-lcd" in spec_text, "RPM spec missing wrapper in files")
+
     if warnings:
         print("Warnings:")
         for item in warnings:
@@ -171,7 +228,7 @@ def main() -> int:
     print("Linux release check: OK")
     print(f"Themes: {len(EXPECTED_THEMES)}")
     print(f"Screenshots: {len(EXPECTED_SCREENSHOTS)}")
-    print("Desktop, icon, metainfo and Flatpak manifest: OK")
+    print("Desktop, icon, metainfo, Flatpak, DEB and RPM skeletons: OK")
     return 0
 
 

@@ -25,7 +25,7 @@ Known development areas:
 - Some advanced widgets may need tuning for LCD refresh performance.
 - Weather widgets are available, including current conditions, 7-day forecast, city search and animated icons.
 - Experimental Flatpak packaging is available for local testing, but source/venv launch is still the recommended path for now.
-- DEB/RPM packages are planned after the Flatpak runtime layout is stable.
+- Initial DEB/RPM skeletons are available for local packaging work, but dependency names still need clean-distro validation.
 
 ## Release Plan
 
@@ -34,7 +34,7 @@ Short-term publication plan:
 2. Keep source installation as the primary supported method for early testers.
 3. Add a Flatpak manifest with explicit USB device access notes.
 4. Validate release inputs with `python3 scripts/check_linux_release.py`.
-5. Build test packages: Flatpak first, then portable `tar.gz`, then DEB/RPM if the runtime layout is stable.
+5. Build test packages: Flatpak first, then portable `tar.gz`, then DEB/RPM skeleton packages.
 6. Publish downloadable artifacts on GitHub Releases after local install, udev and backend startup are verified.
 
 Flatpak packaging checklist:
@@ -47,6 +47,7 @@ Flatpak packaging checklist:
 - Ensure only one backend instance can own the LCD device.
 
 Experimental Flatpak build instructions are available in `docs/flatpak.md`.
+DEB/RPM/portable packaging notes are available in `docs/linux-packaging.md`.
 
 ## Screenshots
 
