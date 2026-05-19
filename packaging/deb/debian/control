@@ -21,14 +21,23 @@ Depends:
  python3-pyside6.qtwidgets | python3-pyside6,
  python3-pil,
  python3-usb,
+ python3-numpy,
+ python3-opencv,
+ libusb-1.0-0,
+ udev,
  playerctl,
  ffmpeg,
-Suggests:
  cava,
- python3-opencv,
+ desktop-file-utils,
+ hicolor-icon-theme,
+Recommends:
+ wireplumber | pulseaudio-utils | pamixer,
+Suggests:
+ trcc-linux,
 Description: Linux driver and theme editor for Thermalright Trofeo LCD
  Open Trofeo LCD is a reverse-engineered Linux driver, backend and Qt theme
  editor for the Thermalright Trofeo LCD cooler display.
  .
- This is a development preview package skeleton. Dependency names for PySide6,
- OpenCV, TRCC and optional audio helpers may still need per-distro adjustment.
+ This development preview package uses the native PyUSB display backend by
+ default. TRCC remains an optional acceleration path until it is available as a
+ distro package.

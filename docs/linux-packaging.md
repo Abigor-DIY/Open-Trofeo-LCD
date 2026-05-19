@@ -38,7 +38,8 @@ Files live in `packaging/deb/debian`.
 Build from the repository root:
 
 ```bash
-./scripts/build_deb_package.sh 0.1.0~dev1
+sudo apt install dpkg-dev debhelper dh-python
+./scripts/build_deb_package.sh 0.1.0~dev20260519
 ```
 
 Artifacts are copied to:
@@ -47,12 +48,28 @@ Artifacts are copied to:
 dist/deb/
 ```
 
+For Launchpad/PPA testing, build an unsigned source package:
+
+```bash
+./scripts/build_deb_source_package.sh 0.1.0~dev20260519
+```
+
+Artifacts are copied to:
+
+```text
+dist/deb-source/
+```
+
+Sign the generated `.source.changes` and upload it with `dput` to your PPA.
+
 Current status:
 
 - package metadata, desktop entry, icon, metainfo and udev rule are installed,
 - the app source tree is installed under `/usr/share/open-trofeo-lcd`,
 - post-install scripts reload udev rules and refresh desktop/icon caches,
-- dependency names are a baseline and still need distro verification.
+- dependency names target current Ubuntu package names,
+- TRCC remains optional because `trcc-linux` is not currently available as a
+  normal Ubuntu package; the DEB defaults to the native PyUSB display backend.
 
 ## RPM Skeleton
 

@@ -1,5 +1,8 @@
-open-trofeo-lcd (0.1.0~dev1) unstable; urgency=medium
+open-trofeo-lcd (0.1.0~dev20260519) unstable; urgency=medium
 
-  * Development preview package skeleton.
+  * Development preview package for Ubuntu testing.
+  * Install six polished starter themes and refreshed previews.
+  * Depend on CAVA/OpenCV/Numpy for the current EQ and animation workflows.
+  * Keep TRCC as an optional acceleration path; use native PyUSB by default.
 
  -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Tue, 19 May 2026 19:30:00 +0200
