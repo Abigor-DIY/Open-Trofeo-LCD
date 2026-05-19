@@ -1,4 +1,4 @@
-open-trofeo-lcd (0.1.0~dev20260519) unstable; urgency=medium
+open-trofeo-lcd (0.1.0~dev20260519) noble; urgency=medium
 
   * Development preview package for Ubuntu testing.
   * Install six polished starter themes and refreshed previews.

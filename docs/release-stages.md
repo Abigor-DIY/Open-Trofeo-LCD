@@ -151,3 +151,5 @@
 
 - Zegary swiatowe jako gotowy widget: czas dla wybranych miast na swiecie, np. 3 konfigurowalne zegary w jednym komponencie.
 - Statystyki gier/FPS jako gotowy widget: FPS, frametime/frames i dane z linuksowych nakladek, gdy uruchomiona jest gra.
+- Orientacja pionowa wyswietlacza: profile layoutu, podglad i renderer dla obrotu 90/270 stopni.
+- Hostowanie motywow w sieci: zdalny katalog motywow, pobieranie/import paczek oraz aktualizacje motywow z kontrola wersji.
