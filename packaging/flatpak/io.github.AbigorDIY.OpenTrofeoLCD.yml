@@ -69,6 +69,9 @@ modules:
           - temp_img
           - TTCR_Windows
           - Windows_Cap
+          - themes/linux_matrix_blue_assets
+          - themes/new_theme_minimal_assets
+          - themes/heritage_duality_assets/2026-05-13
           - header_scan_logs
           - live_test_logs
           - reference_protocol_logs

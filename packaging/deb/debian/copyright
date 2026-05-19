@@ -10,6 +10,10 @@ Files: assets/weather/icons/meteocons/*
 Copyright: Bas Milius and Meteocons contributors
 License: MIT
 
+Files: packaging/flatpak/*.metainfo.xml
+Copyright: 2026 Abigor-DIY and Open Trofeo LCD contributors
+License: CC0-1.0
+
 License: GPL-3.0-only
  This package is distributed under the GNU General Public License version 3
  only. See /usr/share/common-licenses/GPL-3.
@@ -21,3 +25,8 @@ License: MIT
  modify, merge, publish, distribute, sublicense, and/or sell copies of the
  Software, subject to the copyright notice and permission notice being included
  in all copies or substantial portions of the Software.
+
+License: CC0-1.0
+ To the extent possible under law, the copyright holders have waived all
+ copyright and related or neighboring rights to this metadata file. See
+ https://creativecommons.org/publicdomain/zero/1.0/legalcode for the full text.
