@@ -1849,8 +1849,27 @@ def _render_weather_forecast_widget(canvas: Image.Image, item: dict[str, Any], b
         icon = _weather_widget_icon_image(f"weather_day_{idx}_icon", snapshot, base_dir, (icon_size, icon_size), settings)
         if icon is not None:
             panel.alpha_composite(icon, (dx, top + int(24 * scale)))
-        _draw_widget_text(pdraw, (dx + icon_size + int(6 * scale), top + int(23 * scale)), snapshot.get(f"weather_day_{idx}_temp_max_c", "N/A"), font=hi_font, fill=_rgba(settings.get("temp_max_color", [246, 231, 152])), max_width=day_w - icon_size - 6)
-        _draw_widget_text(pdraw, (dx + icon_size + int(48 * scale), top + int(29 * scale)), snapshot.get(f"weather_day_{idx}_temp_min_c", "N/A"), font=lo_font, fill=_rgba(settings.get("temp_min_color", [180, 206, 232])), max_width=day_w - icon_size - 48)
+        temp_gap = max(4, int(6 * scale))
+        temp_x = dx + icon_size + temp_gap
+        temp_max_text = _ellipsize_text(
+            pdraw,
+            snapshot.get(f"weather_day_{idx}_temp_max_c", "N/A"),
+            hi_font,
+            max(1, day_w - icon_size - temp_gap),
+        )
+        pdraw.text((temp_x, top + int(23 * scale)), temp_max_text, font=hi_font, fill=_rgba(settings.get("temp_max_color", [246, 231, 152])))
+        temp_max_width = pdraw.textbbox((0, 0), temp_max_text, font=hi_font)[2] if temp_max_text else 0
+        temp_min_x = temp_x + temp_max_width + temp_gap
+        temp_min_width = max(1, dx + day_w - temp_min_x - 2)
+        if temp_min_width >= max(12, int(18 * scale)):
+            _draw_widget_text(
+                pdraw,
+                (temp_min_x, top + int(29 * scale)),
+                snapshot.get(f"weather_day_{idx}_temp_min_c", "N/A"),
+                font=lo_font,
+                fill=_rgba(settings.get("temp_min_color", [180, 206, 232])),
+                max_width=temp_min_width,
+            )
         _draw_widget_text(pdraw, (dx, top + int(58 * scale)), snapshot.get(f"weather_day_{idx}_condition", "N/A"), font=cond_font, fill=_rgba(settings.get("condition_color", [210, 224, 240])), max_width=day_w - 6)
     canvas.alpha_composite(panel, (x, y))
 
