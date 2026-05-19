@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VERSION="${1:-0.1.0~dev20260519}"
+DISTRO="${2:-}"
 OUT_DIR="${OUT_DIR:-${ROOT_DIR}/dist/deb-source}"
 PACKAGE_NAME="open-trofeo-lcd"
 WORK_DIR="$(mktemp -d)"
@@ -35,6 +36,9 @@ export DEBFULLNAME="${DEBFULLNAME:-Abigor-DIY}"
 (
   cd "${SRC_DIR}"
   sed -i "1s/([^)]*)/(${VERSION})/" debian/changelog
+  if [[ -n "${DISTRO}" ]]; then
+    sed -i -E "1s/^([^ ]+ \\([^)]+\\)) [^;]+;/\\1 ${DISTRO};/" debian/changelog
+  fi
   dpkg-buildpackage -S -us -uc -d
 )
 

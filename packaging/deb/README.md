@@ -13,11 +13,12 @@ sudo apt install dpkg-dev debhelper dh-python
 Build an unsigned source package for Launchpad/PPA testing:
 
 ```bash
-./scripts/build_deb_source_package.sh 0.1.0~dev20260519
+./scripts/build_deb_source_package.sh 0.1.0~dev20260519 noble
 ```
 
 The source artifacts are written to `dist/deb-source/`. For a real PPA upload,
-sign the generated `.source.changes` file and upload it with `dput`.
+sign the generated `.source.changes` file and upload it with `dput`. The
+optional second argument selects the Ubuntu series, for example `resolute`.
 
 The package installs the application source tree under
 `/usr/share/open-trofeo-lcd` and launches it through `/usr/bin/open-trofeo-lcd`.

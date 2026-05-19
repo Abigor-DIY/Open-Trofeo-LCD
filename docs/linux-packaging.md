@@ -51,7 +51,7 @@ dist/deb/
 For Launchpad/PPA testing, build an unsigned source package:
 
 ```bash
-./scripts/build_deb_source_package.sh 0.1.0~dev20260519
+./scripts/build_deb_source_package.sh 0.1.0~dev20260519 noble
 ```
 
 Artifacts are copied to:
@@ -61,6 +61,8 @@ dist/deb-source/
 ```
 
 Sign the generated `.source.changes` and upload it with `dput` to your PPA.
+The optional second argument selects the Ubuntu series, for example `resolute`
+on newer Ubuntu development systems.
 
 Current status:
 
