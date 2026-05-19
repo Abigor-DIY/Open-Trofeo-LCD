@@ -5729,8 +5729,8 @@ class TrofeoGui(QMainWindow):
         layer_actions_grid.setContentsMargins(0, 0, 0, 0)
         layer_actions_grid.setHorizontalSpacing(5)
         layer_actions_grid.setVerticalSpacing(4)
-        self.designer_layer_down_btn = QPushButton("−Z")
-        self.designer_layer_up_btn = QPushButton("+Z")
+        self.designer_layer_down_btn = QPushButton("Lower")
+        self.designer_layer_up_btn = QPushButton("Raise")
         self.designer_layer_back_btn = QPushButton("Back")
         self.designer_layer_front_btn = QPushButton("Front")
         self.designer_visibility_toggle_btn = QPushButton("Show")
@@ -5743,10 +5743,10 @@ class TrofeoGui(QMainWindow):
             self.designer_visibility_toggle_btn,
             self.designer_lock_toggle_btn,
         ):
-            btn.setObjectName("quickAddButton")
+            btn.setObjectName("compactActionButton")
             btn.setMinimumHeight(24)
             btn.setMaximumHeight(28)
-            btn.setMinimumWidth(58)
+            btn.setMinimumWidth(64)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.designer_layer_down_btn.clicked.connect(self.lower_designer_layer)
         self.designer_layer_up_btn.clicked.connect(self.raise_designer_layer)
@@ -6262,13 +6262,21 @@ class TrofeoGui(QMainWindow):
             self.geometry_preset_right_btn,
             self.geometry_preset_center_btn,
         ):
-            btn.setObjectName("quickAddButton")
+            btn.setObjectName("compactActionButton")
             btn.setMinimumHeight(24)
+            btn.setMaximumHeight(28)
+            btn.setMinimumWidth(58)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.geometry_preset_top_btn.clicked.connect(lambda: self.apply_geometry_rect_preset("top"))
         self.geometry_preset_bottom_btn.clicked.connect(lambda: self.apply_geometry_rect_preset("bottom"))
         self.geometry_preset_left_btn.clicked.connect(lambda: self.apply_geometry_rect_preset("left"))
         self.geometry_preset_right_btn.clicked.connect(lambda: self.apply_geometry_rect_preset("right"))
         self.geometry_preset_center_btn.clicked.connect(lambda: self.apply_geometry_rect_preset("center"))
+        self.geometry_preset_top_btn.setToolTip("Fit selection to the top band of the LCD canvas")
+        self.geometry_preset_bottom_btn.setToolTip("Fit selection to the bottom band of the LCD canvas")
+        self.geometry_preset_left_btn.setToolTip("Fit selection to the left side of the LCD canvas")
+        self.geometry_preset_right_btn.setToolTip("Fit selection to the right side of the LCD canvas")
+        self.geometry_preset_center_btn.setToolTip("Center and enlarge selection on the LCD canvas")
         self.geometry_preset_row = wrap_row(
             self.geometry_preset_top_btn,
             self.geometry_preset_bottom_btn,
@@ -6735,6 +6743,21 @@ class TrofeoGui(QMainWindow):
             QPushButton#quickAddButton:hover {{
                 border: 1px solid {primary_color};
                 background: {bg_tab_selected};
+            }}
+            QPushButton#compactActionButton {{
+                background: {bg_input};
+                border: 1px solid {border_soft};
+                border-radius: 7px;
+                padding: 3px 8px;
+                color: {text_main};
+                font-size: {small_font}px;
+                font-weight: 700;
+                text-align: center;
+            }}
+            QPushButton#compactActionButton:hover {{
+                border: 1px solid {primary_color};
+                background: {bg_tab_selected};
+                color: {text_main};
             }}
             QPushButton#quickPresetButton {{
                 background: {bg_input};
@@ -7743,19 +7766,34 @@ class TrofeoGui(QMainWindow):
             self.weather_designer_refresh_btn.setText(tr("Refresh", "Odśwież"))
         if hasattr(self, "geometry_preset_top_btn"):
             self.geometry_preset_top_btn.setText(tr("Top", "Góra"))
+            self.geometry_preset_top_btn.setToolTip(
+                tr("Fit selection to the top band of the LCD canvas", "Dopasuj zaznaczenie do górnego pasa ekranu LCD")
+            )
         if hasattr(self, "geometry_preset_bottom_btn"):
             self.geometry_preset_bottom_btn.setText(tr("Bottom", "Dół"))
+            self.geometry_preset_bottom_btn.setToolTip(
+                tr("Fit selection to the bottom band of the LCD canvas", "Dopasuj zaznaczenie do dolnego pasa ekranu LCD")
+            )
         if hasattr(self, "geometry_preset_left_btn"):
             self.geometry_preset_left_btn.setText(tr("Left", "Lewo"))
+            self.geometry_preset_left_btn.setToolTip(
+                tr("Fit selection to the left side of the LCD canvas", "Dopasuj zaznaczenie do lewej strony ekranu LCD")
+            )
         if hasattr(self, "geometry_preset_right_btn"):
             self.geometry_preset_right_btn.setText(tr("Right", "Prawo"))
+            self.geometry_preset_right_btn.setToolTip(
+                tr("Fit selection to the right side of the LCD canvas", "Dopasuj zaznaczenie do prawej strony ekranu LCD")
+            )
         if hasattr(self, "geometry_preset_center_btn"):
             self.geometry_preset_center_btn.setText(tr("Center", "Środek"))
+            self.geometry_preset_center_btn.setToolTip(
+                tr("Center and enlarge selection on the LCD canvas", "Wyśrodkuj i powiększ zaznaczenie na ekranie LCD")
+            )
         if hasattr(self, "designer_layer_down_btn"):
-            self.designer_layer_down_btn.setText(tr("-Z", "-Z"))
+            self.designer_layer_down_btn.setText(tr("Lower", "Niżej"))
             self.designer_layer_down_btn.setToolTip(tr("Lower selected layer", "Przesuń warstwę niżej"))
         if hasattr(self, "designer_layer_up_btn"):
-            self.designer_layer_up_btn.setText(tr("+Z", "+Z"))
+            self.designer_layer_up_btn.setText(tr("Raise", "Wyżej"))
             self.designer_layer_up_btn.setToolTip(tr("Raise selected layer", "Przesuń warstwę wyżej"))
         if hasattr(self, "designer_layer_back_btn"):
             self.designer_layer_back_btn.setText(tr("Back", "Tył"))
