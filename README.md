@@ -283,8 +283,9 @@ scripts/trofeo_backend_service.sh status
 scripts/trofeo_backend_service.sh logs
 ```
 
-For the DEB/RPM packaged app, install or refresh the user backend service from
-the launcher so it points at the package wrapper instead of a source checkout:
+For the DEB packaged app, the backend user service is installed globally as
+`trofeo-backend.service`. If a source checkout previously installed a per-user
+unit in `~/.config/systemd/user`, refresh it from the package wrapper once:
 
 ```bash
 open-trofeo-lcd --install-backend-service

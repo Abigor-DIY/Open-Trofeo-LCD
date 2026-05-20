@@ -71,6 +71,10 @@ Current status:
 - user systemd templates are included, and packaged backend services start
   through `/usr/bin/open-trofeo-lcd --backend-service-run` so the writable
   workdir is refreshed after package upgrades,
+- the DEB also installs a global user service unit at
+  `/usr/lib/systemd/user/trofeo-backend.service` and enables it globally, so
+  new user sessions can start the backend service without running an extra
+  installer command,
 - post-install scripts reload udev rules and refresh desktop/icon caches,
 - dependency names target current Ubuntu package names,
 - TRCC remains optional because `trcc-linux` is not currently available as a

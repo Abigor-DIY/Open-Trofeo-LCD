@@ -9,4 +9,10 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
     gtk-update-icon-cache -q /usr/share/icons/hicolor || true
 fi
 
+if [ "${1:-}" = "remove" ] || [ "${1:-}" = "purge" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --global disable trofeo-backend.service >/dev/null 2>&1 || true
+    fi
+fi
+
 #DEBHELPER#

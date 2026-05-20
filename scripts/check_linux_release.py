@@ -54,6 +54,7 @@ REQUIRED_FLATPAK_SKIPS = {
 REQUIRED_PACKAGE_FILES = {
     "assets/transport/trofeo_1920x462_packet_template.bin",
     "packaging/linux/open-trofeo-lcd",
+    "packaging/linux/trofeo-backend.service",
     "packaging/deb/README.md",
     "packaging/deb/debian/changelog",
     "packaging/deb/debian/control",
@@ -223,6 +224,13 @@ def main() -> int:
     if deb_install.exists():
         install_text = deb_install.read_text(encoding="utf-8", errors="replace")
         require("systemd usr/share/open-trofeo-lcd/" in install_text, "DEB install must include user systemd templates")
+        require("packaging/linux/trofeo-backend.service usr/lib/systemd/user/" in install_text, "DEB install must include global packaged backend user unit")
+
+    deb_postinst = ROOT / "packaging/deb/debian/open-trofeo-lcd.postinst"
+    if deb_postinst.exists():
+        postinst_text = deb_postinst.read_text(encoding="utf-8", errors="replace")
+        require("systemctl --global enable trofeo-backend.service" in postinst_text, "DEB postinst must globally enable backend user service")
+        require("try-restart trofeo-backend.service" in postinst_text, "DEB postinst must refresh running user backend when possible")
 
     service_installer = ROOT / "scripts/install_backend_service.sh"
     if service_installer.exists():

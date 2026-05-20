@@ -21,6 +21,7 @@ themes/verdant_bloom_assets/2026-05-13/background/verdant_bloom_9_background_tro
 themes/verdant_bloom_assets/2026-05-19/overlay/verdant_bloom_overlay.png usr/share/open-trofeo-lcd/themes/verdant_bloom_assets/2026-05-19/overlay/
 themes/wolfstorm_forge_assets/2026-05-19/overlay/wolfstorm_forge_overlay.png usr/share/open-trofeo-lcd/themes/wolfstorm_forge_assets/2026-05-19/overlay/
 packaging/linux/open-trofeo-lcd usr/bin/
+packaging/linux/trofeo-backend.service usr/lib/systemd/user/
 packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.desktop usr/share/applications/
 packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.svg usr/share/icons/hicolor/scalable/apps/
 packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.metainfo.xml usr/share/metainfo/

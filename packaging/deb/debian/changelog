@@ -12,6 +12,7 @@ open-trofeo-lcd (0.1.0~dev20260520) noble; urgency=medium
   * Install user systemd templates in the DEB and make packaged backend service
     launches go through /usr/bin/open-trofeo-lcd so the workdir is refreshed
     after package upgrades.
+  * Install and globally enable the packaged user backend service unit.
   * Report real package version in the UI.
 
  -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Wed, 20 May 2026 09:55:00 +0200
