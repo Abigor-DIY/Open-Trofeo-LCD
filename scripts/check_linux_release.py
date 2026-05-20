@@ -70,6 +70,8 @@ REQUIRED_PACKAGE_FILES = {
     "scripts/build_rpm_package.sh",
     "scripts/build_portable_release.sh",
     "docs/linux-packaging.md",
+    "systemd/trofeo-backend.service",
+    "systemd/trofeo-lcd.service",
 }
 
 REQUIRED_EXECUTABLES = {
@@ -208,6 +210,7 @@ def main() -> int:
         wrapper_text = wrapper_path.read_text(encoding="utf-8", errors="replace")
         require("/usr/share/open-trofeo-lcd" in wrapper_text, "system wrapper must default to /usr/share/open-trofeo-lcd")
         require("open-trofeo-lcd-workdir" in wrapper_text, "system wrapper must use writable user workdir")
+        require("--backend-service-run" in wrapper_text, "system wrapper must support backend service foreground mode")
         require("/home/" not in wrapper_text, "system wrapper must not contain user-local /home paths")
 
     deb_control = ROOT / "packaging/deb/debian/control"
@@ -215,6 +218,17 @@ def main() -> int:
         deb_text = deb_control.read_text(encoding="utf-8", errors="replace")
         require("Package: open-trofeo-lcd" in deb_text, "DEB control missing binary package")
         require("python3" in deb_text, "DEB control missing python3 dependency")
+
+    deb_install = ROOT / "packaging/deb/debian/open-trofeo-lcd.install"
+    if deb_install.exists():
+        install_text = deb_install.read_text(encoding="utf-8", errors="replace")
+        require("systemd usr/share/open-trofeo-lcd/" in install_text, "DEB install must include user systemd templates")
+
+    service_installer = ROOT / "scripts/install_backend_service.sh"
+    if service_installer.exists():
+        installer_text = service_installer.read_text(encoding="utf-8", errors="replace")
+        require("OPEN_TROFEO_SYSTEM_PACKAGE" in installer_text, "backend service installer must handle system package mode")
+        require("/usr/bin/open-trofeo-lcd --backend-service-run" in installer_text, "packaged backend service must start through system wrapper")
 
     rpm_spec = ROOT / "packaging/rpm/open-trofeo-lcd.spec"
     if rpm_spec.exists():

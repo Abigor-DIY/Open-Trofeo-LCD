@@ -44,12 +44,20 @@
       <caption>Open Trofeo LCD Animation Studio</caption>
     </screenshot>
     <screenshot>
-      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-verdant-bloom.png</image>
-      <caption>Bundled Verdant Bloom theme preview</caption>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-obsidian-pulse.png</image>
+      <caption>Bundled Obsidian Pulse theme preview</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-orbital-relay.png</image>
+      <caption>Bundled Orbital Relay theme preview</caption>
     </screenshot>
     <screenshot>
       <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-heritage-duality.png</image>
       <caption>Bundled Heritage Duality theme preview</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-verdant-bloom.png</image>
+      <caption>Bundled Verdant Bloom theme preview</caption>
     </screenshot>
     <screenshot>
       <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-matrix-green.png</image>
@@ -58,14 +66,6 @@
     <screenshot>
       <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-wolfstorm-forge.png</image>
       <caption>Bundled Wolfstorm Forge theme preview</caption>
-    </screenshot>
-    <screenshot>
-      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-orbital-relay.png</image>
-      <caption>Bundled Orbital Relay theme preview</caption>
-    </screenshot>
-    <screenshot>
-      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-obsidian-pulse.png</image>
-      <caption>Bundled Obsidian Pulse theme preview</caption>
     </screenshot>
   </screenshots>
   <releases>

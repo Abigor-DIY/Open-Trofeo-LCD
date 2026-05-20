@@ -7,6 +7,7 @@ requirements.txt usr/share/open-trofeo-lcd/
 assets usr/share/open-trofeo-lcd/
 docs usr/share/open-trofeo-lcd/
 scripts usr/share/open-trofeo-lcd/
+systemd usr/share/open-trofeo-lcd/
 themes/*.json usr/share/open-trofeo-lcd/themes/
 themes/heritage_duality_assets/2026-05-09/image/background_flat.png usr/share/open-trofeo-lcd/themes/heritage_duality_assets/2026-05-09/image/
 themes/heritage_duality_assets/2026-05-19/overlay/heritage_duality_overlay.png usr/share/open-trofeo-lcd/themes/heritage_duality_assets/2026-05-19/overlay/

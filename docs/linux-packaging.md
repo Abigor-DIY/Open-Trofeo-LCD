@@ -68,6 +68,9 @@ Current status:
 
 - package metadata, desktop entry, icon, metainfo and udev rule are installed,
 - the app source tree is installed under `/usr/share/open-trofeo-lcd`,
+- user systemd templates are included, and packaged backend services start
+  through `/usr/bin/open-trofeo-lcd --backend-service-run` so the writable
+  workdir is refreshed after package upgrades,
 - post-install scripts reload udev rules and refresh desktop/icon caches,
 - dependency names target current Ubuntu package names,
 - TRCC remains optional because `trcc-linux` is not currently available as a

@@ -335,6 +335,13 @@ def stop_backend(proc=None):
             pass
         _clear_managed_backend_pid()
 
+def install_backend_service() -> int:
+    script = WORKDIR / "scripts" / "install_backend_service.sh"
+    if not script.exists():
+        print(f"[-] Brak skryptu instalacji usługi: {script}")
+        return 2
+    return subprocess.call(["/bin/bash", str(script)], cwd=WORKDIR, env=os.environ.copy())
+
 def run_gui():
     """Uruchamia GUI i czeka na jego zakończenie."""
     print("[+] Uruchamiam GUI...")
@@ -378,6 +385,7 @@ def main():
     parser.add_argument("--replace-existing-backend", action="store_true", help="Wymuś restart istniejącego backendu")
     parser.add_argument("--status", action="store_true", help="Pokaż status runtime i zależności")
     parser.add_argument("--check-runtime", action="store_true", help="Sprawdź zależności runtime i zakończ")
+    parser.add_argument("--install-backend-service", action="store_true", help="Zainstaluj/odśwież user systemd service dla backendu")
     
     args, _ = parser.parse_known_args()
 
@@ -386,6 +394,9 @@ def main():
         if args.check_runtime and any(not ok for _name, ok, _note in _runtime_check()):
             raise SystemExit(1)
         return
+
+    if args.install_backend_service:
+        raise SystemExit(install_backend_service())
     
     if args.cli:
         print("[!] Tryb CLI: uruchamianie trofeo_lcd.py...")

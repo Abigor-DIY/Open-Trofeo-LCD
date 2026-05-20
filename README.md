@@ -283,6 +283,14 @@ scripts/trofeo_backend_service.sh status
 scripts/trofeo_backend_service.sh logs
 ```
 
+For the DEB/RPM packaged app, install or refresh the user backend service from
+the launcher so it points at the package wrapper instead of a source checkout:
+
+```bash
+open-trofeo-lcd --install-backend-service
+systemctl --user restart trofeo-backend.service
+```
+
 Note:
 - `trofeo_backend_service.sh start` stops the old `trofeo-lcd.service` to avoid `Resource busy` conflicts.
 - Do not use `sudo` with `systemd --user`.

@@ -11,21 +11,79 @@ if [[ ! -f "${APP_SOURCE}/main.py" ]]; then
   exit 2
 fi
 
+copy_app_source() {
+  if command -v tar >/dev/null 2>&1; then
+    tar -C "${APP_SOURCE}" \
+      --exclude='./.git' \
+      --exclude='./.agents' \
+      --exclude='./.codex' \
+      --exclude='./.codex-backups' \
+      --exclude='./.flatpak-builder' \
+      --exclude='./.venv' \
+      --exclude='./.venv-gui' \
+      --exclude='./.venv-trcc' \
+      --exclude='./build-dir' \
+      --exclude='./dist' \
+      --exclude='./repo' \
+      --exclude='./repo-current' \
+      --exclude='./TTCR_Windows' \
+      --exclude='./Windows_Cap' \
+      --exclude='./backups' \
+      --exclude='./Anim_temp' \
+      --exclude='./temp_img' \
+      --exclude='./header_scan_logs' \
+      --exclude='./live_test_logs' \
+      --exclude='./reference_protocol_logs' \
+      --exclude='./reference_timing_logs' \
+      --exclude='./dzis.pcapng' \
+      --exclude='./*.pcapng' \
+      --exclude='./*.pcap' \
+      --exclude='./*.pyc' \
+      --exclude='./*.pyo' \
+      -cf - . | tar -C "${APP_WORKDIR}" -xf -
+    return 0
+  fi
+  cp -a "${APP_SOURCE}/." "${APP_WORKDIR}/"
+}
+
 mkdir -p "${APP_WORKDIR}"
 
 if [[ ! -f "${VERSION_FILE}" ]] || [[ "$(cat "${VERSION_FILE}" 2>/dev/null || true)" != "${SOURCE_VERSION}" ]]; then
   rm -rf \
+    "${APP_WORKDIR}/.codex-backups" \
+    "${APP_WORKDIR}/.flatpak-builder" \
+    "${APP_WORKDIR}/.venv" \
+    "${APP_WORKDIR}/.venv-gui" \
+    "${APP_WORKDIR}/.venv-trcc" \
+    "${APP_WORKDIR}/Anim_temp" \
+    "${APP_WORKDIR}/TTCR_Windows" \
+    "${APP_WORKDIR}/Windows_Cap" \
     "${APP_WORKDIR}/assets" \
+    "${APP_WORKDIR}/build-dir" \
+    "${APP_WORKDIR}/dist" \
     "${APP_WORKDIR}/docs" \
     "${APP_WORKDIR}/packaging" \
+    "${APP_WORKDIR}/repo" \
+    "${APP_WORKDIR}/repo-current" \
     "${APP_WORKDIR}/scripts" \
+    "${APP_WORKDIR}/systemd" \
+    "${APP_WORKDIR}/temp_img" \
     "${APP_WORKDIR}/themes" \
     "${APP_WORKDIR}/__pycache__"
   find "${APP_WORKDIR}" -maxdepth 1 -type f \( -name '*.py' -o -name '*.md' -o -name 'requirements*.txt' \) -delete
-  cp -a "${APP_SOURCE}/." "${APP_WORKDIR}/"
+  copy_app_source
   printf '%s\n' "${SOURCE_VERSION}" > "${VERSION_FILE}"
 fi
 
 cd "${APP_WORKDIR}"
 export OPEN_TROFEO_SYSTEM_PACKAGE=1
+
+if [[ "${1:-}" == "--backend-service-run" ]]; then
+  shift || true
+  if [[ ! -f "${APP_WORKDIR}/.trofeo-backend.env" && -f "${APP_WORKDIR}/.trofeo-backend.env.example" ]]; then
+    cp "${APP_WORKDIR}/.trofeo-backend.env.example" "${APP_WORKDIR}/.trofeo-backend.env"
+  fi
+  exec /bin/bash "${APP_WORKDIR}/scripts/run_backend_service.sh" "$@"
+fi
+
 exec python3 "${APP_WORKDIR}/main.py" "$@"
