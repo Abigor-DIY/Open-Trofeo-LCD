@@ -1612,6 +1612,11 @@ def main():
         help='Pad encoded JPEG payload with zeros to this size before chunking (compat mode)',
     )
     parser.add_argument(
+        '--use-packet-template',
+        action='store_true',
+        help='Reuse packet templates from dzis.pcapng when available (diagnostics only)',
+    )
+    parser.add_argument(
         '--ack-every-packet',
         dest='ack_every_packet',
         action='store_true',
@@ -1792,7 +1797,8 @@ def main():
 
     image_packet_template = []
     if args.trcc_compatible and args.image and not args.monitor:
-        image_packet_template = _get_monitor_packet_template()
+        if args.use_packet_template:
+            image_packet_template = _get_monitor_packet_template()
         if args.header_size_override is None:
             args.header_size_override = TRCC_COMPAT_JPEG_SIZE
         # For templated LY packets, pad only to the payload capacity encoded in
@@ -2004,7 +2010,7 @@ def main():
         elif args.monitor:
             print("Tryb monitorowania systemu (Ctrl+C aby zakończyć)...")
             frames_sent = 0
-            packet_template = _get_monitor_packet_template()
+            packet_template = _get_monitor_packet_template() if args.use_packet_template else []
             while args.max_frames == 0 or frames_sent < args.max_frames:
                 global _MONITOR_FITTED_ALPHA
                 target_header_size = TRCC_COMPAT_JPEG_SIZE

@@ -24,6 +24,8 @@ EXPECTED_THEMES = {
 
 EXPECTED_SCREENSHOTS = {
     "docs/screenshots/open-trofeo-lcd-animation-studio.png",
+    "docs/screenshots/open-trofeo-lcd-theme-designer.png",
+    "docs/screenshots/open-trofeo-lcd-theme-gallery.png",
     "docs/screenshots/theme-heritage-duality.png",
     "docs/screenshots/theme-matrix-green.png",
     "docs/screenshots/theme-verdant-bloom.png",

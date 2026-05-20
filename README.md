@@ -55,21 +55,25 @@ DEB/RPM/portable packaging notes are available in `docs/linux-packaging.md`.
 
 Application UI:
 
+![Open Trofeo LCD Theme Gallery](docs/screenshots/open-trofeo-lcd-theme-gallery.png)
+
+![Open Trofeo LCD Theme Designer](docs/screenshots/open-trofeo-lcd-theme-designer.png)
+
 ![Open Trofeo LCD Animation Studio](docs/screenshots/open-trofeo-lcd-animation-studio.png)
 
 Theme previews rendered from bundled starter themes:
 
-![Verdant Bloom theme preview](docs/screenshots/theme-verdant-bloom.png)
+![Obsidian Pulse theme preview](docs/screenshots/theme-obsidian-pulse.png)
+
+![Orbital Relay theme preview](docs/screenshots/theme-orbital-relay.png)
 
 ![Heritage Duality theme preview](docs/screenshots/theme-heritage-duality.png)
+
+![Verdant Bloom theme preview](docs/screenshots/theme-verdant-bloom.png)
 
 ![Matrix Green theme preview](docs/screenshots/theme-matrix-green.png)
 
 ![Wolfstorm Forge theme preview](docs/screenshots/theme-wolfstorm-forge.png)
-
-![Orbital Relay theme preview](docs/screenshots/theme-orbital-relay.png)
-
-![Obsidian Pulse theme preview](docs/screenshots/theme-obsidian-pulse.png)
 
 ## Support
 
