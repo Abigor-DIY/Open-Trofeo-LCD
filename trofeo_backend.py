@@ -2629,13 +2629,16 @@ class ReplayController:
     def set_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         with self.lock:
             restart_required = False
+            capture_config_changed = False
 
             if "pcap_path" in payload:
                 self.cfg.pcap_path = to_abs(self.cfg.workdir, str(payload["pcap_path"]))
                 restart_required = True
+                capture_config_changed = True
             if "frame_index" in payload:
                 self.cfg.frame_index = int(payload["frame_index"])
                 restart_required = True
+                capture_config_changed = True
             if "ack_timeout_ms" in payload:
                 self.cfg.ack_timeout_ms = max(1, int(payload["ack_timeout_ms"]))
                 restart_required = True
@@ -2687,7 +2690,8 @@ class ReplayController:
                     restart=False,
                 )
 
-            self.scan_capture()
+            if capture_config_changed:
+                self.scan_capture()
             if restart_required and self.proc is not None and self.proc.poll() is None:
                 return self.restart_loop()
             return {
@@ -3120,11 +3124,11 @@ def main() -> None:
         raise RuntimeError(f"Brak skryptu static overlay worker: {cfg.trcc_static_overlay_script}")
     if not cfg.trcc_animation_script.exists():
         raise RuntimeError(f"Brak skryptu animation worker: {cfg.trcc_animation_script}")
-    if not cfg.pcap_path.exists():
-        raise RuntimeError(f"Brak pliku pcap: {cfg.pcap_path}")
-
     controller = ReplayController(cfg)
-    controller.scan_capture()
+    if cfg.pcap_path.exists():
+        controller.scan_capture()
+    else:
+        controller.last_error = f"legacy replay PCAP not found: {cfg.pcap_path}"
 
     ApiHandler.controller = controller
     try:
@@ -3167,7 +3171,8 @@ def main() -> None:
 
     print(
         f"[{now_iso()}] backend start http://{cfg.host}:{cfg.port} "
-        f"pcap={cfg.pcap_path} frame={cfg.frame_index} frames={controller.frame_count}",
+        f"pcap={cfg.pcap_path} frame={cfg.frame_index} frames={controller.frame_count} "
+        f"display_backend={cfg.display_backend}",
         flush=True,
     )
 
