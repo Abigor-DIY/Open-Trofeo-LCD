@@ -1318,13 +1318,43 @@ def _get_monitor_background(alpha=MONITOR_NOISE_ALPHA):
 
 def _get_monitor_packet_template():
     """
-    Load the first known-good frame packet layout from dzis.pcapng.
-    Headers from this capture are reused verbatim in monitor mode.
+    Load the first known-good frame packet layout.
+
+    Runtime builds prefer the compact bundled template extracted from the
+    Windows capture. Source checkouts can still fall back to dzis.pcapng.
+    Headers from this capture are reused verbatim in monitor/static mode.
     """
     global _MONITOR_PACKET_TEMPLATE
 
     if _MONITOR_PACKET_TEMPLATE is not None:
         return _MONITOR_PACKET_TEMPLATE
+
+    template_path = Path(__file__).resolve().parent / "assets" / "transport" / "trofeo_1920x462_packet_template.bin"
+    if template_path.exists():
+        try:
+            data = template_path.read_bytes()
+            if data[:8] != b"OTTPKT1\n":
+                raise ValueError("bad template magic")
+            offset = 8
+            if offset + 2 > len(data):
+                raise ValueError("missing packet count")
+            count = int.from_bytes(data[offset:offset + 2], "little")
+            offset += 2
+            packets = []
+            for _ in range(count):
+                if offset + 2 > len(data):
+                    raise ValueError("truncated packet length")
+                packet_len = int.from_bytes(data[offset:offset + 2], "little")
+                offset += 2
+                if packet_len <= 0 or offset + packet_len > len(data):
+                    raise ValueError("invalid packet length")
+                packets.append(bytes(data[offset:offset + packet_len]))
+                offset += packet_len
+            if packets:
+                _MONITOR_PACKET_TEMPLATE = packets
+                return _MONITOR_PACKET_TEMPLATE
+        except Exception:
+            _MONITOR_PACKET_TEMPLATE = []
 
     pcap_path = Path(__file__).resolve().with_name("dzis.pcapng")
     if not pcap_path.exists():
@@ -1614,7 +1644,7 @@ def main():
     parser.add_argument(
         '--use-packet-template',
         action='store_true',
-        help='Reuse packet templates from dzis.pcapng when available (diagnostics only)',
+        help='Reuse packet templates from bundled capture/dzis.pcapng when available',
     )
     parser.add_argument(
         '--ack-every-packet',
@@ -1752,7 +1782,6 @@ def main():
         if args.frame_retries == 0:
             args.frame_retries = 1
         args.reconnect_on_fail = True
-        args.usb_reset_on_fail = True
         args.init_strict = False
         if args.loop:
             args.skip_unchanged = True
@@ -1797,8 +1826,7 @@ def main():
 
     image_packet_template = []
     if args.trcc_compatible and args.image and not args.monitor:
-        if args.use_packet_template:
-            image_packet_template = _get_monitor_packet_template()
+        image_packet_template = _get_monitor_packet_template()
         if args.header_size_override is None:
             args.header_size_override = TRCC_COMPAT_JPEG_SIZE
         # For templated LY packets, pad only to the payload capacity encoded in
@@ -2010,7 +2038,7 @@ def main():
         elif args.monitor:
             print("Tryb monitorowania systemu (Ctrl+C aby zakończyć)...")
             frames_sent = 0
-            packet_template = _get_monitor_packet_template() if args.use_packet_template else []
+            packet_template = _get_monitor_packet_template()
             while args.max_frames == 0 or frames_sent < args.max_frames:
                 global _MONITOR_FITTED_ALPHA
                 target_header_size = TRCC_COMPAT_JPEG_SIZE

@@ -52,6 +52,7 @@ REQUIRED_FLATPAK_SKIPS = {
 }
 
 REQUIRED_PACKAGE_FILES = {
+    "assets/transport/trofeo_1920x462_packet_template.bin",
     "packaging/linux/open-trofeo-lcd",
     "packaging/deb/README.md",
     "packaging/deb/debian/changelog",
