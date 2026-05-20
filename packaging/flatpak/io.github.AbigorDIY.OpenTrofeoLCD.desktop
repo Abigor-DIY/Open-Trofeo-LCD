@@ -1,10 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Open Trofeo LCD
+GenericName=LCD display controller
 Comment=Linux driver and theme editor for Thermalright Trofeo LCD
 Exec=open-trofeo-lcd
 Icon=io.github.AbigorDIY.OpenTrofeoLCD
 Terminal=false
-Categories=Utility;
+Categories=Settings;HardwareSettings;
 Keywords=LCD;Thermalright;Trofeo;Driver;Theme;
 StartupNotify=true

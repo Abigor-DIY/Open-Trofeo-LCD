@@ -63,6 +63,7 @@ REQUIRED_PACKAGE_FILES = {
     "packaging/rpm/README.md",
     "packaging/rpm/open-trofeo-lcd.spec",
     "scripts/build_deb_package.sh",
+    "scripts/cleanup_linux_test_installs.sh",
     "scripts/build_rpm_package.sh",
     "scripts/build_portable_release.sh",
     "docs/linux-packaging.md",
@@ -74,6 +75,7 @@ REQUIRED_EXECUTABLES = {
     "packaging/deb/debian/open-trofeo-lcd.postinst",
     "packaging/deb/debian/open-trofeo-lcd.postrm",
     "scripts/build_deb_package.sh",
+    "scripts/cleanup_linux_test_installs.sh",
     "scripts/build_rpm_package.sh",
     "scripts/build_portable_release.sh",
 }
@@ -99,6 +101,9 @@ def extract_repo_path(url_or_path: str) -> str:
     marker = "/Open-Trofeo-LCD/main/"
     if marker in value:
         return value.split(marker, 1)[1]
+    screenshot_marker = "/docs/screenshots/"
+    if screenshot_marker in value:
+        return "docs/screenshots/" + value.split(screenshot_marker, 1)[1]
     return value.lstrip("/")
 
 

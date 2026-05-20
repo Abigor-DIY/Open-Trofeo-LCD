@@ -14,3 +14,6 @@ override_dh_install:
 	dh_install
 	mkdir -p debian/open-trofeo-lcd/usr/share/open-trofeo-lcd
 	printf '%s\n' 'deb-$(DEB_VERSION)' > debian/open-trofeo-lcd/usr/share/open-trofeo-lcd/.package-source-version
+
+override_dh_builddeb:
+	dh_builddeb -- --root-owner-group

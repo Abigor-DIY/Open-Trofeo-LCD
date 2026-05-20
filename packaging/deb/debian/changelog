@@ -4,5 +4,7 @@ open-trofeo-lcd (0.1.0~dev20260519) noble; urgency=medium
   * Install six polished starter themes and refreshed previews.
   * Depend on CAVA/OpenCV/Numpy for the current EQ and animation workflows.
   * Keep TRCC as an optional acceleration path; use native PyUSB by default.
+  * Refresh AppStream metadata, Discover screenshots and package icon wiring.
+  * Build binary packages with root-owned payload files.
 
- -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Tue, 19 May 2026 19:30:00 +0200
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Wed, 20 May 2026 07:45:00 +0200

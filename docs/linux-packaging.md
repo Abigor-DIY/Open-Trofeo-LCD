@@ -77,7 +77,26 @@ Ubuntu Software, KDE Discover and other AppStream-aware package managers use
 `packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.metainfo.xml` for the app
 summary, icon and screenshots. Keep `docs/screenshots/*.png` current before a
 PPA upload, because the metainfo points package managers to those GitHub-hosted
-images.
+images. Those URLs must resolve publicly from the exact branch or tag used in
+the metainfo; otherwise Discover can list the package without useful previews,
+or hide the app in some filtered views until the cache is refreshed.
+
+Useful local checks after installing from a PPA:
+
+```bash
+appstreamcli search Trofeo
+appstreamcli dump io.github.AbigorDIY.OpenTrofeoLCD
+desktop-file-validate /usr/share/applications/io.github.AbigorDIY.OpenTrofeoLCD.desktop
+appstreamcli validate --no-net /usr/share/metainfo/io.github.AbigorDIY.OpenTrofeoLCD.metainfo.xml
+```
+
+If KDE Discover still does not refresh the entry after an upgrade, remove stale
+user launchers and caches, then rebuild the KDE service cache:
+
+```bash
+scripts/cleanup_linux_test_installs.sh
+scripts/cleanup_linux_test_installs.sh --apply
+```
 
 ## RPM Skeleton
 

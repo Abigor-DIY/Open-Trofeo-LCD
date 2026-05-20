@@ -18711,6 +18711,8 @@ def main() -> None:
 
     app = QApplication([])
     app.setApplicationName("Open Trofeo LCD")
+    app.setDesktopFileName("io.github.AbigorDIY.OpenTrofeoLCD")
+    app.setWindowIcon(QIcon.fromTheme("io.github.AbigorDIY.OpenTrofeoLCD"))
     win = TrofeoGui(base_url=args.url)
     win.show()
     app.exec()

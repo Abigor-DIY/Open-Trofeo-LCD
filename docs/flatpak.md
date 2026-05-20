@@ -41,6 +41,15 @@ flatpak install --user ./open-trofeo-lcd-0.1.0-dev.flatpak
 flatpak run io.github.AbigorDIY.OpenTrofeoLCD
 ```
 
+Remove the local Flatpak test build before testing the DEB/PPA package, or KDE
+Discover and the application launcher may keep showing the Flatpak export:
+
+```bash
+flatpak uninstall --user io.github.AbigorDIY.OpenTrofeoLCD
+rm -rf ~/.var/app/io.github.AbigorDIY.OpenTrofeoLCD
+kbuildsycoca6
+```
+
 ## Portable Tarball
 
 The portable package is source-based: it contains the tracked checkout, bundled
