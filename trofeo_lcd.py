@@ -1697,6 +1697,11 @@ def main():
         help='Hard reset the USB device before sending a frame',
     )
     parser.add_argument(
+        '--usb-reset-on-fail',
+        action='store_true',
+        help='Hard reset and reconnect the USB device before retrying a failed frame',
+    )
+    parser.add_argument(
         '--save-jpeg',
         help='Save the generated JPEG payload to a file for comparison/debugging',
     )
@@ -1742,6 +1747,7 @@ def main():
         if args.frame_retries == 0:
             args.frame_retries = 1
         args.reconnect_on_fail = True
+        args.usb_reset_on_fail = True
         args.init_strict = False
         if args.loop:
             args.skip_unchanged = True
@@ -1854,7 +1860,14 @@ def main():
             if attempt >= attempts:
                 return False
             print(f"BŁĄD wysyłania ({label}), ponawiam {attempt}/{attempts - 1}...")
-            if args.reconnect_on_fail:
+            if args.usb_reset_on_fail:
+                print("Resetuję USB przed ponowieniem...")
+                if not lcd.reset_device():
+                    print("BŁĄD resetu USB przed ponowieniem")
+                    if not reconnect_device():
+                        print("BŁĄD reconnect po nieudanym resecie")
+                        return False
+            elif args.reconnect_on_fail:
                 if not reconnect_device():
                     print("BŁĄD reconnect po nieudanej wysyłce")
                     return False

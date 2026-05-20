@@ -7,5 +7,6 @@ open-trofeo-lcd (0.1.0~dev20260519) noble; urgency=medium
   * Refresh AppStream metadata, Discover screenshots and package icon wiring.
   * Build binary packages with root-owned payload files.
   * Allow the packaged backend to start without the legacy Windows PCAP file.
+  * Reset USB before retrying failed native transfers and report real package version in the UI.
 
- -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Wed, 20 May 2026 08:10:00 +0200
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Wed, 20 May 2026 08:25:00 +0200

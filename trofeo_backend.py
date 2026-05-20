@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import random
+import re
 import signal
 import subprocess
 import sys
@@ -50,6 +51,7 @@ LIVE_REFRESH_LOG_INTERVAL_S = 5.0
 LIVE_REFRESH_SLOW_STAGE_MS = 120.0
 WINDOWS_CAPTURE_INTER_PACKET_DELAY_S = 0.0005
 WINDOWS_CAPTURE_ACK_TIMEOUT_MS = 120
+NATIVE_WORKER_FIRST_SEND_TIMEOUT_S = 24.0
 
 
 def now_iso() -> str:
@@ -2355,6 +2357,10 @@ class ReplayController:
         time.sleep(1.0 if killed else 0.35)
 
         ensure_parent(self.cfg.child_log_file)
+        try:
+            child_log_offset = self.cfg.child_log_file.stat().st_size
+        except Exception:
+            child_log_offset = 0
         child_log = open(self.cfg.child_log_file, "a", encoding="utf-8")
         child_log.write(f"\n[{now_iso()}] start native static image {image_path}\n")
         child_log.flush()
@@ -2365,6 +2371,7 @@ class ReplayController:
             "--windows-capture-profile",
             "--recover-before-send",
             "--drain-in-before-send",
+            "--usb-reset-on-fail",
             "--ack-at-end-only",
             "--ack-timeout-ms",
             str(WINDOWS_CAPTURE_ACK_TIMEOUT_MS),
@@ -2399,17 +2406,53 @@ class ReplayController:
             child_log.close()
             raise
 
-        time.sleep(1.2)
-        self._cleanup_proc_locked()
-        if self.proc is None or self.proc.poll() is not None:
-            tail = ""
-            try:
-                tail = self.cfg.child_log_file.read_text(encoding="utf-8", errors="replace")[-1200:]
-            except Exception:
-                pass
-            raise RuntimeError(f"native static worker failed to start: {tail.strip() or 'unknown error'}")
+        self._wait_native_worker_first_transfer(child_log_offset)
 
         return {"running": True, "pid": self.proc.pid, "mode": self.mode}
+
+    def _read_child_log_since(self, offset: int, max_chars: int = 6000) -> str:
+        try:
+            with self.cfg.child_log_file.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(max(0, offset))
+                text = handle.read()
+            return text[-max_chars:]
+        except Exception:
+            return ""
+
+    def _wait_native_worker_first_transfer(self, log_offset: int) -> None:
+        deadline = time.monotonic() + NATIVE_WORKER_FIRST_SEND_TIMEOUT_S
+        last_text = ""
+        while time.monotonic() < deadline:
+            text = self._read_child_log_since(log_offset)
+            if text:
+                last_text = text
+                if "BŁĄD wysyłania, zatrzymuję pętlę" in text:
+                    self._stop_display_worker(timeout=2.0)
+                    raise RuntimeError(
+                        "native static worker failed initial USB transfer: "
+                        + (text.strip()[-1600:] or "unknown error")
+                    )
+                for line in reversed(text.splitlines()):
+                    if not line.startswith("[loop-send]"):
+                        continue
+                    match = re.search(r"send_ms=(\d+)", line)
+                    if match and int(match.group(1)) < 3000:
+                        return
+
+            self._cleanup_proc_locked()
+            if self.proc is None or self.proc.poll() is not None:
+                self._stop_display_worker(timeout=2.0)
+                raise RuntimeError(
+                    "native static worker failed to start: "
+                    + (last_text.strip()[-1600:] or "unknown error")
+                )
+            time.sleep(0.15)
+
+        self._stop_display_worker(timeout=2.0)
+        raise RuntimeError(
+            "native static worker did not confirm first USB transfer: "
+            + (last_text.strip()[-1600:] or "timeout without worker output")
+        )
 
     def _start_trcc_static_overlay_worker(
         self,

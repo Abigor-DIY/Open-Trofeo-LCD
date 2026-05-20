@@ -283,6 +283,27 @@ UI_LANGUAGES = {
     "English": "en",
     "Polski": "pl",
 }
+
+
+def detect_app_version() -> str:
+    candidates = [
+        Path.cwd() / ".system-package-version",
+        Path.cwd() / ".package-source-version",
+        Path("/usr/share/open-trofeo-lcd/.package-source-version"),
+    ]
+    for path in candidates:
+        try:
+            raw = path.read_text(encoding="utf-8").strip()
+        except Exception:
+            continue
+        if not raw:
+            continue
+        if raw.startswith("version="):
+            raw = raw.split("=", 1)[1].strip()
+        if raw.startswith("deb-"):
+            raw = raw[4:]
+        return raw if raw.startswith("v") else f"v{raw}"
+    return "dev"
 PROJECT_REPOSITORY_URL = "https://github.com/Abigor-DIY/Open-Trofeo-LCD"
 PROJECT_SPONSOR_URL = "https://github.com/sponsors/Abigor-DIY"
 
@@ -2033,6 +2054,7 @@ class TrofeoGui(QMainWindow):
         self._animation_thumbnail_in_flight = False
         self._animation_thumbnail_pending_jobs: dict[tuple[str, int], dict[str, Any]] = {}
         self._image_thumbnail_cache: dict[tuple[str, int], QPixmap] = {}
+        self.app_version_text = detect_app_version()
         self._preview_request_in_flight = False
         self._preview_request_queued = False
         self._preview_request_seq = 0
@@ -2787,7 +2809,7 @@ class TrofeoGui(QMainWindow):
         sidebar_footer_layout = QVBoxLayout(self.sidebar_footer)
         sidebar_footer_layout.setContentsMargins(14, 14, 14, 14)
         sidebar_footer_layout.setSpacing(4)
-        self.sidebar_version_label = QLabel("v1.0.0")
+        self.sidebar_version_label = QLabel(self.app_version_text)
         self.sidebar_version_label.setObjectName("sidebarFooterTitle")
         self.sidebar_footer_note = QLabel("Open Trofeo LCD\nLinux Open Driver")
         self.sidebar_footer_note.setObjectName("sidebarFooterMeta")
@@ -3247,7 +3269,7 @@ class TrofeoGui(QMainWindow):
         system_info_grid.setColumnStretch(1, 1)
         self.system_os_value = QLabel(platform.system())
         self.system_framework_value = QLabel("Qt 6 / PySide6")
-        self.system_app_version_value = QLabel("v1.0.0")
+        self.system_app_version_value = QLabel(self.app_version_text)
         self.system_uptime_value = QLabel("-")
         self.system_hostname_value = QLabel(socket.gethostname())
         self.system_restart_value = QLabel("-")
