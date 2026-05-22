@@ -1,0 +1,17 @@
+[Unit]
+Description=Open Trofeo LCD Backend API
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=__WORKDIR__
+EnvironmentFile=__WORKDIR__/.trofeo-backend.env
+ExecStart=/bin/bash __WORKDIR__/scripts/run_backend_service.sh
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

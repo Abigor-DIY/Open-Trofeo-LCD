@@ -1,0 +1,3932 @@
+#!/usr/bin/env python3
+"""
+Open Trofeo LCD Backend (Etap 2.2)
+
+Local HTTP/JSON control plane for the LCD runtime.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import random
+import re
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import shutil
+import queue
+from copy import deepcopy
+from dataclasses import dataclass, asdict
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+from PIL import Image, ImageChops, ImageEnhance
+from replay_from_pcap import parse_usbpcap_bulk_payloads, extract_init_and_frames
+from stats_sources import StatsProvider
+from theme_renderer import render_theme_document
+from theme_schema import (
+    KNOWN_STAT_SOURCES,
+    THEME_SCHEMA_VERSION,
+    ThemeDocument,
+    load_theme_document,
+    normalize_theme_document,
+    save_theme_document,
+)
+
+DEFAULT_LIVE_REFRESH_INTERVAL_S = 1.0
+FAST_VISUAL_REFRESH_INTERVAL_S = 0.25
+FAST_AUDIO_EQ_REFRESH_INTERVAL_S = 0.075
+MIN_LIVE_REFRESH_INTERVAL_S = 0.15
+FAST_VISUAL_FULL_STATS_INTERVAL_S = 1.0
+MEDIA_TRANSIENT_GRACE_S = 8.0
+LIVE_REFRESH_LOG_INTERVAL_S = 5.0
+LIVE_REFRESH_SLOW_STAGE_MS = 120.0
+WINDOWS_CAPTURE_INTER_PACKET_DELAY_S = 0.0005
+WINDOWS_CAPTURE_ACK_TIMEOUT_MS = 120
+TRCC_ANIMATION_TARGET_FPS = 15.0
+TRCC_ANIMATION_TARGET_FRAME_MS = int(round(1000.0 / TRCC_ANIMATION_TARGET_FPS))
+
+
+def now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def ensure_parent(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def to_abs(base: Path, raw_path: str) -> Path:
+    p = Path(raw_path).expanduser()
+    return p if p.is_absolute() else (base / p)
+
+
+@dataclass
+class BackendConfig:
+    workdir: Path
+    pcap_path: Path
+    frame_index: int
+    host: str
+    port: int
+    ack_timeout_ms: int
+    inter_packet_delay: float
+    frame_delay: float
+    connect_retries: int
+    connect_retry_delay: float
+    python_bin: str
+    replay_script: Path
+    trofeo_script: Path
+    trcc_static_script: Path
+    trcc_static_overlay_script: Path
+    trcc_animation_script: Path
+    child_log_file: Path
+    themes_file: Path
+    playlist_file: Path
+    display_backend: str
+    trcc_bin: str
+    brightness_percent: int = 100
+
+    def as_json(self) -> dict[str, Any]:
+        data = asdict(self)
+        for key in (
+            "workdir",
+            "pcap_path",
+            "replay_script",
+            "trofeo_script",
+            "trcc_static_script",
+            "trcc_static_overlay_script",
+            "trcc_animation_script",
+            "child_log_file",
+            "themes_file",
+            "playlist_file",
+        ):
+            data[key] = str(data[key])
+        return data
+
+
+class ReplayController:
+    def __init__(self, cfg: BackendConfig):
+        self.cfg = cfg
+        self.lock = threading.RLock()
+        self.display_lock = threading.RLock()
+        self.runtime_dir = Path.home() / ".local/state/open-trofeo-lcd" / "runtime"
+        self.runtime_dir.mkdir(parents=True, exist_ok=True)
+        self.proc: subprocess.Popen | None = None
+        self.proc_started_at: float | None = None
+        self.mode = "idle"
+        self.last_error: str | None = None
+        self.last_exit_code: int | None = None
+        self.init_present = False
+        self.frame_count = 0
+        self.last_capture_scan_at: str | None = None
+        self.themes: dict[str, dict[str, Any]] = {}
+        self.themes_file_mtime_ns: int | None = None
+        self.playlist: list[dict[str, Any]] = []
+        self.playlist_thread: threading.Thread | None = None
+        self.playlist_stop = threading.Event()
+        self.playlist_started_at: float | None = None
+        self.playlist_index = 0
+        self.live_theme_thread: threading.Thread | None = None
+        self.live_theme_stop = threading.Event()
+        self.live_theme_started_at: float | None = None
+        self.active_theme_path: str | None = None
+        self.active_theme_document: dict[str, Any] | None = None
+        self.active_theme_live_refresh = True
+        self.live_theme_metrics: dict[str, Any] = {
+            "refresh_count": 0,
+            "last_refresh_at": None,
+            "last_refresh_age_s": None,
+            "last_reason": None,
+            "last_state": None,
+            "last_title": None,
+            "last_overlay_render_ms": None,
+            "last_compose_ms": None,
+            "last_full_render_ms": None,
+            "last_delay_ms": None,
+            "slow_refresh_count": 0,
+            "last_error": None,
+        }
+        self.stats_provider = StatsProvider()
+        self._load_themes()
+        self._seed_themes_from_directory()
+        self._load_playlist()
+
+    def _refresh_mode_locked(self) -> None:
+        playlist_running = self.playlist_thread is not None and self.playlist_thread.is_alive()
+        proc_running = self.proc is not None and self.proc.poll() is None
+        live_theme_running = proc_running and self.live_theme_thread is not None and self.live_theme_thread.is_alive()
+        if playlist_running:
+            self.mode = "playlist"
+        elif live_theme_running:
+            self.mode = "theme-live"
+        elif not proc_running:
+            self.mode = "idle"
+
+    def _log(self, msg: str) -> None:
+        print(f"[{now_iso()}] {msg}", flush=True)
+
+    def _terminate_display_process(
+        self,
+        proc: subprocess.Popen,
+        *,
+        pid: int,
+        timeout: float,
+        label: str,
+    ) -> int | None:
+        self._log(f"stop {label} pid={pid}")
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            return proc.poll()
+        except Exception as exc:
+            self._log(f"terminate {label} pid={pid} failed: {exc}")
+        try:
+            proc.wait(timeout=max(0.1, timeout))
+        except subprocess.TimeoutExpired:
+            self._log(f"kill {label} pid={pid}")
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                return proc.poll()
+            except Exception as exc:
+                self._log(f"kill {label} pid={pid} failed: {exc}")
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self._log(f"{label} pid={pid} did not exit after kill; detached")
+        return proc.poll()
+
+    def _reset_live_theme_metrics(self) -> None:
+        with self.lock:
+            self.live_theme_metrics = {
+                "refresh_count": 0,
+                "last_refresh_at": None,
+                "last_refresh_age_s": None,
+                "last_reason": None,
+                "last_state": None,
+                "last_title": None,
+                "last_overlay_render_ms": None,
+                "last_compose_ms": None,
+                "last_full_render_ms": None,
+                "last_delay_ms": None,
+                "slow_refresh_count": 0,
+                "last_error": None,
+            }
+
+    def _record_live_theme_metrics(
+        self,
+        *,
+        reason: str | None,
+        media_cache: dict[str, str],
+        overlay_render_ms: float | None,
+        compose_ms: float | None,
+        full_render_ms: float | None,
+        delay_ms: int | None,
+    ) -> None:
+        slow = any(
+            value is not None and value >= LIVE_REFRESH_SLOW_STAGE_MS
+            for value in (overlay_render_ms, compose_ms, full_render_ms)
+        )
+        acquired = self.lock.acquire(timeout=0.02)
+        try:
+            metrics = dict(self.live_theme_metrics)
+            metrics["refresh_count"] = int(metrics.get("refresh_count") or 0) + 1
+            metrics["last_refresh_at"] = time.time()
+            metrics["last_refresh_age_s"] = 0.0
+            metrics["last_reason"] = reason
+            metrics["last_state"] = str(media_cache.get("media_state", ""))
+            metrics["last_title"] = str(media_cache.get("media_title", ""))[:128]
+            metrics["last_overlay_render_ms"] = None if overlay_render_ms is None else round(overlay_render_ms, 3)
+            metrics["last_compose_ms"] = None if compose_ms is None else round(compose_ms, 3)
+            metrics["last_full_render_ms"] = None if full_render_ms is None else round(full_render_ms, 3)
+            metrics["last_delay_ms"] = delay_ms
+            if slow:
+                metrics["slow_refresh_count"] = int(metrics.get("slow_refresh_count") or 0) + 1
+            metrics["last_error"] = None
+            self.live_theme_metrics = metrics
+        finally:
+            if acquired:
+                self.lock.release()
+
+    def _record_live_theme_error(self, error: str) -> None:
+        acquired = self.lock.acquire(timeout=0.02)
+        try:
+            metrics = dict(self.live_theme_metrics)
+            metrics["last_error"] = error
+            self.live_theme_metrics = metrics
+        finally:
+            if acquired:
+                self.lock.release()
+
+    def _runtime_temp_dir(self, prefix: str) -> Path:
+        self.runtime_dir.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix=prefix, dir=str(self.runtime_dir)))
+
+    def _runtime_temp_file(self, prefix: str, suffix: str) -> Path:
+        self.runtime_dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=str(self.runtime_dir))
+        os.close(fd)
+        return Path(tmp_name)
+
+    def _preview_runtime_dir(self) -> Path:
+        preview_dir = self.runtime_dir / "previews"
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        return preview_dir
+
+    def _theme_live_staging_dir(self) -> Path:
+        """Fixed paths for live theme PNGs so quick theme switches do not orphan TRCC workers."""
+        staging = self.runtime_dir / "theme-live-staging"
+        staging.mkdir(parents=True, exist_ok=True)
+        return staging
+
+    def _kill_orphan_display_helpers(self) -> list[int]:
+        patterns = [
+            str(self.cfg.workdir / "scripts/trcc_static_image.py"),
+            str(self.cfg.workdir / "scripts/trcc_static_overlay_image.py"),
+            str(self.cfg.workdir / "scripts/trcc_animated_image.py"),
+            str(self.cfg.workdir / "replay_from_pcap.py"),
+            str(self.cfg.workdir / "trofeo_lcd.py"),
+        ]
+        protected = {os.getpid()}
+        if self.proc is not None:
+            protected.add(self.proc.pid)
+        killed: list[int] = []
+        for pattern in patterns:
+            try:
+                payload = subprocess.check_output(
+                    ["pgrep", "-f", pattern],
+                    encoding="utf-8",
+                    stderr=subprocess.DEVNULL,
+                )
+            except subprocess.CalledProcessError:
+                continue
+            pids = [
+                int(line.strip())
+                for line in payload.splitlines()
+                if line.strip().isdigit() and int(line.strip()) not in protected
+            ]
+            if not pids:
+                continue
+            self._log(f"kill orphan display helpers for pattern={pattern}: {' '.join(str(pid) for pid in pids)}")
+            pending = list(dict.fromkeys(pids))
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                for pid in list(pending):
+                    try:
+                        os.kill(pid, sig)
+                    except ProcessLookupError:
+                        pending.remove(pid)
+                    except Exception:
+                        pass
+                deadline = time.time() + (0.8 if sig == signal.SIGTERM else 0.5)
+                while pending and time.time() < deadline:
+                    still_running: list[int] = []
+                    for pid in pending:
+                        try:
+                            os.kill(pid, 0)
+                            still_running.append(pid)
+                        except ProcessLookupError:
+                            killed.append(pid)
+                        except Exception:
+                            still_running.append(pid)
+                    pending = still_running
+                    if pending:
+                        time.sleep(0.08)
+                if not pending:
+                    break
+            killed.extend(pid for pid in pids if pid not in killed)
+        return sorted(set(killed))
+
+    def _preflight_trcc_display_start(self) -> None:
+        needs_recovery = self.cfg.display_backend == "trcc" and self.last_exit_code not in (None, 0, -15)
+        self._stop_display_worker()
+        killed = self._kill_orphan_display_helpers()
+        if needs_recovery:
+            self._recover_trcc_usb("previous TRCC worker exited with an error")
+        time.sleep(1.0 if killed else 0.35)
+
+    def _trcc_startup_tail_recoverable(self, startup_tail: str) -> bool:
+        lower = startup_tail.lower()
+        return (
+            "in use by another process" in lower
+            or "operation timed out" in lower
+            or "usbtimouterror" in lower
+            or "errno 110" in lower
+            or "failed to load" in lower
+            or "resolution is (0, 0)" in lower
+            or "handshake failed" in lower
+        )
+
+    def _recover_trcc_usb(self, reason: str) -> bool:
+        script = self.cfg.workdir / "scripts" / "trofeo_usb_recover.py"
+        if not script.exists():
+            self._log(f"skip TRCC USB recovery ({reason}): missing {script}")
+            return False
+        try:
+            trcc_python = self._resolve_trcc_python()
+        except Exception as exc:
+            self._log(f"skip TRCC USB recovery ({reason}): cannot resolve python: {exc}")
+            return False
+        self._log(f"TRCC USB recovery start: {reason}")
+        try:
+            result = subprocess.run(
+                [str(trcc_python), str(script), "--settle", "2.0"],
+                cwd=self.cfg.workdir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=8.0,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            self._log("TRCC USB recovery timed out")
+            return False
+        output = (result.stdout or "").strip()
+        if result.returncode == 0:
+            self._log(f"TRCC USB recovery ok: {output}")
+            return True
+        self._log(f"TRCC USB recovery failed rc={result.returncode}: {output}")
+        return False
+
+    def _load_themes(self) -> None:
+        with self.lock:
+            self.themes = {}
+            try:
+                if not self.cfg.themes_file.exists():
+                    self.themes_file_mtime_ns = None
+                    return
+                raw = json.loads(self.cfg.themes_file.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    for name, item in raw.items():
+                        if not isinstance(name, str) or not isinstance(item, dict):
+                            continue
+                        path = str(item.get("path", "")).strip()
+                        if not path:
+                            continue
+                        self.themes[name] = {
+                            "path": path,
+                            "raw_jpeg_passthrough": bool(item.get("raw_jpeg_passthrough", False)),
+                        }
+                try:
+                    self.themes_file_mtime_ns = self.cfg.themes_file.stat().st_mtime_ns
+                except Exception:
+                    self.themes_file_mtime_ns = None
+            except Exception as exc:
+                self.last_error = f"themes load failed: {exc}"
+
+    def _save_themes(self) -> None:
+        with self.lock:
+            ensure_parent(self.cfg.themes_file)
+            payload = json.dumps(self.themes, ensure_ascii=False, indent=2)
+            self.cfg.themes_file.write_text(payload + "\n", encoding="utf-8")
+            try:
+                self.themes_file_mtime_ns = self.cfg.themes_file.stat().st_mtime_ns
+            except Exception:
+                self.themes_file_mtime_ns = None
+
+    def _theme_name_from_file(self, path: Path) -> str:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                meta = raw.get("meta", {})
+                meta_name = meta.get("name") if isinstance(meta, dict) else ""
+                name = str(meta_name or raw.get("name") or raw.get("title") or "").strip()
+                if name:
+                    return name
+        except Exception:
+            pass
+        return path.stem.replace("_", " ").replace("-", " ").title()
+
+    def _repair_theme_paths_from_directory_locked(self) -> bool:
+        themes_dir = self.cfg.workdir / "themes"
+        if not themes_dir.exists() or not self.themes:
+            return False
+        repaired = False
+        by_name: dict[str, Path] = {}
+        for path in sorted(themes_dir.glob("*.json")):
+            by_name.setdefault(self._theme_name_from_file(path), path)
+        for name, item in list(self.themes.items()):
+            local_path = by_name.get(name)
+            if local_path is None:
+                continue
+            current = to_abs(self.cfg.workdir, str(item.get("path", ""))).expanduser()
+            try:
+                current_resolved = current.resolve()
+                workdir_resolved = self.cfg.workdir.resolve()
+                is_inside_workdir = current_resolved == workdir_resolved or workdir_resolved in current_resolved.parents
+            except Exception:
+                is_inside_workdir = False
+            current_matches_name = False
+            if current.exists():
+                try:
+                    current_matches_name = self._theme_name_from_file(current) == name
+                except Exception:
+                    current_matches_name = False
+            if current.exists() and is_inside_workdir and current_matches_name:
+                continue
+            rel_path = local_path.relative_to(self.cfg.workdir).as_posix()
+            if item.get("path") != rel_path:
+                item["path"] = rel_path
+                repaired = True
+        return repaired
+
+    def _unique_theme_name_locked(self, name: str) -> str:
+        base = str(name).strip() or "Theme"
+        if base not in self.themes:
+            return base
+        idx = 2
+        while f"{base} {idx}" in self.themes:
+            idx += 1
+        return f"{base} {idx}"
+
+    def _seed_themes_from_directory(self) -> None:
+        with self.lock:
+            if self.themes:
+                if self._repair_theme_paths_from_directory_locked():
+                    self._save_themes()
+                return
+            themes_dir = self.cfg.workdir / "themes"
+            if not themes_dir.exists():
+                return
+            for path in sorted(themes_dir.glob("*.json")):
+                rel_path = path.relative_to(self.cfg.workdir).as_posix()
+                name = self._unique_theme_name_locked(self._theme_name_from_file(path))
+                self.themes[name] = {
+                    "path": rel_path,
+                    "raw_jpeg_passthrough": False,
+                }
+            if self.themes:
+                self._save_themes()
+
+    def _reload_themes_if_changed(self) -> None:
+        with self.lock:
+            current_mtime_ns: int | None = None
+            try:
+                if self.cfg.themes_file.exists():
+                    current_mtime_ns = self.cfg.themes_file.stat().st_mtime_ns
+            except Exception:
+                current_mtime_ns = None
+            if current_mtime_ns != self.themes_file_mtime_ns:
+                self._load_themes()
+
+    def list_themes(self) -> dict[str, Any]:
+        acquired = self.lock.acquire(timeout=0.25)
+        if acquired:
+            try:
+                current_mtime_ns: int | None = None
+                try:
+                    if self.cfg.themes_file.exists():
+                        current_mtime_ns = self.cfg.themes_file.stat().st_mtime_ns
+                except Exception:
+                    current_mtime_ns = None
+                if current_mtime_ns != self.themes_file_mtime_ns:
+                    self._load_themes()
+                themes_snapshot = deepcopy(self.themes)
+            finally:
+                self.lock.release()
+        else:
+            themes_snapshot = deepcopy(self.themes)
+
+        items = []
+        for name in sorted(themes_snapshot.keys()):
+            item = themes_snapshot[name]
+            resolved = to_abs(self.cfg.workdir, item["path"])
+            theme_type = "image"
+            if resolved.suffix.lower() == ".json":
+                theme_type = "theme-doc"
+            items.append(
+                {
+                    "name": name,
+                    "path": item["path"],
+                    "raw_jpeg_passthrough": bool(item.get("raw_jpeg_passthrough", False)),
+                    "type": theme_type,
+                    "exists": resolved.exists(),
+                    "resolved_path": str(resolved),
+                }
+            )
+        return {"count": len(items), "items": items}
+
+    def add_theme(self, name: str, path: str, raw_jpeg_passthrough: bool = False) -> dict[str, Any]:
+        self._reload_themes_if_changed()
+        with self.lock:
+            name = str(name).strip()
+            path = str(path).strip()
+            if not name:
+                raise RuntimeError("theme name is required")
+            if not path:
+                raise RuntimeError("theme path is required")
+            self.themes[name] = {
+                "path": path,
+                "raw_jpeg_passthrough": bool(raw_jpeg_passthrough),
+            }
+            self._save_themes()
+            return {"name": name, "theme": self.themes[name]}
+
+    def remove_theme(self, name: str) -> dict[str, Any]:
+        self._reload_themes_if_changed()
+        with self.lock:
+            name = str(name).strip()
+            if name not in self.themes:
+                raise RuntimeError(f"theme not found: {name}")
+            removed = self.themes.pop(name)
+            self._save_themes()
+            return {"name": name, "removed": removed}
+
+    def apply_theme(self, name: str, resume_loop: bool = False, timeout_s: float = 30.0) -> dict[str, Any]:
+        self._reload_themes_if_changed()
+        with self.lock:
+            name = str(name).strip()
+            theme = self.themes.get(name)
+            if theme is None:
+                raise RuntimeError(f"theme not found: {name}")
+            theme_path = str(theme["path"])
+            raw_jpeg_passthrough = bool(theme.get("raw_jpeg_passthrough", False))
+        resolved = to_abs(self.cfg.workdir, theme_path)
+        if resolved.suffix.lower() == ".json":
+            return self.send_theme_doc(
+                path=theme_path,
+                resume_loop=resume_loop,
+                timeout_s=timeout_s,
+            )
+        return self.send_image(
+            image_path=theme_path,
+            raw_jpeg_passthrough=raw_jpeg_passthrough,
+            timeout_s=timeout_s,
+            resume_loop=resume_loop,
+        )
+
+    def get_theme_schema(self) -> dict[str, Any]:
+        return {
+            "schema_version": THEME_SCHEMA_VERSION,
+            "stat_sources": sorted(KNOWN_STAT_SOURCES),
+        }
+
+    def load_theme_doc(self, path: str) -> dict[str, Any]:
+        target = to_abs(self.cfg.workdir, path)
+        if not target.exists():
+            raise RuntimeError(f"theme file not found: {target}")
+        doc = load_theme_document(target)
+        return {
+            "path": str(path),
+            "resolved_path": str(target),
+            "document": doc.data,
+            "theme_name": doc.name,
+        }
+
+    def save_theme_doc(self, path: str, document: dict[str, Any]) -> dict[str, Any]:
+        target = to_abs(self.cfg.workdir, path)
+        saved = save_theme_document(target, document)
+        doc = load_theme_document(saved)
+        return {
+            "path": str(path),
+            "resolved_path": str(saved),
+            "document": doc.data,
+            "theme_name": doc.name,
+            "bytes": saved.stat().st_size,
+        }
+
+    def _render_theme_doc_to_file(
+        self,
+        path: str | None = None,
+        document: dict[str, Any] | None = None,
+        out_path: str | None = None,
+        stats_override: dict[str, str] | None = None,
+        output_brightness: bool = False,
+    ) -> dict[str, Any]:
+        if document is not None:
+            theme = ThemeDocument(normalize_theme_document(document))
+            base_dir = self.cfg.workdir if path is None else to_abs(self.cfg.workdir, path).parent
+        else:
+            if not path:
+                raise RuntimeError("theme path is required")
+            source = to_abs(self.cfg.workdir, path)
+            if not source.exists():
+                raise RuntimeError(f"theme file not found: {source}")
+            theme = load_theme_document(source)
+            base_dir = source.parent
+
+        image = render_theme_document(
+            theme,
+            base_dir=base_dir,
+            stats_provider=self.stats_provider,
+            stats_override=stats_override,
+        )
+        if output_brightness:
+            image = self._apply_output_brightness(image)
+        if out_path:
+            out_file = self._save_image_atomic(image, out_path)
+        else:
+            fd, tmp_name = tempfile.mkstemp(prefix="trofeo-theme-", suffix=".png", dir=str(self._preview_runtime_dir()))
+            os.close(fd)
+            out_file = Path(tmp_name)
+            image.save(out_file)
+        return {
+            "image_path": str(out_file),
+            "theme_name": theme.name,
+            "width": image.width,
+            "height": image.height,
+        }
+
+    def _image_matches_file(self, image: Image.Image, path: Path) -> bool:
+        try:
+            if not path.exists():
+                return False
+            with Image.open(path) as existing:
+                if existing.size != image.size:
+                    return False
+                if "A" in (existing.mode + image.mode):
+                    existing_cmp = existing.convert("RGBA")
+                    image_cmp = image.convert("RGBA")
+                    rgb_same = ImageChops.difference(
+                        existing_cmp.convert("RGB"),
+                        image_cmp.convert("RGB"),
+                    ).getbbox() is None
+                    alpha_same = ImageChops.difference(
+                        existing_cmp.getchannel("A"),
+                        image_cmp.getchannel("A"),
+                    ).getbbox() is None
+                    return rgb_same and alpha_same
+                return ImageChops.difference(existing.convert("RGB"), image.convert("RGB")).getbbox() is None
+        except Exception:
+            return False
+
+    def _save_image_atomic(
+        self,
+        image: Image.Image,
+        out_path: str,
+        *,
+        skip_unchanged: bool = True,
+        png_compress_level: int = 1,
+    ) -> Path:
+        target = Path(out_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if skip_unchanged and self._image_matches_file(image, target):
+            return target
+        fd, tmp_name = tempfile.mkstemp(prefix=f"{target.stem}-", suffix=target.suffix or ".png", dir=str(target.parent))
+        os.close(fd)
+        tmp_target = Path(tmp_name)
+        if (target.suffix or ".png").lower() == ".png":
+            image.save(tmp_target, compress_level=max(0, min(9, int(png_compress_level))))
+        else:
+            image.save(tmp_target)
+        os.replace(tmp_target, target)
+        return target
+
+    def _output_brightness_factor(self) -> float:
+        try:
+            pct = int(getattr(self.cfg, "brightness_percent", 100))
+        except Exception:
+            pct = 100
+        return max(0.0, min(1.5, float(pct) / 100.0))
+
+    def _apply_output_brightness(self, image: Image.Image) -> Image.Image:
+        factor = self._output_brightness_factor()
+        if abs(factor - 1.0) < 0.001:
+            return image
+        if "A" in image.mode:
+            rgba = image.convert("RGBA")
+            rgb = ImageEnhance.Brightness(rgba.convert("RGB")).enhance(factor)
+            rgb.putalpha(rgba.getchannel("A"))
+            return rgb
+        return ImageEnhance.Brightness(image.convert("RGB")).enhance(factor)
+
+    def _remember_active_theme_locked(
+        self,
+        *,
+        path: str | None,
+        document: dict[str, Any] | None,
+        live_refresh: bool,
+    ) -> None:
+        if not isinstance(document, dict):
+            return
+        acquired = self.lock.acquire(timeout=0.05)
+        try:
+            self.active_theme_path = path
+            self.active_theme_document = deepcopy(document)
+            self.active_theme_live_refresh = bool(live_refresh)
+        finally:
+            if acquired:
+                self.lock.release()
+
+    def _reapply_active_theme_for_brightness_locked(self) -> dict[str, Any] | None:
+        if not isinstance(self.active_theme_document, dict):
+            return None
+        if self.proc is None or self.proc.poll() is not None:
+            return None
+        self._log(f"brightness -> {self.cfg.brightness_percent}%; re-render active theme")
+        return self._send_theme_doc_locked(
+            path=self.active_theme_path,
+            theme_input=deepcopy(self.active_theme_document),
+            timeout_s=60.0,
+            resume_loop=False,
+            live_refresh=self.active_theme_live_refresh,
+            keep_live_refresh_running=False,
+        )
+
+    def _merge_live_stats(self, media_override: dict[str, str] | None = None) -> dict[str, str]:
+        values = dict(self.stats_provider.snapshot().values)
+        if isinstance(media_override, dict):
+            for key, value in media_override.items():
+                values[str(key)] = str(value)
+        return values
+
+    def render_theme_preview(
+        self,
+        path: str | None = None,
+        document: dict[str, Any] | None = None,
+        include_image_base64: bool = False,
+    ) -> dict[str, Any]:
+        result = self._render_theme_doc_to_file(path=path, document=document)
+        if include_image_base64:
+            try:
+                image_path = Path(str(result.get("image_path", "")))
+                if image_path.exists():
+                    result["image_base64"] = base64.b64encode(image_path.read_bytes()).decode("ascii")
+            except Exception:
+                pass
+        return result
+
+    def _theme_animation_spec(
+        self,
+        path: str | None = None,
+        document: dict[str, Any] | None = None,
+        max_frames: int | None = None,
+        render_frames: bool = True,
+        output_brightness: bool = False,
+    ) -> dict[str, Any] | None:
+        if document is not None:
+            theme = ThemeDocument(normalize_theme_document(document))
+            base_dir = self.cfg.workdir if path is None else to_abs(self.cfg.workdir, path).parent
+        else:
+            if not path:
+                return None
+            source = to_abs(self.cfg.workdir, path)
+            if not source.exists():
+                return None
+            theme = load_theme_document(source)
+            base_dir = source.parent
+
+        animation = theme.data.get("effects", {}).get("animation", {})
+        if not isinstance(animation, dict):
+            return None
+        if not bool(animation.get("enabled", False)):
+            return None
+        if not bool(animation.get("use_as_background", True)):
+            return None
+        frame_paths = animation.get("frame_paths", [])
+        if not isinstance(frame_paths, list) or len(frame_paths) <= 1:
+            return None
+        frame_durations = animation.get("frame_durations_ms", [])
+        if not isinstance(frame_durations, list):
+            frame_durations = []
+        default_duration = max(1, int(round(1000.0 / max(1.0, float(animation.get("fps", 12.0))))))
+        try:
+            canvas_rotation = int(theme.data.get("canvas", {}).get("rotation", 0)) % 360
+        except Exception:
+            canvas_rotation = 0
+        if canvas_rotation not in {0, 90, 180, 270}:
+            canvas_rotation = 0
+        prepare_source_frames = bool(
+            (not render_frames)
+            and (canvas_rotation != 0 or (output_brightness and abs(self._output_brightness_factor() - 1.0) >= 0.001))
+        )
+        rendered_dir: Path | None = None
+        rendered_frames: list[str] = []
+        durations_ms: list[int] = []
+        loop_start = 0
+        loop_end = len(frame_paths) - 1
+        if "loop_start" in animation or "loop_end" in animation:
+            try:
+                loop_start = max(0, min(len(frame_paths) - 1, int(animation.get("loop_start", 0))))
+            except Exception:
+                loop_start = 0
+            try:
+                loop_end = max(0, min(len(frame_paths) - 1, int(animation.get("loop_end", len(frame_paths) - 1))))
+            except Exception:
+                loop_end = len(frame_paths) - 1
+            if loop_end < loop_start:
+                loop_start, loop_end = loop_end, loop_start
+        source_index_count = (loop_end - loop_start) + 1
+        selected_indices = list(range(loop_start, loop_end + 1))
+        if isinstance(max_frames, int) and max_frames > 0 and source_index_count > max_frames:
+            stride = max(1, (source_index_count + max_frames - 1) // max_frames)
+            selected_indices = list(range(loop_start, loop_end + 1, stride))
+            if selected_indices[-1] != loop_end:
+                selected_indices.append(loop_end)
+
+        if render_frames:
+            rendered_dir = self._runtime_temp_dir("trofeo-theme-anim-")
+        elif prepare_source_frames:
+            digest = hashlib.sha256()
+            digest.update(f"rotation={canvas_rotation};brightness={self._output_brightness_factor():.4f}".encode("utf-8"))
+            for idx in selected_indices:
+                frame_path = Path(str(frame_paths[idx])).expanduser()
+                if not frame_path.is_absolute():
+                    frame_path = (base_dir / frame_path).resolve()
+                try:
+                    stat = frame_path.stat()
+                    digest.update(
+                        f"|{idx}|{frame_path}|{stat.st_size}|{stat.st_mtime_ns}".encode("utf-8", errors="replace")
+                    )
+                except OSError:
+                    digest.update(f"|{idx}|{frame_path}|missing".encode("utf-8", errors="replace"))
+            rendered_dir = self.runtime_dir / "animation-frame-cache" / digest.hexdigest()[:24]
+            rendered_dir.mkdir(parents=True, exist_ok=True)
+
+        for idx in selected_indices:
+            if render_frames:
+                theme_frame = json.loads(json.dumps(theme.data))
+                theme_frame.setdefault("effects", {}).setdefault("animation", {})
+                theme_frame["effects"]["animation"]["current_frame"] = idx
+                image = render_theme_document(
+                    ThemeDocument(normalize_theme_document(theme_frame)),
+                    base_dir=base_dir,
+                    stats_provider=self.stats_provider,
+                )
+                if output_brightness:
+                    image = self._apply_output_brightness(image)
+                assert rendered_dir is not None
+                out_path = rendered_dir / f"frame_{idx:04d}.png"
+                image.save(out_path)
+                rendered_frames.append(str(out_path))
+            else:
+                frame_path = Path(str(frame_paths[idx])).expanduser()
+                if not frame_path.is_absolute():
+                    frame_path = (base_dir / frame_path).resolve()
+                if prepare_source_frames:
+                    assert rendered_dir is not None
+                    out_path = rendered_dir / f"source_frame_{idx:04d}.jpg"
+                    if not out_path.exists():
+                        with Image.open(frame_path) as source_image:
+                            frame_image = source_image.convert("RGB")
+                            if canvas_rotation == 90:
+                                frame_image = frame_image.transpose(Image.ROTATE_90)
+                            elif canvas_rotation == 180:
+                                frame_image = frame_image.transpose(Image.ROTATE_180)
+                            elif canvas_rotation == 270:
+                                frame_image = frame_image.transpose(Image.ROTATE_270)
+                            if output_brightness:
+                                frame_image = self._apply_output_brightness(frame_image)
+                            frame_image.save(out_path, quality=90)
+                    rendered_frames.append(str(out_path))
+                else:
+                    rendered_frames.append(str(frame_path))
+            duration_ms = default_duration
+            if idx < len(frame_durations):
+                try:
+                    duration_ms = max(1, int(frame_durations[idx]))
+                except Exception:
+                    duration_ms = default_duration
+            if len(selected_indices) != source_index_count:
+                duration_ms = int(round(duration_ms * (source_index_count / max(1, len(selected_indices)))))
+                duration_ms = max(1, duration_ms)
+            durations_ms.append(duration_ms)
+        if (
+            render_frames
+            and rendered_dir is not None
+            and bool(animation.get("loop", True))
+            and bool(animation.get("smooth_loop", True))
+            and len(rendered_frames) > 2
+        ):
+            self._append_animation_loop_bridge(rendered_frames, durations_ms, rendered_dir)
+        return {
+            "frame_paths": rendered_frames,
+            "frame_durations_ms": durations_ms,
+            "loop": bool(animation.get("loop", True)),
+            "fps": float(animation.get("fps", 12.0)),
+            "frame_count": len(rendered_frames),
+            "loop_start": loop_start,
+            "loop_end": loop_end,
+        }
+
+    def _tune_trcc_animation_spec(self, animation_spec: dict[str, Any]) -> None:
+        durations = animation_spec.get("frame_durations_ms", [])
+        if not isinstance(durations, list) or not durations:
+            return
+        parsed: list[int] = []
+        for value in durations:
+            try:
+                parsed.append(max(1, int(value)))
+            except Exception:
+                parsed.append(int(round(1000.0 / 12.0)))
+        mean_ms = sum(parsed) / max(1, len(parsed))
+        if mean_ms <= TRCC_ANIMATION_TARGET_FRAME_MS + 2:
+            animation_spec["frame_durations_ms"] = parsed
+            return
+        tuned = [TRCC_ANIMATION_TARGET_FRAME_MS if ms > TRCC_ANIMATION_TARGET_FRAME_MS else ms for ms in parsed]
+        animation_spec["frame_durations_ms"] = tuned
+        animation_spec["fps"] = max(float(animation_spec.get("fps", 0.0) or 0.0), TRCC_ANIMATION_TARGET_FPS)
+        animation_spec["trcc_playback_tuned"] = {
+            "original_mean_frame_ms": round(mean_ms, 3),
+            "target_frame_ms": TRCC_ANIMATION_TARGET_FRAME_MS,
+            "target_fps": TRCC_ANIMATION_TARGET_FPS,
+        }
+
+    def _append_animation_loop_bridge(self, frame_paths: list[str], durations_ms: list[int], rendered_dir: Path) -> None:
+        try:
+            from PIL import Image, ImageChops, ImageStat
+        except Exception:
+            return
+        if len(frame_paths) < 3:
+            return
+        try:
+            first = Image.open(frame_paths[0]).convert("RGBA")
+            last = Image.open(frame_paths[-1]).convert("RGBA")
+        except Exception:
+            return
+        if first.size != last.size:
+            return
+        try:
+            diff_stat = ImageStat.Stat(ImageChops.difference(first, last).convert("L"))
+            if diff_stat.rms and diff_stat.rms[0] < 3.0:
+                return
+        except Exception:
+            pass
+        bridge_duration = max(16, min(80, int(round(sum(durations_ms[-2:] + durations_ms[:2]) / max(1, min(4, len(durations_ms)))))))
+        for bridge_idx, alpha in enumerate((0.33, 0.66), start=1):
+            try:
+                out = rendered_dir / f"loop_bridge_{bridge_idx:02d}.png"
+                Image.blend(last, first, alpha).save(out)
+                frame_paths.append(str(out))
+                durations_ms.append(bridge_duration)
+            except Exception:
+                break
+
+    def _split_live_overlay_document(self, document: dict[str, Any] | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        if not isinstance(document, dict):
+            return None, None
+        base_doc = deepcopy(document)
+        overlay_doc = deepcopy(document)
+        live_stats: list[dict[str, Any]] = []
+        base_stats: list[dict[str, Any]] = []
+        live_item_ids: set[str] = set()
+        live_images: list[dict[str, Any]] = []
+        base_images: list[dict[str, Any]] = []
+        live_widgets: list[dict[str, Any]] = []
+        base_widgets: list[dict[str, Any]] = []
+
+        for item in document.get("stats", []):
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source", "")).strip()
+            item_copy = deepcopy(item)
+            if source:
+                live_stats.append(item_copy)
+                item_id = str(item.get("id", "")).strip()
+                if item_id:
+                    live_item_ids.add(item_id)
+            else:
+                base_stats.append(item_copy)
+
+        for item in document.get("images", []):
+            if not isinstance(item, dict):
+                continue
+            item_copy = deepcopy(item)
+            source = str(item.get("source", "")).strip()
+            if source in {"analog_clock", "media_cover", "media_video_frame"}:
+                live_images.append(item_copy)
+                item_id = str(item.get("id", "")).strip()
+                if item_id:
+                    live_item_ids.add(item_id)
+            else:
+                base_images.append(item_copy)
+
+        for item in document.get("widgets", []):
+            if not isinstance(item, dict):
+                continue
+            item_copy = deepcopy(item)
+            kind = str(item.get("kind", "")).strip().lower()
+            if kind in {"weather_current", "weather_forecast_7d", "media_now_playing"}:
+                live_widgets.append(item_copy)
+                item_id = str(item.get("id", "")).strip()
+                if item_id:
+                    live_item_ids.add(item_id)
+            else:
+                base_widgets.append(item_copy)
+
+        if not live_stats and not live_images and not live_widgets:
+            return base_doc, None
+
+        base_doc["stats"] = base_stats
+        base_doc["images"] = base_images
+        base_doc["widgets"] = base_widgets
+        overlay_doc["stats"] = live_stats
+        overlay_doc["images"] = live_images
+        overlay_doc["widgets"] = live_widgets
+        overlay_doc["texts"] = []
+        overlay_doc["background"] = {
+            "kind": "color",
+            "base_color": [0, 0, 0, 0],
+            "accent_color": [0, 0, 0, 0],
+            "texture_alpha": 0.0,
+            "panels": [],
+        }
+
+        effects = overlay_doc.get("effects", {})
+        if not isinstance(effects, dict):
+            effects = {}
+            overlay_doc["effects"] = effects
+        effects["show_grid"] = False
+        effects["show_safe_area"] = False
+        animation = effects.get("animation", {})
+        if not isinstance(animation, dict):
+            animation = {}
+            effects["animation"] = animation
+        animation["enabled"] = False
+        animation["frame_paths"] = []
+        animation["frame_durations_ms"] = []
+        animation["current_frame"] = 0
+        motion_tracks = effects.get("motion_tracks", [])
+        if isinstance(motion_tracks, list):
+            effects["motion_tracks"] = [
+                deepcopy(track)
+                for track in motion_tracks
+                if isinstance(track, dict) and str(track.get("item_id", "")).strip() in live_item_ids
+            ]
+        else:
+            effects["motion_tracks"] = []
+        return base_doc, overlay_doc
+
+    def _split_media_overlay_document(self, document: dict[str, Any] | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        return self._split_live_overlay_document(document)
+
+    def _animation_foreground_overlay_document(self, document: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(document, dict):
+            return None
+        overlay_doc = deepcopy(document)
+        overlay_doc["background"] = {
+            "kind": "color",
+            "base_color": [0, 0, 0, 0],
+            "accent_color": [0, 0, 0, 0],
+            "texture_alpha": 0.0,
+            "panels": [],
+        }
+        effects = overlay_doc.get("effects", {})
+        if not isinstance(effects, dict):
+            effects = {}
+            overlay_doc["effects"] = effects
+        effects["show_grid"] = False
+        effects["show_safe_area"] = False
+        animation = effects.get("animation", {})
+        if not isinstance(animation, dict):
+            animation = {}
+            effects["animation"] = animation
+        animation["enabled"] = False
+        animation["frame_paths"] = []
+        animation["frame_durations_ms"] = []
+        animation["current_frame"] = 0
+        return overlay_doc
+
+    def _animation_overlay_documents(
+        self,
+        document: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        if not isinstance(document, dict):
+            return None, None
+        static_doc, live_doc = self._split_live_overlay_document(document)
+        if live_doc is None:
+            return self._animation_foreground_overlay_document(document), None
+        return self._animation_foreground_overlay_document(static_doc), live_doc
+
+    def _document_content_bbox(
+        self,
+        document: dict[str, Any] | None,
+        *,
+        padding: int = 10,
+    ) -> tuple[int, int, int, int] | None:
+        if not isinstance(document, dict):
+            return None
+        canvas = document.get("canvas", {})
+        if not isinstance(canvas, dict):
+            canvas = {}
+        try:
+            canvas_w = max(1, int(canvas.get("width", 1920)))
+            canvas_h = max(1, int(canvas.get("height", 462)))
+        except Exception:
+            canvas_w, canvas_h = 1920, 462
+        boxes: list[tuple[int, int, int, int]] = []
+        for section in ("texts", "stats", "images", "widgets"):
+            items = document.get(section, [])
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict) or not bool(item.get("visible", True)):
+                    continue
+                try:
+                    rect = item.get("rect", None)
+                    if isinstance(rect, list) and len(rect) >= 4:
+                        x = int(float(rect[0]))
+                        y = int(float(rect[1]))
+                        w = int(float(rect[2]))
+                        h = int(float(rect[3]))
+                    else:
+                        x = int(float(item.get("x", 0)))
+                        y = int(float(item.get("y", 0)))
+                        w = int(float(item.get("width", item.get("w", item.get("box_width", 0)))))
+                        h = int(float(item.get("height", item.get("h", item.get("box_height", 0)))))
+                except Exception:
+                    continue
+                if w <= 0 or h <= 0:
+                    continue
+                boxes.append((x, y, x + w, y + h))
+        if not boxes:
+            return None
+        x0 = max(0, min(box[0] for box in boxes) - padding)
+        y0 = max(0, min(box[1] for box in boxes) - padding)
+        x1 = min(canvas_w, max(box[2] for box in boxes) + padding)
+        y1 = min(canvas_h, max(box[3] for box in boxes) + padding)
+        if x1 <= x0 or y1 <= y0:
+            return None
+        rotation = 0
+        try:
+            rotation = int(canvas.get("rotation", 0)) % 360
+        except Exception:
+            rotation = 0
+        if rotation == 90:
+            return y0, canvas_w - x1, y1, canvas_w - x0
+        if rotation == 180:
+            return canvas_w - x1, canvas_h - y1, canvas_w - x0, canvas_h - y0
+        if rotation == 270:
+            return canvas_h - y1, x0, canvas_h - y0, x1
+        return x0, y0, x1, y1
+
+    def _save_overlay_crop(
+        self,
+        image: Image.Image,
+        out_path: str,
+        crop_box: tuple[int, int, int, int] | None,
+        *,
+        skip_unchanged: bool = True,
+    ) -> dict[str, Any]:
+        x0, y0 = 0, 0
+        if crop_box is not None:
+            x0, y0, x1, y1 = crop_box
+            image = image.crop((x0, y0, x1, y1))
+        target = self._save_image_atomic(image, out_path, skip_unchanged=skip_unchanged)
+        return {
+            "image_path": str(target),
+            "width": image.width,
+            "height": image.height,
+            "x": x0,
+            "y": y0,
+        }
+
+    def _render_theme_overlay_to_file(
+        self,
+        document: dict[str, Any],
+        *,
+        path: str | None = None,
+        out_path: str | None = None,
+        stats_override: dict[str, str] | None = None,
+        skip_unchanged: bool = True,
+        output_brightness: bool = False,
+    ) -> dict[str, Any]:
+        image = self._render_theme_overlay_image(
+            document,
+            path=path,
+            stats_override=stats_override,
+            output_brightness=output_brightness,
+        )
+        if out_path:
+            target = self._save_image_atomic(image, out_path, skip_unchanged=skip_unchanged)
+        else:
+            fd, tmp_name = tempfile.mkstemp(prefix="trofeo-theme-overlay-", suffix=".png")
+            os.close(fd)
+            target = Path(tmp_name)
+            image.save(target)
+        return {
+            "image_path": str(target),
+            "width": image.width,
+            "height": image.height,
+        }
+
+    def _render_theme_overlay_image(
+        self,
+        document: dict[str, Any],
+        *,
+        path: str | None = None,
+        stats_override: dict[str, str] | None = None,
+        output_brightness: bool = False,
+    ) -> Image.Image:
+        theme = ThemeDocument(normalize_theme_document(document))
+        base_dir = self.cfg.workdir if path is None else to_abs(self.cfg.workdir, path).parent
+        image = render_theme_document(
+            theme,
+            base_dir=base_dir,
+            stats_provider=self.stats_provider,
+            stats_override=stats_override,
+            transparent_background=True,
+            include_images=True,
+            include_effects=False,
+            output_mode="RGBA",
+        )
+        return self._apply_output_brightness(image) if output_brightness else image
+
+    def _compose_overlay_frame(
+        self,
+        base_path: str,
+        overlay_path: str,
+        out_path: str,
+        *,
+        skip_unchanged: bool = True,
+    ) -> dict[str, Any]:
+        base = Image.open(base_path).convert("RGBA")
+        overlay = Image.open(overlay_path).convert("RGBA")
+        composed = Image.alpha_composite(base, overlay)
+        target = self._save_image_atomic(composed, out_path, skip_unchanged=skip_unchanged)
+        return {
+            "image_path": str(target),
+            "width": composed.width,
+            "height": composed.height,
+        }
+
+    def _compose_overlay_image(
+        self,
+        base_image: Image.Image,
+        overlay_image: Image.Image,
+        out_path: str,
+        *,
+        skip_unchanged: bool = True,
+    ) -> dict[str, Any]:
+        composed = Image.alpha_composite(base_image.copy(), overlay_image)
+        target = self._save_image_atomic(composed, out_path, skip_unchanged=skip_unchanged)
+        return {
+            "image_path": str(target),
+            "width": composed.width,
+            "height": composed.height,
+        }
+
+    def _theme_has_heavy_live_overlay(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for item in document.get("stats", []):
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source", "")).strip()
+            display = str(item.get("display", "")).strip().lower()
+            if display == "equalizer" or source.startswith("media_"):
+                return True
+        for item in document.get("images", []):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("source", "")).strip() in {"analog_clock", "media_cover", "media_video_frame"}:
+                return True
+        for item in document.get("widgets", []):
+            if not isinstance(item, dict) or not bool(item.get("visible", True)):
+                continue
+            if str(item.get("kind", "")).strip().lower() == "media_now_playing":
+                return True
+        return False
+
+    def send_theme_doc(
+        self,
+        path: str | None = None,
+        document: dict[str, Any] | None = None,
+        timeout_s: float = 30.0,
+        resume_loop: bool = False,
+        live_refresh: bool = True,
+        keep_live_refresh_running: bool = False,
+    ) -> dict[str, Any]:
+        theme_input = document
+        if theme_input is None and path:
+            try:
+                loaded = self.load_theme_doc(path)
+                raw_document = loaded.get("document")
+                if isinstance(raw_document, dict):
+                    theme_input = raw_document
+            except Exception:
+                theme_input = None
+        # Serialize display hand-off so two HTTP requests cannot start overlapping TRCC
+        # children (USB "in use by another process") and so live refresh cannot race
+        # a theme switch. Keep it separate from the state lock so the GUI can still
+        # list themes and read status while USB recovery is slow after suspend.
+        with self.display_lock:
+            return self._send_theme_doc_locked(
+                path=path,
+                theme_input=theme_input,
+                timeout_s=timeout_s,
+                resume_loop=resume_loop,
+                live_refresh=live_refresh,
+                keep_live_refresh_running=keep_live_refresh_running,
+            )
+
+    def _send_theme_doc_locked(
+        self,
+        *,
+        path: str | None,
+        theme_input: dict[str, Any] | None,
+        timeout_s: float,
+        resume_loop: bool,
+        live_refresh: bool,
+        keep_live_refresh_running: bool,
+    ) -> dict[str, Any]:
+        send_result: dict[str, Any]
+        live_refresh_overlay_doc: dict[str, Any] | None = None
+        live_refresh_overlay_path: str | None = None
+        live_refresh_overlay_crop_box: tuple[int, int, int, int] | None = None
+        live_refresh_render_path: str | None = None
+        live_refresh_base_path: str | None = None
+        # Stop the previous live-refresh worker before switching the base theme.
+        if not keep_live_refresh_running:
+            # Keep theme switches responsive. Each live-refresh worker has its own
+            # stop event, so a slow old renderer cannot revive when the next one starts.
+            self._stop_live_theme_refresh(timeout=2.0)
+        live_refresh_needed = self._theme_has_live_sources(theme_input)
+        if self.cfg.display_backend == "trcc":
+            overlay_doc = None
+            static_overlay_doc: dict[str, Any] | None = None
+            live_overlay_doc: dict[str, Any] | None = None
+            theme_for_animation = theme_input
+            animation_spec = self._theme_animation_spec(
+                path=path,
+                document=theme_input,
+                max_frames=None,
+                render_frames=False,
+                output_brightness=True,
+            )
+            if animation_spec is not None:
+                self._tune_trcc_animation_spec(animation_spec)
+                static_overlay_doc, live_overlay_doc = self._animation_overlay_documents(theme_input)
+                overlay_doc = live_overlay_doc or static_overlay_doc
+            elif live_refresh_needed:
+                theme_for_animation, overlay_doc = self._split_live_overlay_document(theme_input)
+                animation_spec = self._theme_animation_spec(
+                    path=path,
+                    document=theme_for_animation,
+                    max_frames=None,
+                    render_frames=True,
+                    output_brightness=True,
+                )
+            if animation_spec is not None:
+                self._tune_trcc_animation_spec(animation_spec)
+            if animation_spec is not None:
+                overlay_render: dict[str, Any] | None = None
+                if overlay_doc is not None:
+                    if live_overlay_doc is not None and static_overlay_doc is not None:
+                        overlay_dir = self._runtime_temp_dir("trofeo-anim-overlay-")
+                        static_overlay_path = overlay_dir / "static_overlay.png"
+                        live_overlay_path = overlay_dir / "live_overlay.png"
+                        static_overlay_render = self._render_theme_overlay_to_file(
+                            static_overlay_doc,
+                            path=path,
+                            out_path=str(static_overlay_path),
+                            output_brightness=True,
+                        )
+                        live_overlay_image = self._render_theme_overlay_image(
+                            live_overlay_doc,
+                            path=path,
+                            stats_override=self._merge_live_stats(self.stats_provider._read_media_now_playing()),
+                            output_brightness=True,
+                        )
+                        # Keep animated-theme live overlays in full canvas coordinates.
+                        # Cropping is faster, but with rotated LCD output it can drift by a
+                        # few pixels at the physical left/top edge and clip gauges/text.
+                        live_overlay_crop_box = None
+                        live_overlay_render = self._save_overlay_crop(
+                            live_overlay_image,
+                            str(live_overlay_path),
+                            live_overlay_crop_box,
+                            skip_unchanged=False,
+                        )
+                        overlay_render = {
+                            "image_path": static_overlay_render["image_path"],
+                            "width": static_overlay_render["width"],
+                            "height": static_overlay_render["height"],
+                            "static_overlay": static_overlay_render,
+                            "live_overlay": live_overlay_render,
+                        }
+                        animation_spec["static_overlay_path"] = static_overlay_render["image_path"]
+                        animation_spec["overlay_path"] = live_overlay_render["image_path"]
+                        animation_spec["overlay_position"] = [live_overlay_render["x"], live_overlay_render["y"]]
+                        live_refresh_overlay_doc = live_overlay_doc
+                        live_refresh_overlay_path = str(live_overlay_path)
+                        live_refresh_overlay_crop_box = live_overlay_crop_box
+                    else:
+                        overlay_render = self._render_theme_overlay_to_file(
+                            overlay_doc,
+                            path=path,
+                            stats_override=self._merge_live_stats(self.stats_provider._read_media_now_playing()),
+                            output_brightness=True,
+                        )
+                        animation_spec["static_overlay_path"] = overlay_render["image_path"]
+                        live_refresh_overlay_doc = overlay_doc
+                        live_refresh_overlay_path = str(overlay_render["image_path"])
+                    # Throttle extra USB sends while the base animation advances, so EQ/media overlay
+                    # refresh cannot starve frame transitions on bandwidth-limited TRCC links.
+                    durs = animation_spec.get("frame_durations_ms", [])
+                    min_ms = 83
+                    if isinstance(durs, list) and durs:
+                        try:
+                            min_ms = min(max(1, int(x)) for x in durs if int(x) > 0)
+                        except Exception:
+                            min_ms = 83
+                    min_s = min_ms / 1000.0
+                    if self._theme_has_fast_visual_live_refresh(theme_input):
+                        animation_spec["overlay_min_interval_s"] = round(max(0.09, min_s * 0.48), 4)
+                    else:
+                        animation_spec["overlay_min_interval_s"] = round(max(0.12, min_s * 0.62), 4)
+                send_result = self._start_trcc_animation_worker(animation_spec)
+                send_result["rendered_animation"] = animation_spec
+                if overlay_render is not None:
+                    send_result["overlay_render"] = overlay_render
+            else:
+                render_out_path = None
+                if live_refresh_needed:
+                    staging = self._theme_live_staging_dir()
+                    render_out_path = str(staging / "current.png")
+                    live_refresh_render_path = render_out_path
+                    self._preflight_trcc_display_start()
+                    # Keep the stable native loop worker, but when the theme has a
+                    # separable live overlay (time/media/EQ/etc.) render only the
+                    # overlay on refresh and compose it onto a cached base frame.
+                    if overlay_doc is not None:
+                        live_refresh_base_path = str(staging / "base.png")
+                        live_refresh_overlay_path = str(staging / "overlay.png")
+                        rendered = self._render_theme_doc_to_file(
+                            path=path,
+                            document=theme_for_animation,
+                            out_path=live_refresh_base_path,
+                            output_brightness=True,
+                        )
+                        overlay_render = self._render_theme_overlay_to_file(
+                            overlay_doc,
+                            path=path,
+                            out_path=live_refresh_overlay_path,
+                            stats_override=self._merge_live_stats(self.stats_provider._read_media_now_playing()),
+                            output_brightness=True,
+                        )
+                        composed = self._compose_overlay_frame(
+                            live_refresh_base_path,
+                            live_refresh_overlay_path,
+                            render_out_path,
+                        )
+                        live_refresh_overlay_doc = overlay_doc
+                        send_result = self.send_image(
+                            image_path=composed["image_path"],
+                            raw_jpeg_passthrough=False,
+                            timeout_s=timeout_s,
+                            resume_loop=resume_loop,
+                            stop_live_refresh=not keep_live_refresh_running,
+                        )
+                        send_result["rendered_theme"] = rendered
+                        send_result["overlay_render"] = overlay_render
+                        send_result["composed_render"] = composed
+                    else:
+                        rendered = self._render_theme_doc_to_file(
+                            path=path,
+                            document=theme_input,
+                            out_path=render_out_path,
+                            output_brightness=True,
+                        )
+                        send_result = self.send_image(
+                            image_path=rendered["image_path"],
+                            raw_jpeg_passthrough=False,
+                            timeout_s=timeout_s,
+                            resume_loop=resume_loop,
+                            stop_live_refresh=not keep_live_refresh_running,
+                        )
+                        send_result["rendered_theme"] = rendered
+                else:
+                    rendered = self._render_theme_doc_to_file(path=path, document=theme_input, out_path=render_out_path, output_brightness=True)
+                    send_result = self.send_image(
+                        image_path=rendered["image_path"],
+                        raw_jpeg_passthrough=False,
+                        timeout_s=timeout_s,
+                        resume_loop=resume_loop,
+                        stop_live_refresh=not keep_live_refresh_running,
+                    )
+                    send_result["rendered_theme"] = rendered
+        else:
+            render_out_path = None
+            if live_refresh_needed:
+                staging = self._theme_live_staging_dir()
+                render_out_path = str(staging / "current.png")
+                live_refresh_render_path = render_out_path
+            rendered = self._render_theme_doc_to_file(path=path, document=theme_input, out_path=render_out_path, output_brightness=True)
+            send_result = self.send_image(
+                image_path=rendered["image_path"],
+                raw_jpeg_passthrough=False,
+                timeout_s=timeout_s,
+                resume_loop=resume_loop,
+                stop_live_refresh=not keep_live_refresh_running,
+            )
+            send_result["rendered_theme"] = rendered
+        if live_refresh:
+            theme_for_scan = theme_input
+            if self._theme_has_live_sources(theme_for_scan):
+                self._start_live_theme_refresh(
+                    path=path,
+                    document=theme_for_scan,
+                    interval_s=self._theme_live_refresh_interval(theme_for_scan),
+                    overlay_document=live_refresh_overlay_doc,
+                    overlay_path=live_refresh_overlay_path,
+                    overlay_crop_box=live_refresh_overlay_crop_box,
+                    refresh_target_path=live_refresh_render_path,
+                    base_render_path=live_refresh_base_path,
+                )
+            else:
+                self._stop_live_theme_refresh()
+        self._remember_active_theme_locked(path=path, document=theme_input, live_refresh=live_refresh)
+        return send_result
+
+    def _stop_display_worker(self, timeout: float = 5.0) -> dict[str, Any]:
+        with self.lock:
+            self._cleanup_proc_locked()
+            if self.proc is None:
+                return {"running": False, "already_stopped": True}
+
+            proc = self.proc
+            pid = proc.pid
+            self.proc = None
+            self.proc_started_at = None
+            self._refresh_mode_locked()
+
+        exit_code = self._terminate_display_process(
+            proc,
+            pid=pid,
+            timeout=timeout,
+            label="display worker",
+        )
+        with self.lock:
+            if self.proc is None:
+                self.last_exit_code = exit_code
+                self._refresh_mode_locked()
+        return {"running": False, "pid": pid, "exit_code": exit_code}
+
+    def _theme_has_media_sources(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for entry in document.get("stats", []):
+            if not isinstance(entry, dict):
+                continue
+            source = str(entry.get("source", "")).strip()
+            if source.startswith("media_"):
+                return True
+        for entry in document.get("images", []):
+            if not isinstance(entry, dict):
+                continue
+            source = str(entry.get("source", "")).strip()
+            if source in {"media_cover", "media_video_frame"}:
+                return True
+        for entry in document.get("widgets", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("kind", "")).strip().lower() == "media_now_playing":
+                return True
+        return False
+
+    def _theme_has_live_sources(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for entry in document.get("stats", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("source", "")).strip():
+                return True
+        for entry in document.get("images", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            source = str(entry.get("source", "")).strip()
+            if source in {"analog_clock", "media_cover", "media_video_frame"}:
+                return True
+        for entry in document.get("widgets", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            kind = str(entry.get("kind", "")).strip().lower()
+            if kind in {"weather_current", "weather_forecast_7d", "media_now_playing"}:
+                return True
+        for entry in document.get("texts", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if bool(entry.get("marquee", False)):
+                return True
+        return False
+
+    def _theme_needs_periodic_live_refresh(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for entry in document.get("stats", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            source = str(entry.get("source", "")).strip()
+            if source and not source.startswith("media_"):
+                return True
+            if str(entry.get("display", "")).strip().lower() == "equalizer":
+                return True
+        for entry in document.get("images", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("source", "")).strip() == "analog_clock":
+                return True
+        for entry in document.get("widgets", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            kind = str(entry.get("kind", "")).strip().lower()
+            if kind in {"weather_current", "weather_forecast_7d", "media_now_playing"}:
+                return True
+        for entry in document.get("texts", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if bool(entry.get("marquee", False)):
+                return True
+        return False
+
+    def _theme_has_fast_visual_live_refresh(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for entry in document.get("stats", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            source = str(entry.get("source", "")).strip()
+            display = str(entry.get("display", "")).strip().lower()
+            if display == "equalizer":
+                return True
+        for entry in document.get("images", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("source", "")).strip() == "analog_clock":
+                return True
+        for entry in document.get("widgets", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("kind", "")).strip().lower() == "media_now_playing":
+                settings = entry.get("settings", {})
+                if not isinstance(settings, dict) or bool(settings.get("equalizer_enabled", True)) or bool(settings.get("title_marquee", True)):
+                    return True
+        return False
+
+    def _theme_has_audio_eq_visual(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for entry in document.get("stats", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("display", "")).strip().lower() == "equalizer":
+                return True
+        for entry in document.get("widgets", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("kind", "")).strip().lower() != "media_now_playing":
+                continue
+            settings = entry.get("settings", {})
+            if not isinstance(settings, dict) or bool(settings.get("equalizer_enabled", True)):
+                return True
+        return False
+
+    @staticmethod
+    def _audio_eq_signature(stats: dict[str, str]) -> tuple[int, ...] | None:
+        status = str(stats.get("audio_eq_status", "")).strip().lower()
+        if status not in {"running", "stale"}:
+            return None
+        try:
+            parsed = json.loads(str(stats.get("audio_eq_bars", "[]")))
+        except Exception:
+            return None
+        if not isinstance(parsed, list) or len(parsed) < 2:
+            return None
+        values: list[int] = []
+        peak = 0.0
+        for raw in parsed[:32]:
+            try:
+                value = max(0.0, min(1.0, float(raw)))
+            except (TypeError, ValueError):
+                value = 0.0
+            peak = max(peak, value)
+            values.append(int(round(value * 48.0)))
+        if peak < 0.008:
+            return None
+        return tuple(values)
+
+    def _theme_live_refresh_interval(self, document: dict[str, Any] | None) -> float:
+        if self._theme_has_fast_visual_live_refresh(document) or self._theme_has_audio_eq_visual(document):
+            return FAST_VISUAL_REFRESH_INTERVAL_S
+        return DEFAULT_LIVE_REFRESH_INTERVAL_S
+
+    def _theme_has_marquee_motion(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        for section in ("stats", "texts"):
+            for entry in document.get(section, []):
+                if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                    continue
+                if bool(entry.get("marquee", False)) and str(entry.get("align", "left")).strip().lower() == "left":
+                    return True
+        for entry in document.get("widgets", []):
+            if not isinstance(entry, dict) or not bool(entry.get("visible", True)):
+                continue
+            if str(entry.get("kind", "")).strip().lower() != "media_now_playing":
+                continue
+            settings = entry.get("settings", {})
+            if not isinstance(settings, dict) or bool(settings.get("title_marquee", True)):
+                return True
+        return False
+
+    def _theme_has_background_animation(self, document: dict[str, Any] | None) -> bool:
+        if not isinstance(document, dict):
+            return False
+        effects = document.get("effects", {})
+        if not isinstance(effects, dict):
+            return False
+        animation = effects.get("animation", {})
+        if isinstance(animation, dict) and bool(animation.get("enabled", False)) and bool(animation.get("use_as_background", True)):
+            frames = animation.get("frame_paths", [])
+            if isinstance(frames, list) and len(frames) > 1:
+                return True
+        return False
+
+    def _live_theme_worker(
+        self,
+        path: str | None,
+        document: dict[str, Any],
+        interval_s: float,
+        overlay_document: dict[str, Any] | None = None,
+        overlay_path: str | None = None,
+        overlay_crop_box: tuple[int, int, int, int] | None = None,
+        refresh_target_path: str | None = None,
+        base_render_path: str | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> None:
+        stop_event = stop_event or self.live_theme_stop
+        self._log("live theme refresh worker start")
+        self._reset_live_theme_metrics()
+        follow_meta: subprocess.Popen | None = None
+        follow_status: subprocess.Popen | None = None
+        follow_queue: queue.SimpleQueue[tuple[str, str | None, float]] = queue.SimpleQueue()
+        last_refresh = 0.0
+        last_fallback = 0.0
+        last_event_at = 0.0
+        last_live_refresh_log_at = 0.0
+        animated_theme = self._theme_has_background_animation(document)
+        cheap_overlay_mode = isinstance(overlay_document, dict) and bool(overlay_path)
+        fast_file_refresh_mode = bool(refresh_target_path) and not cheap_overlay_mode
+        has_media_sources = self._theme_has_media_sources(document) or self._theme_has_media_sources(overlay_document)
+        playerctl_cmd = self.stats_provider._playerctl_cmd()
+        playerctl_available = playerctl_cmd is not None
+        periodic_live_refresh = self._theme_needs_periodic_live_refresh(document) or self._theme_needs_periodic_live_refresh(overlay_document)
+        audio_eq_visual = self._theme_has_audio_eq_visual(document) or self._theme_has_audio_eq_visual(overlay_document)
+        fast_visual_refresh = (
+            self._theme_has_fast_visual_live_refresh(document)
+            or self._theme_has_fast_visual_live_refresh(overlay_document)
+            or audio_eq_visual
+        )
+        marquee_motion = self._theme_has_marquee_motion(document) or self._theme_has_marquee_motion(overlay_document)
+        overlay_sources: set[str] = set()
+        if isinstance(overlay_document, dict):
+            for item in overlay_document.get("stats", []):
+                if not isinstance(item, dict):
+                    continue
+                source = str(item.get("source", "")).strip()
+                if source:
+                    overlay_sources.add(source)
+            for item in overlay_document.get("images", []):
+                if not isinstance(item, dict):
+                    continue
+                source = str(item.get("source", "")).strip()
+                if source:
+                    overlay_sources.add(source)
+            for item in overlay_document.get("widgets", []):
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("kind", "")).strip().lower() == "media_now_playing":
+                    overlay_sources.update({"media_title", "media_artist", "media_app", "media_state", "media_cover", "media_video_frame"})
+        heavy_overlay = self._theme_has_heavy_live_overlay(overlay_document)
+        if cheap_overlay_mode:
+            if fast_visual_refresh:
+                fallback_interval_s = 0.16 if animated_theme and audio_eq_visual else (0.20 if animated_theme else FAST_VISUAL_REFRESH_INTERVAL_S)
+            elif periodic_live_refresh or marquee_motion:
+                # Animated themes use a separate overlay file for clocks, stats,
+                # weather and media text. Even without EQ this must tick regularly;
+                # otherwise the base animation keeps playing while seconds/stats
+                # stay frozen until a media/EQ event happens.
+                fallback_interval_s = max(0.35, min(1.0, interval_s))
+            else:
+                fallback_interval_s = 300.0
+        elif fast_visual_refresh:
+            fallback_interval_s = FAST_VISUAL_REFRESH_INTERVAL_S
+        elif marquee_motion:
+            fallback_interval_s = 0.25
+        elif periodic_live_refresh:
+            fallback_interval_s = max(0.3, interval_s)
+        else:
+            fallback_interval_s = 3600.0 if animated_theme else (120.0 if fast_file_refresh_mode else max(10.0, interval_s))
+        last_media_sig: tuple[str, str, str, str, str, str] | None = None
+        last_probe = 0.0
+        if has_media_sources and not playerctl_available:
+            # Flatpak builds do not bundle playerctl; poll direct MPRIS fallback often enough
+            # for Chromium/VLC track changes without starting unavailable follower processes.
+            probe_interval_s = 0.5
+        elif fast_visual_refresh:
+            probe_interval_s = 3.0
+        else:
+            probe_interval_s = 0.45 if cheap_overlay_mode else (0.25 if fast_file_refresh_mode else max(0.7, min(2.0, interval_s)))
+        if cheap_overlay_mode and fast_visual_refresh:
+            min_refresh_gap_s = 0.12 if animated_theme and audio_eq_visual else (0.20 if animated_theme else 0.07)
+        elif cheap_overlay_mode:
+            min_refresh_gap_s = 0.15 if heavy_overlay else 0.10
+        else:
+            min_refresh_gap_s = 12.0 if animated_theme else (0.08 if fast_file_refresh_mode else 0.25)
+
+        media_players: dict[str, dict[str, str]] = {}
+
+        def _default_media() -> dict[str, str]:
+            return self.stats_provider._default_media_snapshot()
+
+        def _media_priority(player_name: str, state: str, title: str) -> tuple[int, int, int]:
+            return self.stats_provider._media_priority(player_name, state, title)
+
+        def _normalize_media(raw: dict[str, Any] | None) -> dict[str, str]:
+            out = _default_media()
+            if not isinstance(raw, dict):
+                return out
+            for key in ("media_title", "media_artist", "media_album", "media_app", "media_state", "media_source_url"):
+                value = str(raw.get(key, "")).strip()
+                if value:
+                    out[key] = value.lower() if key == "media_state" else value
+            cover_raw = str(raw.get("media_cover_path", "") or raw.get("art_url", "")).strip()
+            out["media_cover_path"] = self.stats_provider.resolve_media_cover_path(
+                cover_raw,
+                player_name=str(out.get("media_app", "")),
+                title=str(out.get("media_title", "")),
+                artist=str(out.get("media_artist", "")),
+                album=str(out.get("media_album", "")),
+            )
+            video_raw = str(raw.get("media_video_frame_path", "")).strip()
+            if self.stats_provider.should_disable_browser_video_frame(
+                str(out.get("media_app", "")),
+                str(out.get("media_source_url", "")),
+            ):
+                out["media_video_frame_path"] = out["media_cover_path"]
+            elif video_raw:
+                out["media_video_frame_path"] = video_raw
+            else:
+                out["media_video_frame_path"] = self.stats_provider.resolve_media_video_frame_path(
+                    out.get("media_source_url", ""),
+                    out.get("media_cover_path", ""),
+                )
+            return out
+
+        def _media_sig(media: dict[str, str]) -> tuple[str, str, str, str, str, str]:
+            return (
+                str(media.get("media_app", "")),
+                str(media.get("media_state", "")),
+                str(media.get("media_title", "")),
+                str(media.get("media_artist", "")),
+                str(media.get("media_cover_path", "")),
+                str(media.get("media_video_frame_path", "")),
+            )
+
+        def _select_best_player(players: dict[str, dict[str, str]]) -> dict[str, str]:
+            best_score = None
+            best_media = _default_media()
+            for player_name, media in players.items():
+                score = _media_priority(player_name, str(media.get("media_state", "")), str(media.get("media_title", "")))
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_media = dict(media)
+            return best_media
+
+        def _resolve_media_cover_fast(raw_path: str, player_name: str, title: str, artist: str, album: str) -> str:
+            try:
+                cover_path = self.stats_provider._normalize_media_cover_path(raw_path)
+                if cover_path:
+                    stable_key = ""
+                    if any(part and part != "N/A" for part in (title, artist, album)):
+                        stable_key = self.stats_provider._cover_lookup_key(player_name, title, artist, album)
+                    return self.stats_provider._copy_media_cover_to_runtime(cover_path, stable_key=stable_key)
+                if any(part and part != "N/A" for part in (title, artist, album)):
+                    cache_key = self.stats_provider._cover_lookup_key(player_name, title, artist, album)
+                    return self.stats_provider._cached_cover_for_key(cache_key)
+            except Exception:
+                return ""
+            return ""
+
+        def _merge_follow_metadata(line: str, current: dict[str, str]) -> tuple[str, dict[str, str]]:
+            parts = line.rstrip("\n").split("\t")
+            player = parts[0].strip() if len(parts) > 0 else ""
+            state = parts[1].strip().lower() if len(parts) > 1 else ""
+            title = parts[2].strip() if len(parts) > 2 else ""
+            artist = parts[3].strip() if len(parts) > 3 else ""
+            art_url = parts[4].strip() if len(parts) > 4 else ""
+            media_url = parts[5].strip() if len(parts) > 5 else ""
+            album = parts[6].strip() if len(parts) > 6 else ""
+            candidate = dict(current)
+            if player:
+                candidate["media_app"] = player
+            if state:
+                candidate["media_state"] = state
+            if title:
+                candidate["media_title"] = title
+            elif state == "stopped":
+                candidate["media_title"] = "N/A"
+            if artist:
+                candidate["media_artist"] = artist
+            elif state == "stopped":
+                candidate["media_artist"] = "N/A"
+            if album:
+                candidate["media_album"] = album
+            elif state == "stopped":
+                candidate["media_album"] = "N/A"
+            if media_url:
+                candidate["media_source_url"] = media_url
+            cover_path = _resolve_media_cover_fast(
+                art_url,
+                player or str(candidate.get("media_app", "")),
+                str(candidate.get("media_title", "")),
+                str(candidate.get("media_artist", "")),
+                str(candidate.get("media_album", "")),
+            )
+            if cover_path:
+                candidate["media_cover_path"] = cover_path
+            elif state == "stopped":
+                candidate["media_cover_path"] = ""
+            if state == "stopped":
+                candidate["media_video_frame_path"] = ""
+            else:
+                if self.stats_provider.should_disable_browser_video_frame(
+                    player or str(candidate.get("media_app", "")),
+                    candidate.get("media_source_url", ""),
+                ):
+                    candidate["media_video_frame_path"] = candidate.get("media_cover_path", "")
+                else:
+                    candidate["media_video_frame_path"] = self.stats_provider.resolve_media_video_frame_path(
+                        candidate.get("media_source_url", ""),
+                        candidate.get("media_cover_path", ""),
+                    )
+            return player or candidate.get("media_app", ""), candidate
+
+        media_cache = _normalize_media(self.stats_provider._read_media_now_playing()) if has_media_sources else _default_media()
+        last_media_sig = _media_sig(media_cache)
+        if media_cache.get("media_app") and media_cache["media_app"] != "N/A":
+            media_players[media_cache["media_app"]] = dict(media_cache)
+        cached_base_rgba: Image.Image | None = None
+        cached_base_sig: tuple[int, int] | None = None
+        try:
+            stats_cache = self._merge_live_stats(media_cache)
+        except Exception:
+            stats_cache = dict(media_cache)
+        last_audio_eq_sig = self._audio_eq_signature(stats_cache) if audio_eq_visual else None
+        last_audio_eq_probe = 0.0
+        last_full_stats_at = time.time()
+        full_stats_interval_s = FAST_VISUAL_FULL_STATS_INTERVAL_S if fast_visual_refresh else max(1.0, interval_s)
+        last_good_media_cache = dict(media_cache) if self.stats_provider._media_snapshot_has_content(media_cache) else _default_media()
+        last_good_media_at = time.time() if self.stats_provider._media_snapshot_has_content(media_cache) else 0.0
+
+        def _stabilize_media(media: dict[str, str]) -> dict[str, str]:
+            nonlocal last_good_media_cache, last_good_media_at
+            if self.stats_provider._media_snapshot_has_content(media):
+                last_good_media_cache = dict(media)
+                last_good_media_at = time.time()
+                return media
+            if last_good_media_at and time.time() - last_good_media_at <= MEDIA_TRANSIENT_GRACE_S:
+                stable = dict(last_good_media_cache)
+                state = str(media.get("media_state", "")).strip().lower()
+                if state:
+                    stable["media_state"] = state
+                app = str(media.get("media_app", "")).strip()
+                if app and app != "N/A":
+                    stable["media_app"] = app
+                return stable
+            return media
+
+        def _cached_live_stats(media_override: dict[str, str]) -> dict[str, str]:
+            values = dict(stats_cache)
+            local_now = time.localtime()
+            values["time_hms"] = time.strftime("%H:%M:%S", local_now)
+            values["date_ymd"] = time.strftime("%Y-%m-%d", local_now)
+            try:
+                values.update(self.stats_provider.read_audio_eq_stats())
+            except Exception:
+                pass
+            try:
+                values.update(self.stats_provider.read_volume_stats())
+            except Exception:
+                pass
+            values.update({str(key): str(value) for key, value in media_override.items()})
+            return values
+
+        def _refresh_full_live_stats(media_override: dict[str, str]) -> dict[str, str]:
+            nonlocal stats_cache, last_full_stats_at
+            stats_cache = self._merge_live_stats(media_override)
+            last_full_stats_at = time.time()
+            return dict(stats_cache)
+
+        def _load_cached_base_rgba() -> Image.Image:
+            nonlocal cached_base_rgba, cached_base_sig
+            if not base_render_path:
+                raise RuntimeError("missing base render path")
+            stat = os.stat(base_render_path)
+            sig = (stat.st_mtime_ns, stat.st_size)
+            if cached_base_rgba is None or cached_base_sig != sig:
+                with Image.open(base_render_path) as img:
+                    cached_base_rgba = img.convert("RGBA").copy()
+                cached_base_sig = sig
+            return cached_base_rgba
+
+        def _start_followers() -> tuple[subprocess.Popen | None, subprocess.Popen | None]:
+            meta = None
+            status = None
+            if not playerctl_cmd:
+                return meta, status
+            cmd_prefix: list[str] = []
+            stdbuf_bin = shutil.which("stdbuf")
+            if stdbuf_bin:
+                cmd_prefix = [stdbuf_bin, "-oL"]
+
+            def _spawn_reader(proc: subprocess.Popen | None, kind: str) -> None:
+                if proc is None or proc.stdout is None:
+                    return
+
+                def _reader() -> None:
+                    try:
+                        for raw_line in proc.stdout:
+                            follow_queue.put((kind, raw_line, time.time()))
+                    except Exception:
+                        pass
+                    finally:
+                        follow_queue.put((kind, None, time.time()))
+
+                threading.Thread(target=_reader, daemon=True).start()
+
+            try:
+                meta = subprocess.Popen(
+                    cmd_prefix + playerctl_cmd + [
+                        "-a",
+                        "metadata",
+                        "--follow",
+                        "--format",
+                        "{{playerName}}\t{{status}}\t{{xesam:title}}\t{{xesam:artist}}\t{{mpris:artUrl}}\t{{xesam:url}}\t{{xesam:album}}",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    bufsize=1,
+                )
+                _spawn_reader(meta, "meta")
+            except Exception:
+                meta = None
+            try:
+                status = subprocess.Popen(
+                    cmd_prefix + playerctl_cmd + ["-a", "status", "--format", "{{playerName}}\t{{status}}", "--follow"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    bufsize=1,
+                )
+                _spawn_reader(status, "status")
+            except Exception:
+                status = None
+            return meta, status
+
+        def _close_proc(proc: subprocess.Popen | None) -> None:
+            if proc is None:
+                return
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=0.5)
+            except Exception:
+                pass
+
+        follow_meta, follow_status = _start_followers() if has_media_sources else (None, None)
+        while not stop_event.is_set():
+            display_proc = self.proc
+            if display_proc is None or display_proc.poll() is not None:
+                error = "display worker stopped; live refresh halted"
+                if self.lock.acquire(timeout=0.02):
+                    try:
+                        if not stop_event.is_set():
+                            self.last_error = error
+                    finally:
+                        self.lock.release()
+                else:
+                    if not stop_event.is_set():
+                        self.last_error = error
+                self._record_live_theme_error(error)
+                break
+
+            now = time.time()
+            event = False
+            refresh_reason = ""
+
+            if has_media_sources:
+                for proc in (follow_meta, follow_status):
+                    if proc is not None and proc.poll() is not None:
+                        event = True
+                        refresh_reason = refresh_reason or "media"
+                if (follow_meta is None or follow_meta.poll() is not None) and (follow_status is None or follow_status.poll() is not None):
+                    follow_meta, follow_status = _start_followers()
+
+            had_follow_data = False
+            deadline = time.time() + (0.10 if cheap_overlay_mode else (0.12 if fast_file_refresh_mode else 0.35))
+            while has_media_sources:
+                timeout = max(0.0, deadline - time.time())
+                if timeout <= 0:
+                    break
+                try:
+                    kind, line, event_ts = follow_queue.get(timeout=timeout)
+                except queue.Empty:
+                    break
+                had_follow_data = True
+                if line is None:
+                    continue
+                changed = False
+                if cheap_overlay_mode or fast_file_refresh_mode:
+                    previous = dict(media_cache)
+                    if kind == "meta":
+                        parts = line.rstrip("\n").split("\t")
+                        hinted_player = parts[0].strip() if len(parts) > 0 else ""
+                        player_name, merged = _merge_follow_metadata(
+                            line,
+                            media_players.get(hinted_player, media_cache),
+                        )
+                        if player_name:
+                            current_player = media_players.get(player_name, _default_media())
+                            current_player.update(merged)
+                            media_players[player_name] = current_player
+                    else:
+                        parts = line.rstrip("\n").split("\t")
+                        player_name = parts[0].strip() if len(parts) > 0 else ""
+                        state = parts[1].strip().lower() if len(parts) > 1 else ""
+                        if player_name and state:
+                            current_player = dict(media_players.get(player_name, _default_media()))
+                            current_player["media_app"] = player_name
+                            current_player["media_state"] = state
+                            if state == "stopped":
+                                current_player["media_title"] = current_player.get("media_title") or "N/A"
+                                current_player["media_artist"] = current_player.get("media_artist", "")
+                            media_players[player_name] = current_player
+                    media_cache = _stabilize_media(_select_best_player(media_players) if media_players else media_cache)
+                    changed = _media_sig(media_cache) != _media_sig(previous)
+                    if changed:
+                        last_media_sig = _media_sig(media_cache)
+                if changed or (not cheap_overlay_mode and not fast_file_refresh_mode):
+                    event = True
+                    refresh_reason = "media"
+                    last_event_at = event_ts
+            if not had_follow_data:
+                stop_event.wait(0.05 if cheap_overlay_mode else (0.08 if fast_file_refresh_mode else 0.2))
+            if stop_event.is_set():
+                break
+
+            if has_media_sources and not event and now - last_probe >= probe_interval_s:
+                last_probe = now
+                try:
+                    media = _stabilize_media(_normalize_media(self.stats_provider._read_media_now_playing()))
+                    sig = _media_sig(media)
+                    if last_media_sig is None:
+                        last_media_sig = sig
+                        media_cache = media
+                        if media.get("media_app") and media["media_app"] != "N/A":
+                            media_players[media["media_app"]] = dict(media)
+                        if media.get("media_state") in {"playing", "paused"} or media.get("media_title") not in {"", "N/A"}:
+                            event = True
+                            refresh_reason = "media"
+                            last_event_at = time.time()
+                    elif sig != last_media_sig:
+                        prev = last_media_sig
+                        last_media_sig = sig
+                        media_cache = media
+                        if media.get("media_app") and media["media_app"] != "N/A":
+                            media_players[media["media_app"]] = dict(media)
+                        # For animated themes refresh only on meaningful metadata changes
+                        # to reduce visible stutter and expensive worker restarts.
+                        if cheap_overlay_mode:
+                            changed_track = (sig[2], sig[3], sig[4]) != (prev[2], prev[3], prev[4])
+                            changed_state = sig[1] != prev[1]
+                            changed_app = sig[0] != prev[0]
+                            changed_cover = sig[4] != prev[4]
+                            changed_video = sig[5] != prev[5]
+                            if changed_track or changed_app:
+                                event = True
+                            elif changed_cover and "media_cover" in overlay_sources:
+                                event = True
+                            elif changed_video and "media_video_frame" in overlay_sources:
+                                event = True
+                            elif changed_state and "media_state" in overlay_sources:
+                                event = True
+                            if event:
+                                refresh_reason = "media"
+                                last_event_at = time.time()
+                        elif animated_theme:
+                            changed_track = (sig[2], sig[3]) != (prev[2], prev[3])
+                            if changed_track:
+                                event = True
+                                refresh_reason = "media"
+                        else:
+                            event = True
+                            refresh_reason = "media"
+                except Exception:
+                    pass
+
+            if audio_eq_visual and not event and now - last_audio_eq_probe >= FAST_AUDIO_EQ_REFRESH_INTERVAL_S:
+                last_audio_eq_probe = now
+                try:
+                    audio_eq_stats = self.stats_provider.read_audio_eq_stats()
+                    audio_eq_sig = self._audio_eq_signature(audio_eq_stats)
+                    if audio_eq_sig is not None and audio_eq_sig != last_audio_eq_sig:
+                        last_audio_eq_sig = audio_eq_sig
+                        event = True
+                        refresh_reason = "eq"
+                        last_event_at = time.time()
+                except Exception:
+                    pass
+
+            if now - last_fallback >= fallback_interval_s:
+                event = True
+                if not refresh_reason:
+                    refresh_reason = "periodic" if now - last_full_stats_at >= full_stats_interval_s else "motion"
+                last_fallback = now
+
+            if event and now - last_refresh >= min_refresh_gap_s:
+                try:
+                    overlay_render_ms = None
+                    compose_ms = None
+                    full_render_ms = None
+                    full_stats_due = (time.time() - last_full_stats_at) >= full_stats_interval_s
+                    if fast_visual_refresh:
+                        if refresh_reason == "periodic" or full_stats_due:
+                            merged_stats = _refresh_full_live_stats(media_cache)
+                        else:
+                            merged_stats = _cached_live_stats(media_cache)
+                    elif refresh_reason in {"media", "motion"}:
+                        merged_stats = _cached_live_stats(media_cache)
+                    else:
+                        merged_stats = _refresh_full_live_stats(media_cache)
+                    if overlay_document is not None and overlay_path and refresh_target_path and base_render_path:
+                        stage_started = time.perf_counter()
+                        overlay_image = self._render_theme_overlay_image(
+                            deepcopy(overlay_document),
+                            path=path,
+                            stats_override=merged_stats,
+                            output_brightness=True,
+                        )
+                        overlay_render_ms = (time.perf_counter() - stage_started) * 1000.0
+                        stage_started = time.perf_counter()
+                        self._compose_overlay_image(
+                            _load_cached_base_rgba(),
+                            overlay_image,
+                            refresh_target_path,
+                            skip_unchanged=False,
+                        )
+                        compose_ms = (time.perf_counter() - stage_started) * 1000.0
+                    elif overlay_document is not None and overlay_path:
+                        stage_started = time.perf_counter()
+                        overlay_image = self._render_theme_overlay_image(
+                            deepcopy(overlay_document),
+                            path=path,
+                            stats_override=merged_stats,
+                            output_brightness=True,
+                        )
+                        self._save_overlay_crop(
+                            overlay_image,
+                            overlay_path,
+                            overlay_crop_box,
+                            skip_unchanged=False,
+                        )
+                        overlay_render_ms = (time.perf_counter() - stage_started) * 1000.0
+                    elif refresh_target_path:
+                        stage_started = time.perf_counter()
+                        self._render_theme_doc_to_file(
+                            path=path,
+                            document=deepcopy(document),
+                            out_path=refresh_target_path,
+                            stats_override=merged_stats,
+                            output_brightness=True,
+                        )
+                        full_render_ms = (time.perf_counter() - stage_started) * 1000.0
+                    else:
+                        self.send_theme_doc(
+                            path=path,
+                            document=deepcopy(document),
+                            timeout_s=max(6.0, interval_s + 5.0),
+                            resume_loop=False,
+                            live_refresh=False,
+                            keep_live_refresh_running=True,
+                        )
+                    last_refresh = time.time()
+                    delay_ms = (
+                        int(max(0.0, last_refresh - last_event_at) * 1000)
+                        if refresh_reason in {"media", "eq"} and last_event_at > 0
+                        else None
+                    )
+                    self._record_live_theme_metrics(
+                        reason=refresh_reason,
+                        media_cache=media_cache,
+                        overlay_render_ms=overlay_render_ms,
+                        compose_ms=compose_ms,
+                        full_render_ms=full_render_ms,
+                        delay_ms=delay_ms,
+                    )
+                    if cheap_overlay_mode or fast_file_refresh_mode:
+                        should_log = (last_refresh - last_live_refresh_log_at) >= LIVE_REFRESH_LOG_INTERVAL_S
+                        if overlay_render_ms is not None and overlay_render_ms >= LIVE_REFRESH_SLOW_STAGE_MS:
+                            should_log = True
+                        if compose_ms is not None and compose_ms >= LIVE_REFRESH_SLOW_STAGE_MS:
+                            should_log = True
+                        if full_render_ms is not None and full_render_ms >= LIVE_REFRESH_SLOW_STAGE_MS:
+                            should_log = True
+                        if not should_log:
+                            continue
+                        last_live_refresh_log_at = last_refresh
+                        self._log(
+                            "live theme refreshed"
+                            + (
+                                f" delay_ms={delay_ms}"
+                                if delay_ms is not None
+                                else ""
+                            )
+                            + f" state={media_cache.get('media_state', '')}"
+                            + f" title={media_cache.get('media_title', '')[:64]}"
+                            + f" cover={'yes' if media_cache.get('media_cover_path') else 'no'}"
+                            + f" video={'yes' if media_cache.get('media_video_frame_path') else 'no'}"
+                            + (
+                                f" overlay_ms={int(round(overlay_render_ms))}"
+                                if overlay_render_ms is not None
+                                else ""
+                            )
+                            + (
+                                f" compose_ms={int(round(compose_ms))}"
+                                if compose_ms is not None
+                                else ""
+                            )
+                            + (
+                                f" render_ms={int(round(full_render_ms))}"
+                                if full_render_ms is not None
+                                else ""
+                            )
+                        )
+                except Exception as exc:
+                    with self.lock:
+                        self.last_error = f"live-theme refresh failed: {exc}"
+                    self._record_live_theme_error(str(exc))
+
+        _close_proc(follow_meta)
+        _close_proc(follow_status)
+        if self.lock.acquire(timeout=0.1):
+            try:
+                if self.live_theme_thread is threading.current_thread():
+                    self.live_theme_thread = None
+                    self.live_theme_started_at = None
+            finally:
+                self.lock.release()
+        self._log("live theme refresh worker stop")
+
+    def _start_live_theme_refresh(
+        self,
+        path: str | None,
+        document: dict[str, Any] | None,
+        interval_s: float = 1.0,
+        overlay_document: dict[str, Any] | None = None,
+        overlay_path: str | None = None,
+        overlay_crop_box: tuple[int, int, int, int] | None = None,
+        refresh_target_path: str | None = None,
+        base_render_path: str | None = None,
+    ) -> None:
+        if not isinstance(document, dict):
+            return
+        self._stop_live_theme_refresh()
+        stop_event = threading.Event()
+        frozen_doc = deepcopy(document)
+        frozen_overlay_doc = deepcopy(overlay_document) if isinstance(overlay_document, dict) else None
+        thread = threading.Thread(
+            target=self._live_theme_worker,
+            args=(
+                path,
+                frozen_doc,
+                max(MIN_LIVE_REFRESH_INTERVAL_S, float(interval_s)),
+                frozen_overlay_doc,
+                overlay_path,
+                overlay_crop_box,
+                refresh_target_path,
+                base_render_path,
+                stop_event,
+            ),
+            daemon=True,
+        )
+        self.live_theme_stop = stop_event
+        self.live_theme_thread = thread
+        self.live_theme_started_at = time.time()
+        self.mode = "theme-live"
+        thread.start()
+
+    def _stop_live_theme_refresh(self, timeout: float = 3.0) -> None:
+        acquired = self.lock.acquire(timeout=0.05)
+        if acquired:
+            try:
+                th = self.live_theme_thread
+                stop_event = self.live_theme_stop
+                if th is None or not th.is_alive():
+                    self.live_theme_thread = None
+                    self.live_theme_started_at = None
+                    return
+                stop_event.set()
+            finally:
+                self.lock.release()
+        else:
+            th = self.live_theme_thread
+            stop_event = self.live_theme_stop
+            if th is None or not th.is_alive():
+                self.live_theme_thread = None
+                self.live_theme_started_at = None
+                return
+            stop_event.set()
+        if th is threading.current_thread():
+            return
+        th.join(timeout=max(0.1, timeout))
+        alive = th.is_alive()
+        acquired = self.lock.acquire(timeout=0.05)
+        if acquired:
+            try:
+                if self.live_theme_thread is th and not alive:
+                    self.live_theme_thread = None
+                    self.live_theme_started_at = None
+            finally:
+                self.lock.release()
+        elif self.live_theme_thread is th and not alive:
+            self.live_theme_thread = None
+            self.live_theme_started_at = None
+
+    def _normalize_playlist_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        name = str(item.get("name", "")).strip()
+        if not name:
+            raise RuntimeError("playlist item: missing theme name")
+        if name not in self.themes:
+            raise RuntimeError(f"playlist item: unknown theme '{name}'")
+        duration_s = float(item.get("duration_s", 5.0))
+        duration_s = max(0.2, duration_s)
+        return {"name": name, "duration_s": duration_s}
+
+    def _load_playlist(self) -> None:
+        with self.lock:
+            self.playlist = []
+            try:
+                if not self.cfg.playlist_file.exists():
+                    return
+                raw = json.loads(self.cfg.playlist_file.read_text(encoding="utf-8"))
+                if isinstance(raw, list):
+                    for item in raw:
+                        if not isinstance(item, dict):
+                            continue
+                        try:
+                            self.playlist.append(self._normalize_playlist_item(item))
+                        except Exception:
+                            continue
+            except Exception as exc:
+                self.last_error = f"playlist load failed: {exc}"
+
+    def _save_playlist(self) -> None:
+        with self.lock:
+            ensure_parent(self.cfg.playlist_file)
+            payload = json.dumps(self.playlist, ensure_ascii=False, indent=2)
+            self.cfg.playlist_file.write_text(payload + "\n", encoding="utf-8")
+
+    def _normalize_themes_payload(self, raw_themes: Any) -> dict[str, dict[str, Any]]:
+        if not isinstance(raw_themes, dict):
+            raise RuntimeError("bundle.themes must be an object")
+
+        out: dict[str, dict[str, Any]] = {}
+        for name, item in raw_themes.items():
+            if not isinstance(name, str):
+                continue
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path", "")).strip()
+            if not path:
+                continue
+            out[name] = {
+                "path": path,
+                "raw_jpeg_passthrough": bool(item.get("raw_jpeg_passthrough", False)),
+            }
+        return out
+
+    def build_bundle(self) -> dict[str, Any]:
+        with self.lock:
+            return {
+                "version": 1,
+                "exported_at": now_iso(),
+                "themes": self.themes,
+                "playlist": self.playlist,
+            }
+
+    def apply_bundle(self, bundle: dict[str, Any], merge: bool = False) -> dict[str, Any]:
+        with self.lock:
+            if not isinstance(bundle, dict):
+                raise RuntimeError("bundle must be an object")
+
+            themes_in = self._normalize_themes_payload(bundle.get("themes", {}))
+            playlist_raw = bundle.get("playlist", [])
+            if playlist_raw is None:
+                playlist_raw = []
+            if not isinstance(playlist_raw, list):
+                raise RuntimeError("bundle.playlist must be a list")
+
+            if merge:
+                self.themes.update(themes_in)
+            else:
+                self.themes = dict(themes_in)
+
+            normalized_playlist = []
+            for item in playlist_raw:
+                if not isinstance(item, dict):
+                    continue
+                normalized_playlist.append(self._normalize_playlist_item(item))
+
+            if merge:
+                self.playlist.extend(normalized_playlist)
+            else:
+                self.playlist = normalized_playlist
+
+            if self.playlist:
+                self.playlist_index %= len(self.playlist)
+            else:
+                self.playlist_index = 0
+
+            self._save_themes()
+            self._save_playlist()
+            return {
+                "theme_count": len(self.themes),
+                "playlist_count": len(self.playlist),
+                "merge": bool(merge),
+            }
+
+    def save_bundle(self, path: str) -> dict[str, Any]:
+        target = to_abs(self.cfg.workdir, path)
+        bundle = self.build_bundle()
+        ensure_parent(target)
+        target.write_text(json.dumps(bundle, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return {"path": str(target), "bytes": target.stat().st_size}
+
+    def load_bundle(self, path: str, merge: bool = False) -> dict[str, Any]:
+        source = to_abs(self.cfg.workdir, path)
+        if not source.exists():
+            raise RuntimeError(f"bundle file not found: {source}")
+        raw = json.loads(source.read_text(encoding="utf-8"))
+        result = self.apply_bundle(raw, merge=merge)
+        result["path"] = str(source)
+        return result
+
+    def list_playlist(self) -> dict[str, Any]:
+        acquired = self.lock.acquire(timeout=0.25)
+        if acquired:
+            try:
+                playlist_snapshot = [dict(item) for item in self.playlist]
+                themes_snapshot = deepcopy(self.themes)
+                running = self.playlist_thread is not None and self.playlist_thread.is_alive()
+                position = self.playlist_index
+            finally:
+                self.lock.release()
+        else:
+            playlist_snapshot = [dict(item) for item in self.playlist]
+            themes_snapshot = deepcopy(self.themes)
+            running = self.playlist_thread is not None and self.playlist_thread.is_alive()
+            position = self.playlist_index
+
+        items = []
+        for idx, item in enumerate(playlist_snapshot):
+            name = item["name"]
+            duration_s = float(item["duration_s"])
+            theme = themes_snapshot.get(name)
+            theme_path = None if theme is None else str(theme.get("path"))
+            items.append(
+                {
+                    "index": idx,
+                    "name": name,
+                    "duration_s": duration_s,
+                    "theme_exists": theme is not None,
+                    "theme_path": theme_path,
+                }
+            )
+        return {
+            "count": len(items),
+            "running": running,
+            "position": position,
+            "items": items,
+        }
+
+    def set_playlist(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        with self.lock:
+            normalized = [self._normalize_playlist_item(item) for item in items]
+            self.playlist = normalized
+            self.playlist_index = 0
+            self._save_playlist()
+            return self.list_playlist()
+
+    def add_playlist_item(self, name: str, duration_s: float = 5.0) -> dict[str, Any]:
+        with self.lock:
+            self.playlist.append(self._normalize_playlist_item({"name": name, "duration_s": duration_s}))
+            self._save_playlist()
+            return self.list_playlist()
+
+    def remove_playlist_item(self, index: int) -> dict[str, Any]:
+        with self.lock:
+            idx = int(index)
+            if idx < 0 or idx >= len(self.playlist):
+                raise RuntimeError(f"playlist index out of range: {idx}")
+            self.playlist.pop(idx)
+            if self.playlist:
+                self.playlist_index %= len(self.playlist)
+            else:
+                self.playlist_index = 0
+            self._save_playlist()
+            return self.list_playlist()
+
+    def _playlist_worker(self) -> None:
+        self._log("playlist worker start")
+        while not self.playlist_stop.is_set():
+            with self.lock:
+                if not self.playlist:
+                    self.last_error = "playlist is empty"
+                    break
+                idx = self.playlist_index % len(self.playlist)
+                item = dict(self.playlist[idx])
+                self.playlist_index = (idx + 1) % len(self.playlist)
+                self.mode = "playlist"
+
+            name = item["name"]
+            duration_s = float(item["duration_s"])
+            try:
+                self.apply_theme(name, resume_loop=False, timeout_s=max(10.0, duration_s + 10.0))
+            except Exception as exc:
+                self.last_error = f"playlist apply failed ({name}): {exc}"
+                self._log(self.last_error)
+                if self.playlist_stop.wait(1.0):
+                    break
+                continue
+
+            if self.playlist_stop.wait(duration_s):
+                break
+
+        with self.lock:
+            self.playlist_thread = None
+            self.playlist_started_at = None
+            self._refresh_mode_locked()
+        self._log("playlist worker stop")
+
+    def start_playlist(self) -> dict[str, Any]:
+        with self.lock:
+            if not self.playlist:
+                raise RuntimeError("playlist is empty")
+            if self.playlist_thread is not None and self.playlist_thread.is_alive():
+                return {"running": True, "already_running": True, "position": self.playlist_index}
+
+        self.stop_loop()
+        self._stop_live_theme_refresh()
+        with self.lock:
+            if not self.playlist:
+                raise RuntimeError("playlist is empty")
+            if self.playlist_thread is not None and self.playlist_thread.is_alive():
+                return {"running": True, "already_running": True, "position": self.playlist_index}
+            self.playlist_stop.clear()
+            self.playlist_started_at = time.time()
+            self.playlist_thread = threading.Thread(target=self._playlist_worker, daemon=True)
+            self.playlist_thread.start()
+            self.mode = "playlist"
+            return {"running": True, "position": self.playlist_index}
+
+    def stop_playlist(self, timeout: float = 5.0) -> dict[str, Any]:
+        with self.lock:
+            th = self.playlist_thread
+            if th is None or not th.is_alive():
+                self.playlist_thread = None
+                self._refresh_mode_locked()
+                return {"running": False, "already_stopped": True}
+            self.playlist_stop.set()
+
+        th.join(timeout=max(0.1, timeout))
+        alive = th.is_alive()
+        with self.lock:
+            if not alive:
+                self.playlist_thread = None
+                self.playlist_started_at = None
+                self._refresh_mode_locked()
+        return {"running": alive is True, "stopped": alive is False}
+
+    def scan_capture(self) -> dict[str, Any]:
+        with self.lock:
+            pcap_path = self.cfg.pcap_path
+            frame_index = self.cfg.frame_index
+        if not pcap_path.exists():
+            with self.lock:
+                self.init_present = False
+                self.frame_count = 0
+                self.last_capture_scan_at = now_iso()
+            return {
+                "available": False,
+                "init_present": False,
+                "frame_count": 0,
+                "frame_index": frame_index,
+                "pcap_path": str(pcap_path),
+                "message": "legacy replay PCAP not found; theme-doc/native display paths remain available",
+            }
+        sig = parse_usbpcap_bulk_payloads(pcap_path)
+        init_out, frames = extract_init_and_frames(sig)
+        frame_count = len(frames)
+        if frame_count <= 0:
+            raise RuntimeError("Capture nie zawiera ramek cmd=0x01")
+        if frame_index < 0 or frame_index >= frame_count:
+            raise RuntimeError(
+                f"frame_index={frame_index} poza zakresem 0..{frame_count - 1}"
+            )
+        with self.lock:
+            self.init_present = init_out is not None
+            self.frame_count = frame_count
+            self.last_capture_scan_at = now_iso()
+            return {
+                "available": True,
+                "init_present": self.init_present,
+                "frame_count": self.frame_count,
+                "frame_index": frame_index,
+                "pcap_path": str(pcap_path),
+            }
+
+    def _build_replay_cmd(self) -> list[str]:
+        return [
+            self.cfg.python_bin,
+            str(self.cfg.replay_script),
+            "--pcap",
+            str(self.cfg.pcap_path),
+            "--frame",
+            str(self.cfg.frame_index),
+            "--send-init",
+            "--recover-before-send",
+            "--drain-in-before-send",
+            "--ack-timeout-ms",
+            str(self.cfg.ack_timeout_ms),
+            "--inter-packet-delay",
+            str(self.cfg.inter_packet_delay),
+            "--loop",
+            "--frame-delay",
+            str(self.cfg.frame_delay),
+            "--connect-retries",
+            str(self.cfg.connect_retries),
+            "--connect-retry-delay",
+            str(self.cfg.connect_retry_delay),
+        ]
+
+    def _cleanup_proc_locked(self) -> None:
+        if self.proc is None:
+            return
+        code = self.proc.poll()
+        if code is not None:
+            self.last_exit_code = code
+            self.proc = None
+            self.proc_started_at = None
+            if self.live_theme_thread is not None and self.live_theme_thread.is_alive():
+                self.live_theme_stop.set()
+                error = f"display worker exited code={code}; live refresh stopped"
+                self.last_error = error
+                metrics = dict(self.live_theme_metrics)
+                metrics["last_error"] = error
+                self.live_theme_metrics = metrics
+            self._refresh_mode_locked()
+            self._log(f"worker zakończony kodem={code}")
+
+    def start_loop(self) -> dict[str, Any]:
+        with self.lock:
+            if self.playlist_thread is not None and self.playlist_thread.is_alive():
+                raise RuntimeError("playlist is running; stop playlist first")
+            self._cleanup_proc_locked()
+            scan = self.scan_capture()
+            if not bool(scan.get("available", True)):
+                self.last_error = None
+                self.mode = "idle"
+                return {
+                    "running": False,
+                    "legacy_replay_available": False,
+                    "pcap_path": str(self.cfg.pcap_path),
+                    "message": "legacy replay PCAP not found; apply a theme instead",
+                }
+            if self.proc is not None and self.proc.poll() is None:
+                return {"running": True, "pid": self.proc.pid, "already_running": True}
+
+            ensure_parent(self.cfg.child_log_file)
+            child_log = open(self.cfg.child_log_file, "a", encoding="utf-8")
+            child_log.write(
+                f"\n[{now_iso()}] start loop frame={self.cfg.frame_index} pcap={self.cfg.pcap_path}\n"
+            )
+            child_log.flush()
+
+            cmd = self._build_replay_cmd()
+            self._log("start worker: " + " ".join(cmd))
+            try:
+                self.proc = subprocess.Popen(
+                    cmd,
+                    cwd=self.cfg.workdir,
+                    stdout=child_log,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    text=True,
+                )
+                self.proc_started_at = time.time()
+                self.mode = "loop"
+                self.last_error = None
+                child_log.close()
+            except Exception as exc:
+                child_log.close()
+                self.last_error = str(exc)
+                raise
+
+            return {"running": True, "pid": self.proc.pid}
+
+    def _resolve_trcc_python(self) -> Path:
+        trcc_bin = Path(self.cfg.trcc_bin).expanduser()
+        if not trcc_bin.is_absolute():
+            trcc_bin = (self.cfg.workdir / trcc_bin).resolve()
+        if not trcc_bin.exists():
+            found = shutil.which("trcc")
+            if found:
+                trcc_bin = Path(found).resolve()
+            else:
+                raise RuntimeError(f"Brak binarki trcc: {trcc_bin}")
+
+        trcc_python = trcc_bin.parent / "python"
+        if trcc_python.exists():
+            return trcc_python
+        return Path(sys.executable).resolve()
+
+    def _start_trcc_static_worker(self, image_path: Path) -> dict[str, Any]:
+        trcc_python = self._resolve_trcc_python()
+        if not self.cfg.trcc_static_script.exists():
+            raise RuntimeError(f"Brak skryptu TRCC static worker: {self.cfg.trcc_static_script}")
+
+        cmd = [
+            str(trcc_python),
+            str(self.cfg.trcc_static_script),
+            str(image_path),
+            "--interval",
+            "0.5",
+        ]
+
+        startup_tail = ""
+        for attempt in range(3):
+            self._preflight_trcc_display_start()
+            ensure_parent(self.cfg.child_log_file)
+            child_log = open(self.cfg.child_log_file, "a", encoding="utf-8")
+            child_log.write(f"\n[{now_iso()}] start static image {image_path} attempt={attempt + 1}\n")
+            child_log.flush()
+
+            self._log("start static worker: " + " ".join(cmd))
+            try:
+                self.proc = subprocess.Popen(
+                    cmd,
+                    cwd=self.cfg.workdir,
+                    stdout=child_log,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    text=True,
+                )
+                self.proc_started_at = time.time()
+                self.mode = "static-image"
+                self.last_error = None
+                child_log.close()
+            except Exception:
+                child_log.close()
+                raise
+
+            time.sleep(1.2)
+            self._cleanup_proc_locked()
+            if self.proc is not None and self.proc.poll() is None:
+                return {"running": True, "pid": self.proc.pid, "mode": self.mode}
+
+            try:
+                startup_tail = self.cfg.child_log_file.read_text(encoding="utf-8", errors="replace")[-1600:]
+            except Exception:
+                startup_tail = ""
+            if attempt < 2 and self._trcc_startup_tail_recoverable(startup_tail):
+                self._log("static worker retry after device busy or init failure")
+                self._stop_display_worker(timeout=2.0)
+                self._recover_trcc_usb("static worker startup failed")
+                time.sleep(1.0)
+                continue
+            break
+
+        raise RuntimeError(f"static worker failed to start: {startup_tail.strip() or 'unknown error'}")
+
+    def _start_native_static_worker(
+        self,
+        image_path: Path,
+        raw_jpeg_passthrough: bool = False,
+        stop_live_refresh: bool = True,
+    ) -> dict[str, Any]:
+        if stop_live_refresh:
+            self._stop_live_theme_refresh()
+        self._stop_display_worker(timeout=2.0)
+        killed = self._kill_orphan_display_helpers()
+        time.sleep(1.0 if killed else 0.35)
+
+        ensure_parent(self.cfg.child_log_file)
+        child_log = open(self.cfg.child_log_file, "a", encoding="utf-8")
+        child_log.write(f"\n[{now_iso()}] start native static image {image_path}\n")
+        child_log.flush()
+
+        cmd = [
+            self.cfg.python_bin,
+            str(self.cfg.trofeo_script),
+            "--windows-capture-profile",
+            "--use-packet-template",
+            "--recover-before-send",
+            "--drain-in-before-send",
+            "--usb-reset-on-fail",
+            "--ack-at-end-only",
+            "--ack-timeout-ms",
+            str(WINDOWS_CAPTURE_ACK_TIMEOUT_MS),
+            "--inter-packet-delay",
+            str(WINDOWS_CAPTURE_INTER_PACKET_DELAY_S),
+            "--loop",
+            "--interval",
+            "0.050",
+            "--skip-unchanged",
+            "--keepalive-interval",
+            "0.5",
+        ]
+        if raw_jpeg_passthrough:
+            cmd.append("--raw-jpeg-passthrough")
+        cmd.append(str(image_path))
+
+        self._log("start native static worker: " + " ".join(cmd))
+        try:
+            self.proc = subprocess.Popen(
+                cmd,
+                cwd=self.cfg.workdir,
+                stdout=child_log,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+            )
+            self.proc_started_at = time.time()
+            self.mode = "static-image"
+            self.last_error = None
+            child_log.close()
+        except Exception:
+            child_log.close()
+            raise
+
+        time.sleep(1.2)
+        self._cleanup_proc_locked()
+        if self.proc is None or self.proc.poll() is not None:
+            tail = ""
+            try:
+                tail = self.cfg.child_log_file.read_text(encoding="utf-8", errors="replace")[-1200:]
+            except Exception:
+                pass
+            raise RuntimeError(f"native static worker failed to start: {tail.strip() or 'unknown error'}")
+
+        return {"running": True, "pid": self.proc.pid, "mode": self.mode}
+
+    def _start_trcc_static_overlay_worker(
+        self,
+        image_path: Path,
+        overlay_path: Path,
+        *,
+        poll_interval_s: float = 0.25,
+        keepalive_s: float = 1.5,
+    ) -> dict[str, Any]:
+        trcc_python = self._resolve_trcc_python()
+        if not self.cfg.trcc_static_overlay_script.exists():
+            raise RuntimeError(f"Brak skryptu TRCC static overlay worker: {self.cfg.trcc_static_overlay_script}")
+
+        def _read_start_tail() -> str:
+            try:
+                return self.cfg.child_log_file.read_text(encoding="utf-8", errors="replace")[-1600:]
+            except Exception:
+                return ""
+
+        cmd_base = [
+            str(trcc_python),
+            str(self.cfg.trcc_static_overlay_script),
+            str(image_path),
+            "--overlay",
+            str(overlay_path),
+            "--interval",
+            f"{max(0.05, float(poll_interval_s)):.3f}",
+            "--keepalive",
+            f"{max(0.05, float(keepalive_s)):.3f}",
+        ]
+
+        startup_tail = ""
+        for attempt in range(3):
+            self._preflight_trcc_display_start()
+            ensure_parent(self.cfg.child_log_file)
+            child_log = open(self.cfg.child_log_file, "a", encoding="utf-8")
+            child_log.write(
+                f"\n[{now_iso()}] start static overlay base={image_path} overlay={overlay_path} attempt={attempt + 1}\n"
+            )
+            child_log.flush()
+
+            self._log("start static overlay worker: " + " ".join(cmd_base))
+            try:
+                self.proc = subprocess.Popen(
+                    cmd_base,
+                    cwd=self.cfg.workdir,
+                    stdout=child_log,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    text=True,
+                )
+                self.proc_started_at = time.time()
+                self.mode = "static-image"
+                self.last_error = None
+                child_log.close()
+            except Exception:
+                child_log.close()
+                raise
+
+            time.sleep(1.0 if attempt == 0 else 1.15)
+            self._cleanup_proc_locked()
+            if self.proc is not None and self.proc.poll() is None:
+                return {"running": True, "pid": self.proc.pid, "mode": self.mode}
+
+            startup_tail = _read_start_tail().strip()
+            if attempt < 2 and self._trcc_startup_tail_recoverable(startup_tail):
+                self._log("static overlay worker retry after device busy or init failure")
+                self._stop_display_worker(timeout=2.0)
+                self._recover_trcc_usb("static overlay worker startup failed")
+                time.sleep(1.0)
+                continue
+            break
+
+        raise RuntimeError(f"static overlay worker failed to start: {startup_tail or 'unknown error'}")
+
+    def _start_trcc_animation_worker(self, animation_spec: dict[str, Any]) -> dict[str, Any]:
+        trcc_python = self._resolve_trcc_python()
+        if not self.cfg.trcc_animation_script.exists():
+            raise RuntimeError(f"Brak skryptu TRCC animation worker: {self.cfg.trcc_animation_script}")
+        frame_paths = animation_spec.get("frame_paths", [])
+        if not isinstance(frame_paths, list) or not frame_paths:
+            raise RuntimeError("animation worker failed to start: manifest has no frames")
+        missing_frames = [str(raw) for raw in frame_paths if not Path(str(raw)).expanduser().exists()]
+        if missing_frames:
+            raise RuntimeError(
+                "animation worker failed to start: missing rendered frames: "
+                + ", ".join(missing_frames[:3])
+                + (" ..." if len(missing_frames) > 3 else "")
+            )
+        undersized: list[str] = []
+        for raw in frame_paths:
+            p = Path(str(raw)).expanduser()
+            try:
+                if p.stat().st_size < 32:
+                    undersized.append(str(p))
+            except OSError:
+                undersized.append(str(p))
+        if undersized:
+            raise RuntimeError(
+                "animation worker failed to start: empty or truncated frame files: "
+                + ", ".join(undersized[:3])
+                + (" ..." if len(undersized) > 3 else "")
+            )
+
+        manifest_path = self._runtime_temp_file("trofeo-theme-anim-", ".json")
+        manifest_path.write_text(json.dumps(animation_spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        def _read_start_tail() -> str:
+            try:
+                return self.cfg.child_log_file.read_text(encoding="utf-8", errors="replace")[-1600:]
+            except Exception:
+                return ""
+
+        startup_tail = ""
+        for attempt in range(3):
+            self._preflight_trcc_display_start()
+            ensure_parent(self.cfg.child_log_file)
+            child_log = open(self.cfg.child_log_file, "a", encoding="utf-8")
+            child_log.write(f"\n[{now_iso()}] start animation manifest {manifest_path} attempt={attempt + 1}\n")
+            child_log.flush()
+
+            cmd = [
+                str(trcc_python),
+                str(self.cfg.trcc_animation_script),
+                str(manifest_path),
+            ]
+            self._log("start animation worker: " + " ".join(cmd))
+            try:
+                self.proc = subprocess.Popen(
+                    cmd,
+                    cwd=self.cfg.workdir,
+                    stdout=child_log,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    text=True,
+                )
+                self.proc_started_at = time.time()
+                self.mode = "animation"
+                self.last_error = None
+                child_log.close()
+            except Exception:
+                child_log.close()
+                raise
+
+            time.sleep(1.0 if attempt == 0 else 1.15)
+            self._cleanup_proc_locked()
+            if self.proc is not None and self.proc.poll() is None:
+                return {
+                    "running": True,
+                    "pid": self.proc.pid,
+                    "mode": self.mode,
+                    "frame_count": int(animation_spec.get("frame_count", 0)),
+                    "manifest_path": str(manifest_path),
+                }
+
+            startup_tail = _read_start_tail().strip()
+            recoverable = self._trcc_startup_tail_recoverable(startup_tail)
+            if attempt < 2 and recoverable:
+                self._log("animation worker retry after device busy, USB timeout, or LCD init failure")
+                self._stop_display_worker(timeout=2.0)
+                self._recover_trcc_usb("animation worker startup failed")
+                time.sleep(1.0)
+                continue
+            break
+
+        raise RuntimeError(f"animation worker failed to start: {startup_tail or 'unknown error'}")
+
+    def stop_loop(self, timeout: float = 5.0) -> dict[str, Any]:
+        self._stop_live_theme_refresh()
+        with self.lock:
+            self._cleanup_proc_locked()
+            if self.proc is None:
+                return {"running": False, "already_stopped": True}
+
+            proc = self.proc
+            pid = proc.pid
+            self.proc = None
+            self.proc_started_at = None
+            if self.playlist_thread is None or not self.playlist_thread.is_alive():
+                self.mode = "idle"
+
+        exit_code = self._terminate_display_process(
+            proc,
+            pid=pid,
+            timeout=timeout,
+            label="worker",
+        )
+        with self.lock:
+            if self.proc is None:
+                self.last_exit_code = exit_code
+                if self.playlist_thread is None or not self.playlist_thread.is_alive():
+                    self.mode = "idle"
+        return {"running": False, "pid": pid, "exit_code": exit_code}
+
+    def restart_loop(self) -> dict[str, Any]:
+        with self.lock:
+            active_path = self.active_theme_path
+            active_doc = deepcopy(self.active_theme_document) if isinstance(self.active_theme_document, dict) else None
+            active_live = self.active_theme_live_refresh
+            pcap_exists = self.cfg.pcap_path.exists()
+
+        self.stop_loop()
+        if active_doc is not None:
+            with self.display_lock:
+                result = self._send_theme_doc_locked(
+                    path=active_path,
+                    theme_input=active_doc,
+                    timeout_s=60.0,
+                    resume_loop=False,
+                    live_refresh=active_live,
+                    keep_live_refresh_running=False,
+                )
+            result["restarted_active_theme"] = True
+            return result
+        if not pcap_exists:
+            with self.lock:
+                self.last_error = None
+                self.mode = "idle"
+            return {
+                "running": False,
+                "legacy_replay_available": False,
+                "pcap_path": str(self.cfg.pcap_path),
+                "message": "legacy replay PCAP not found; no active theme is cached to restart",
+            }
+        return self.start_loop()
+
+    def set_frame(self, frame_index: int) -> dict[str, Any]:
+        with self.lock:
+            self.cfg.frame_index = int(frame_index)
+            self.scan_capture()
+            if self.proc is not None and self.proc.poll() is None:
+                self._log(f"frame_index -> {self.cfg.frame_index}; restart worker")
+                return self.restart_loop()
+            return {"running": False, "frame_index": self.cfg.frame_index}
+
+    def set_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        def _cached_config() -> dict[str, Any]:
+            return {
+                **self.cfg.as_json(),
+                "weather": self.stats_provider.weather_status(),
+                "volume": dict(getattr(self.stats_provider, "_last_volume_snapshot", {})),
+                "audio_eq": self.stats_provider.audio_eq_status(),
+                "game": dict(getattr(self.stats_provider, "_last_game_snapshot", {})),
+            }
+
+        if not payload:
+            proc = self.proc
+            return {
+                "running": proc is not None and proc.poll() is None,
+                "brightness_reapplied": False,
+                "brightness_reapply": None,
+                "config": _cached_config(),
+            }
+
+        if not self.lock.acquire(timeout=0.75):
+            return {
+                "running": self.proc is not None and self.proc.poll() is None,
+                "busy": True,
+                "deferred": True,
+                "message": "backend state is busy; config read returned cached values",
+                "brightness_reapplied": False,
+                "brightness_reapply": None,
+                "config": _cached_config(),
+            }
+        try:
+            restart_required = False
+            capture_config_changed = False
+            brightness_changed = False
+            brightness_reapply: dict[str, Any] | None = None
+
+            if "pcap_path" in payload:
+                self.cfg.pcap_path = to_abs(self.cfg.workdir, str(payload["pcap_path"]))
+                restart_required = True
+                capture_config_changed = True
+            if "frame_index" in payload:
+                self.cfg.frame_index = int(payload["frame_index"])
+                restart_required = True
+                capture_config_changed = True
+            if "ack_timeout_ms" in payload:
+                self.cfg.ack_timeout_ms = max(1, int(payload["ack_timeout_ms"]))
+                restart_required = True
+            if "inter_packet_delay" in payload:
+                self.cfg.inter_packet_delay = max(0.0, float(payload["inter_packet_delay"]))
+                restart_required = True
+            if "frame_delay" in payload:
+                self.cfg.frame_delay = max(0.0, float(payload["frame_delay"]))
+                restart_required = True
+            if "connect_retries" in payload:
+                self.cfg.connect_retries = max(1, int(payload["connect_retries"]))
+                restart_required = True
+            if "connect_retry_delay" in payload:
+                self.cfg.connect_retry_delay = max(0.0, float(payload["connect_retry_delay"]))
+                restart_required = True
+            if "brightness_percent" in payload:
+                next_brightness = max(0, min(150, int(payload["brightness_percent"])))
+                brightness_changed = next_brightness != int(getattr(self.cfg, "brightness_percent", 100))
+                self.cfg.brightness_percent = next_brightness
+            if any(key in payload for key in ("weather_lat", "weather_lon", "weather_location", "weather_refresh_s")):
+                lat_raw = payload.get("weather_lat")
+                lon_raw = payload.get("weather_lon")
+
+                def _opt_float(value: object) -> float | None:
+                    text = str(value or "").strip().replace(",", ".")
+                    if not text:
+                        return None
+                    try:
+                        return float(text)
+                    except ValueError:
+                        return None
+
+                self.stats_provider.set_weather_config(
+                    lat=_opt_float(lat_raw),
+                    lon=_opt_float(lon_raw),
+                    location=str(payload.get("weather_location", "")).strip(),
+                    refresh_s=float(payload.get("weather_refresh_s", 900) or 900),
+                )
+            if bool(payload.get("weather_refresh_now", False)):
+                self.stats_provider._last_weather_at = 0.0
+                self.stats_provider.read_weather_stats(blocking=False, force=True)
+            if "audio_eq_input" in payload:
+                self.stats_provider.set_audio_eq_config(
+                    input_method=payload.get("audio_eq_input"),
+                    profile=payload.get("audio_eq_profile"),
+                    sensitivity=payload.get("audio_eq_sensitivity"),
+                    restart=True,
+                )
+            elif any(key in payload for key in ("audio_eq_profile", "audio_eq_sensitivity")):
+                self.stats_provider.set_audio_eq_config(
+                    profile=payload.get("audio_eq_profile"),
+                    sensitivity=payload.get("audio_eq_sensitivity"),
+                    restart=False,
+                )
+
+            if capture_config_changed:
+                self.scan_capture()
+            if brightness_changed and not restart_required:
+                try:
+                    brightness_reapply = self._reapply_active_theme_for_brightness_locked()
+                except Exception as exc:
+                    self.last_error = f"brightness reapply failed: {exc}"
+                    self._log(self.last_error)
+            if restart_required and self.proc is not None and self.proc.poll() is None:
+                return self.restart_loop()
+            return {
+                "running": self.proc is not None and self.proc.poll() is None,
+                "brightness_reapplied": brightness_reapply is not None,
+                "brightness_reapply": brightness_reapply,
+                "config": {
+                    **self.cfg.as_json(),
+                    "weather": self.stats_provider.weather_status(),
+                    "volume": self.stats_provider.read_volume_stats(),
+                    "audio_eq": self.stats_provider.audio_eq_status(),
+                    "game": dict(getattr(self.stats_provider, "_last_game_snapshot", {})),
+                },
+            }
+        finally:
+            self.lock.release()
+
+    def send_image(
+        self,
+        image_path: str,
+        raw_jpeg_passthrough: bool = False,
+        timeout_s: float = 30.0,
+        resume_loop: bool = False,
+        stop_live_refresh: bool = True,
+    ) -> dict[str, Any]:
+        if stop_live_refresh:
+            self._stop_live_theme_refresh()
+        resolved = to_abs(self.cfg.workdir, image_path)
+        if not resolved.exists():
+            raise RuntimeError(f"Brak pliku obrazu: {resolved}")
+
+        with self.display_lock:
+            result = self._start_native_static_worker(
+                resolved,
+                raw_jpeg_passthrough=raw_jpeg_passthrough,
+                stop_live_refresh=stop_live_refresh,
+            )
+            result["image_path"] = str(resolved)
+            return result
+
+    def is_running(self) -> bool:
+        with self.lock:
+            self._cleanup_proc_locked()
+            return self.proc is not None and self.proc.poll() is None
+
+    def status(self) -> dict[str, Any]:
+        acquired = self.lock.acquire(timeout=0.25)
+        if not acquired:
+            live_metrics = dict(self.live_theme_metrics)
+            last_refresh_at = live_metrics.get("last_refresh_at")
+            if isinstance(last_refresh_at, (int, float)) and last_refresh_at > 0:
+                live_metrics["last_refresh_age_s"] = round(time.time() - float(last_refresh_at), 3)
+            proc = self.proc
+            proc_running = proc is not None and proc.poll() is None
+            live_theme_running = proc_running and self.live_theme_thread is not None and self.live_theme_thread.is_alive()
+            return {
+                "ok": True,
+                "busy": True,
+                "mode": self.mode,
+                "running": proc_running,
+                "live_theme_running": live_theme_running,
+                "live_theme_uptime_s": None
+                if self.live_theme_started_at is None
+                else round(time.time() - self.live_theme_started_at, 3),
+                "pid": None if proc is None else proc.pid,
+                "uptime_s": None if self.proc_started_at is None else round(time.time() - self.proc_started_at, 3),
+                "playlist_running": self.playlist_thread is not None and self.playlist_thread.is_alive(),
+                "playlist_uptime_s": None
+                if self.playlist_started_at is None
+                else round(time.time() - self.playlist_started_at, 3),
+                "playlist_index": self.playlist_index,
+                "playlist_count": len(self.playlist),
+                "last_error": self.last_error,
+                "last_exit_code": self.last_exit_code,
+                "init_present": self.init_present,
+                "frame_count": self.frame_count,
+                "live_theme_metrics": live_metrics,
+                "last_capture_scan_at": self.last_capture_scan_at,
+                "theme_count": len(self.themes),
+                "config": {
+                    **self.cfg.as_json(),
+                    "weather": self.stats_provider.weather_status(),
+                    "volume": self.stats_provider.read_volume_stats(),
+                    "audio_eq": self.stats_provider.audio_eq_status(),
+                    "game": dict(getattr(self.stats_provider, "_last_game_snapshot", {})),
+                },
+            }
+        try:
+            self._cleanup_proc_locked()
+            playlist_running = self.playlist_thread is not None and self.playlist_thread.is_alive()
+            proc_running = self.proc is not None and self.proc.poll() is None
+            live_theme_running = proc_running and self.live_theme_thread is not None and self.live_theme_thread.is_alive()
+            live_metrics = dict(self.live_theme_metrics)
+            last_refresh_at = live_metrics.get("last_refresh_at")
+            if isinstance(last_refresh_at, (int, float)) and last_refresh_at > 0:
+                live_metrics["last_refresh_age_s"] = round(time.time() - float(last_refresh_at), 3)
+            return {
+                "ok": True,
+                "busy": False,
+                "mode": self.mode,
+                "running": proc_running,
+                "live_theme_running": live_theme_running,
+                "live_theme_uptime_s": None
+                if self.live_theme_started_at is None
+                else round(time.time() - self.live_theme_started_at, 3),
+                "pid": None if self.proc is None else self.proc.pid,
+                "uptime_s": None if self.proc_started_at is None else round(time.time() - self.proc_started_at, 3),
+                "playlist_running": playlist_running,
+                "playlist_uptime_s": None
+                if self.playlist_started_at is None
+                else round(time.time() - self.playlist_started_at, 3),
+                "playlist_index": self.playlist_index,
+                "playlist_count": len(self.playlist),
+                "last_error": self.last_error,
+                "last_exit_code": self.last_exit_code,
+                "init_present": self.init_present,
+                "frame_count": self.frame_count,
+                "live_theme_metrics": live_metrics,
+                "last_capture_scan_at": self.last_capture_scan_at,
+                "theme_count": len(self.themes),
+                "config": {
+                    **self.cfg.as_json(),
+                    "weather": self.stats_provider.weather_status(),
+                    "volume": dict(getattr(self.stats_provider, "_last_volume_snapshot", {})),
+                    "audio_eq": self.stats_provider.audio_eq_status(),
+                    "game": dict(getattr(self.stats_provider, "_last_game_snapshot", {})),
+                },
+            }
+        finally:
+            self.lock.release()
+
+
+class ApiHandler(BaseHTTPRequestHandler):
+    controller: ReplayController | None = None
+    request_shutdown_cb: Any = None
+
+    def _write_json(self, code: int, payload: dict[str, Any]) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def _read_json_body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length)
+        if not raw:
+            return {}
+        return json.loads(raw.decode("utf-8"))
+
+    def _controller(self) -> ReplayController:
+        if self.controller is None:
+            raise RuntimeError("Controller is not initialized")
+        return self.controller
+
+    def do_GET(self):  # noqa: N802
+        path = urlparse(self.path).path
+        ctl = self._controller()
+        if path in ("/health", "/v1/health"):
+            self._write_json(200, {"ok": True, "service": "trofeo-backend", "time": now_iso()})
+            return
+        if path == "/v1/status":
+            self._write_json(200, ctl.status())
+            return
+        if path == "/v1/themes":
+            self._write_json(200, {"ok": True, "result": ctl.list_themes(), "status": ctl.status()})
+            return
+        if path == "/v1/theme-schema":
+            self._write_json(200, {"ok": True, "result": ctl.get_theme_schema(), "status": ctl.status()})
+            return
+        if path == "/v1/playlist":
+            self._write_json(200, {"ok": True, "result": ctl.list_playlist(), "status": ctl.status()})
+            return
+        if path == "/v1/bundle/export":
+            self._write_json(200, {"ok": True, "result": ctl.build_bundle(), "status": ctl.status()})
+            return
+        self._write_json(404, {"ok": False, "error": "not-found", "path": path})
+
+    def do_POST(self):  # noqa: N802
+        path = urlparse(self.path).path
+        ctl = self._controller()
+        try:
+            body = self._read_json_body()
+        except json.JSONDecodeError as exc:
+            self._write_json(400, {"ok": False, "error": f"invalid-json: {exc}"})
+            return
+
+        try:
+            if path == "/v1/start":
+                if "frame_index" in body:
+                    ctl.set_frame(int(body["frame_index"]))
+                result = ctl.start_loop()
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/stop":
+                result = ctl.stop_loop()
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/shutdown":
+                result = ctl.stop_loop()
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                callback = getattr(type(self), "request_shutdown_cb", None)
+                if callable(callback):
+                    callback("api shutdown")
+                return
+            if path == "/v1/restart":
+                result = ctl.restart_loop()
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/set-frame":
+                if "frame_index" not in body:
+                    self._write_json(400, {"ok": False, "error": "frame_index is required"})
+                    return
+                result = ctl.set_frame(int(body["frame_index"]))
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/config":
+                result = ctl.set_config(body)
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/scan":
+                result = ctl.scan_capture()
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/send-image":
+                image_path = body.get("path")
+                if not image_path:
+                    self._write_json(400, {"ok": False, "error": "path is required"})
+                    return
+                raw_passthrough = bool(body.get("raw_jpeg_passthrough", False))
+                timeout_s = float(body.get("timeout_s", 30.0))
+                resume_loop = bool(body.get("resume_loop", False))
+                result = ctl.send_image(
+                    image_path=str(image_path),
+                    raw_jpeg_passthrough=raw_passthrough,
+                    timeout_s=timeout_s,
+                    resume_loop=resume_loop,
+                )
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/themes/add":
+                name = body.get("name")
+                theme_path = body.get("path")
+                if not name or not theme_path:
+                    self._write_json(400, {"ok": False, "error": "name and path are required"})
+                    return
+                raw_passthrough = bool(body.get("raw_jpeg_passthrough", False))
+                result = ctl.add_theme(str(name), str(theme_path), raw_passthrough)
+                self._write_json(200, {"ok": True, "result": result, "themes": ctl.list_themes(), "status": ctl.status()})
+                return
+            if path == "/v1/themes/remove":
+                name = body.get("name")
+                if not name:
+                    self._write_json(400, {"ok": False, "error": "name is required"})
+                    return
+                result = ctl.remove_theme(str(name))
+                self._write_json(200, {"ok": True, "result": result, "themes": ctl.list_themes(), "status": ctl.status()})
+                return
+            if path == "/v1/themes/apply":
+                name = body.get("name")
+                if not name:
+                    self._write_json(400, {"ok": False, "error": "name is required"})
+                    return
+                timeout_s = float(body.get("timeout_s", 30.0))
+                resume_loop = bool(body.get("resume_loop", False))
+                result = ctl.apply_theme(str(name), resume_loop=resume_loop, timeout_s=timeout_s)
+                if isinstance(result, dict) and "rendered_animation" in result:
+                    compact = dict(result)
+                    try:
+                        ra = compact.get("rendered_animation")
+                        if isinstance(ra, dict):
+                            compact["rendered_animation"] = {
+                                "frame_count": int(ra.get("frame_count", 0)),
+                                "fps": float(ra.get("fps", 0.0)),
+                                "loop": bool(ra.get("loop", True)),
+                            }
+                    except Exception:
+                        pass
+                    result = compact
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/theme-doc/load":
+                theme_path = body.get("path")
+                if not theme_path:
+                    self._write_json(400, {"ok": False, "error": "path is required"})
+                    return
+                result = ctl.load_theme_doc(str(theme_path))
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/theme-doc/save":
+                theme_path = body.get("path")
+                document = body.get("document")
+                if not theme_path or not isinstance(document, dict):
+                    self._write_json(400, {"ok": False, "error": "path and document(object) are required"})
+                    return
+                result = ctl.save_theme_doc(str(theme_path), document)
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/theme-doc/preview":
+                theme_path = body.get("path")
+                document = body.get("document")
+                if not theme_path and not isinstance(document, dict):
+                    self._write_json(400, {"ok": False, "error": "path or document(object) is required"})
+                    return
+                result = ctl.render_theme_preview(
+                    path=None if not theme_path else str(theme_path),
+                    document=document if isinstance(document, dict) else None,
+                    include_image_base64=bool(body.get("include_image_base64", False)),
+                )
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/theme-doc/apply":
+                theme_path = body.get("path")
+                document = body.get("document")
+                if not theme_path and not isinstance(document, dict):
+                    self._write_json(400, {"ok": False, "error": "path or document(object) is required"})
+                    return
+                timeout_s = float(body.get("timeout_s", 30.0))
+                resume_loop = bool(body.get("resume_loop", False))
+                result = ctl.send_theme_doc(
+                    path=None if not theme_path else str(theme_path),
+                    document=document if isinstance(document, dict) else None,
+                    timeout_s=timeout_s,
+                    resume_loop=resume_loop,
+                )
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/playlist/set":
+                items = body.get("items")
+                if not isinstance(items, list):
+                    self._write_json(400, {"ok": False, "error": "items(list) is required"})
+                    return
+                result = ctl.set_playlist(items)
+                self._write_json(200, {"ok": True, "result": result, "playlist": result, "status": ctl.status()})
+                return
+            if path == "/v1/playlist/add":
+                name = body.get("name")
+                if not name:
+                    self._write_json(400, {"ok": False, "error": "name is required"})
+                    return
+                duration_s = float(body.get("duration_s", 5.0))
+                result = ctl.add_playlist_item(str(name), duration_s)
+                self._write_json(200, {"ok": True, "result": result, "playlist": result, "status": ctl.status()})
+                return
+            if path == "/v1/playlist/remove":
+                if "index" not in body:
+                    self._write_json(400, {"ok": False, "error": "index is required"})
+                    return
+                result = ctl.remove_playlist_item(int(body["index"]))
+                self._write_json(200, {"ok": True, "result": result, "playlist": result, "status": ctl.status()})
+                return
+            if path == "/v1/playlist/start":
+                result = ctl.start_playlist()
+                self._write_json(200, {"ok": True, "result": result, "playlist": ctl.list_playlist(), "status": ctl.status()})
+                return
+            if path == "/v1/playlist/stop":
+                result = ctl.stop_playlist()
+                self._write_json(200, {"ok": True, "result": result, "playlist": ctl.list_playlist(), "status": ctl.status()})
+                return
+            if path == "/v1/bundle/import":
+                bundle = body.get("bundle")
+                if not isinstance(bundle, dict):
+                    self._write_json(400, {"ok": False, "error": "bundle(object) is required"})
+                    return
+                merge = bool(body.get("merge", False))
+                result = ctl.apply_bundle(bundle, merge=merge)
+                self._write_json(
+                    200,
+                    {
+                        "ok": True,
+                        "result": result,
+                        "themes": ctl.list_themes(),
+                        "playlist": ctl.list_playlist(),
+                        "status": ctl.status(),
+                    },
+                )
+                return
+            if path == "/v1/bundle/save":
+                out_path = body.get("path")
+                if not out_path:
+                    self._write_json(400, {"ok": False, "error": "path is required"})
+                    return
+                result = ctl.save_bundle(str(out_path))
+                self._write_json(200, {"ok": True, "result": result, "status": ctl.status()})
+                return
+            if path == "/v1/bundle/load":
+                in_path = body.get("path")
+                if not in_path:
+                    self._write_json(400, {"ok": False, "error": "path is required"})
+                    return
+                merge = bool(body.get("merge", False))
+                result = ctl.load_bundle(str(in_path), merge=merge)
+                self._write_json(
+                    200,
+                    {
+                        "ok": True,
+                        "result": result,
+                        "themes": ctl.list_themes(),
+                        "playlist": ctl.list_playlist(),
+                        "status": ctl.status(),
+                    },
+                )
+                return
+
+            self._write_json(404, {"ok": False, "error": "not-found", "path": path})
+        except RuntimeError as exc:
+            self._write_json(400, {"ok": False, "error": str(exc), "status": ctl.status()})
+        except Exception as exc:
+            self._write_json(500, {"ok": False, "error": str(exc), "status": ctl.status()})
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        if self.path.startswith(("/health", "/v1/health", "/v1/status")):
+            return
+        print(f"[{now_iso()}] http {self.address_string()} {fmt % args}", flush=True)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Trofeo local backend API")
+    parser.add_argument("--workdir", default=str(Path.cwd()))
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=18777)
+    parser.add_argument("--pcap", default="dzis.pcapng")
+    parser.add_argument("--frame-index", type=int, default=0)
+    parser.add_argument("--ack-timeout-ms", type=int, default=WINDOWS_CAPTURE_ACK_TIMEOUT_MS)
+    parser.add_argument("--inter-packet-delay", type=float, default=WINDOWS_CAPTURE_INTER_PACKET_DELAY_S)
+    parser.add_argument("--frame-delay", type=float, default=0.02)
+    parser.add_argument("--connect-retries", type=int, default=20)
+    parser.add_argument("--connect-retry-delay", type=float, default=0.5)
+    parser.add_argument("--child-log-file", default=str(Path.home() / ".local/state/open-trofeo-lcd/replay-worker.log"))
+    parser.add_argument("--themes-file", default=str(Path(".trofeo-themes.json")))
+    parser.add_argument("--playlist-file", default=str(Path(".trofeo-playlist.json")))
+    parser.add_argument("--display-backend", choices=("native", "trcc"), default=None)
+    parser.add_argument("--trcc-bin", default=str(Path(".venv-trcc/bin/trcc")))
+    parser.add_argument("--brightness-percent", type=int, default=100)
+    parser.add_argument("--autostart", action="store_true")
+    parser.add_argument("--startup-theme", default=os.environ.get("OPEN_TROFEO_STARTUP_THEME", ""))
+    args = parser.parse_args()
+
+    workdir = Path(args.workdir).expanduser().resolve()
+    trcc_bin = Path(args.trcc_bin).expanduser()
+    if not trcc_bin.is_absolute():
+        trcc_bin = (workdir / trcc_bin).resolve()
+    display_backend = args.display_backend or ("trcc" if trcc_bin.exists() or shutil.which("trcc") else "native")
+    cfg = BackendConfig(
+        workdir=workdir,
+        pcap_path=to_abs(workdir, args.pcap).resolve(),
+        frame_index=max(0, int(args.frame_index)),
+        host=args.host,
+        port=int(args.port),
+        ack_timeout_ms=max(1, int(args.ack_timeout_ms)),
+        inter_packet_delay=max(0.0, float(args.inter_packet_delay)),
+        frame_delay=max(0.0, float(args.frame_delay)),
+        connect_retries=max(1, int(args.connect_retries)),
+        connect_retry_delay=max(0.0, float(args.connect_retry_delay)),
+        python_bin=os.environ.get("PYTHON_BIN", "/usr/bin/python3"),
+        replay_script=(workdir / "replay_from_pcap.py"),
+        trofeo_script=(workdir / "trofeo_lcd.py"),
+        trcc_static_script=(workdir / "scripts" / "trcc_static_image.py"),
+        trcc_static_overlay_script=(workdir / "scripts" / "trcc_static_overlay_image.py"),
+        trcc_animation_script=(workdir / "scripts" / "trcc_animated_image.py"),
+        child_log_file=Path(args.child_log_file).expanduser(),
+        themes_file=to_abs(workdir, str(args.themes_file)).resolve(),
+        playlist_file=to_abs(workdir, str(args.playlist_file)).resolve(),
+        display_backend=display_backend,
+        trcc_bin=str(trcc_bin),
+        brightness_percent=max(0, min(150, int(args.brightness_percent))),
+    )
+
+    if not cfg.replay_script.exists():
+        raise RuntimeError(f"Brak skryptu replay: {cfg.replay_script}")
+    if not cfg.trofeo_script.exists():
+        raise RuntimeError(f"Brak skryptu drivera: {cfg.trofeo_script}")
+    if not cfg.trcc_static_script.exists():
+        raise RuntimeError(f"Brak skryptu static worker: {cfg.trcc_static_script}")
+    if not cfg.trcc_static_overlay_script.exists():
+        raise RuntimeError(f"Brak skryptu static overlay worker: {cfg.trcc_static_overlay_script}")
+    if not cfg.trcc_animation_script.exists():
+        raise RuntimeError(f"Brak skryptu animation worker: {cfg.trcc_animation_script}")
+    controller = ReplayController(cfg)
+    if cfg.pcap_path.exists():
+        controller.scan_capture()
+    else:
+        controller.last_error = f"legacy replay PCAP not found: {cfg.pcap_path}"
+
+    ApiHandler.controller = controller
+    try:
+        httpd = ThreadingHTTPServer((cfg.host, cfg.port), ApiHandler)
+    except OSError as exc:
+        if getattr(exc, "errno", None) == 98:
+            raise RuntimeError(
+                f"Backend already running on http://{cfg.host}:{cfg.port} "
+                f"(port in use). Avoid starting a second backend instance."
+            ) from exc
+        raise
+    httpd.daemon_threads = True
+
+    shutdown_once = threading.Event()
+
+    def request_shutdown(reason: str) -> None:
+        if shutdown_once.is_set():
+            return
+        shutdown_once.set()
+        print(f"[{now_iso()}] {reason}, zamykam backend", flush=True)
+
+        def _shutdown() -> None:
+            try:
+                controller.stop_playlist()
+            except Exception:
+                pass
+            try:
+                controller.stop_loop()
+            finally:
+                httpd.shutdown()
+
+        threading.Thread(target=_shutdown, daemon=True).start()
+
+    def shutdown_handler(_signum, _frame):
+        request_shutdown("sygnał stop")
+
+    ApiHandler.request_shutdown_cb = request_shutdown
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
+
+    print(
+        f"[{now_iso()}] backend start http://{cfg.host}:{cfg.port} "
+        f"pcap={cfg.pcap_path} frame={cfg.frame_index} frames={controller.frame_count} "
+        f"display_backend={cfg.display_backend}",
+        flush=True,
+    )
+
+    startup_theme = str(args.startup_theme or "").strip()
+
+    def _run_startup_display() -> None:
+        if startup_theme:
+            try:
+                controller.apply_theme(startup_theme, resume_loop=False, timeout_s=45.0)
+            except Exception as exc:
+                controller.last_error = f"startup theme failed: {exc}"
+                print(f"[{now_iso()}] startup theme failed: {exc}", flush=True)
+        elif args.autostart:
+            try:
+                controller.start_loop()
+            except Exception as exc:
+                controller.last_error = f"autostart failed: {exc}"
+                print(f"[{now_iso()}] autostart failed: {exc}", flush=True)
+
+    if startup_theme or args.autostart:
+        threading.Thread(target=_run_startup_display, name="trofeo-startup-display", daemon=True).start()
+
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        request_shutdown("keyboard interrupt")
+    finally:
+        controller.stop_playlist()
+        controller.stop_loop()
+        httpd.server_close()
+        print(f"[{now_iso()}] backend stopped", flush=True)
+
+
+if __name__ == "__main__":
+    main()

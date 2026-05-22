@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+
+export PYBUILD_NAME=open-trofeo-lcd
+DEB_VERSION := $(shell dpkg-parsechangelog -S Version)
+
+%:
+	dh $@ --with python3
+
+override_dh_auto_build:
+
+override_dh_auto_test:
+
+override_dh_install:
+	dh_install
+	mkdir -p debian/open-trofeo-lcd/usr/share/open-trofeo-lcd
+	printf '%s\n' 'deb-$(DEB_VERSION)' > debian/open-trofeo-lcd/usr/share/open-trofeo-lcd/.package-source-version
+
+override_dh_builddeb:
+	dh_builddeb -- --root-owner-group

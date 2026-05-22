@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.abigordiy.open-trofeo-lcd</id>
+  <name>Open Trofeo LCD</name>
+  <summary>Linux driver and theme editor for Thermalright Trofeo LCD</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <developer_name>Abigor-DIY</developer_name>
+  <launchable type="desktop-id">io.github.abigordiy.open-trofeo-lcd.desktop</launchable>
+  <pkgname>open-trofeo-lcd</pkgname>
+  <icon type="stock">io.github.abigordiy.open-trofeo-lcd</icon>
+  <categories>
+    <category>Settings</category>
+    <category>HardwareSettings</category>
+  </categories>
+  <provides>
+    <modalias>usb:v0416p5408d*</modalias>
+  </provides>
+  <developer id="io.github.abigordiy">
+    <name>Abigor-DIY</name>
+  </developer>
+  <url type="homepage">https://github.com/Abigor-DIY/Open-Trofeo-LCD</url>
+  <url type="bugtracker">https://github.com/Abigor-DIY/Open-Trofeo-LCD/issues</url>
+  <description>
+    <p>
+      Open Trofeo LCD is a reverse-engineered Linux driver and desktop editor
+      for the Thermalright Trofeo LCD cooler display.
+    </p>
+    <p>
+      The native package installs a user backend service, udev rules for the
+      Trofeo LCD USB device, and a desktop editor. The application talks to the
+      LCD over local USB, reads desktop media metadata through MPRIS, and uses
+      the network only for optional weather data and future online theme
+      features.
+    </p>
+    <p>
+      This is a development preview. The backend, USB transfer path, Theme
+      Gallery, Theme Designer, Animation Studio and packaging flow are still
+      being refined.
+    </p>
+  </description>
+  <screenshots>
+    <screenshot type="default">
+      <image type="source" width="1600" height="900">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/open-trofeo-lcd-theme-gallery.png</image>
+      <caption>Open Trofeo LCD Theme Gallery</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1600" height="900">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/open-trofeo-lcd-theme-designer.png</image>
+      <caption>Open Trofeo LCD Theme Designer</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1600" height="900">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/open-trofeo-lcd-animation-studio.png</image>
+      <caption>Open Trofeo LCD Animation Studio</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-obsidian-pulse.png</image>
+      <caption>Bundled Obsidian Pulse theme preview</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-orbital-relay.png</image>
+      <caption>Bundled Orbital Relay theme preview</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-heritage-duality.png</image>
+      <caption>Bundled Heritage Duality theme preview</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-verdant-bloom.png</image>
+      <caption>Bundled Verdant Bloom theme preview</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-matrix-green.png</image>
+      <caption>Bundled Matrix Green theme preview</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/work/windows-cap-linux-improvements/docs/screenshots/theme-wolfstorm-forge.png</image>
+      <caption>Bundled Wolfstorm Forge theme preview</caption>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="0.1.0-dev20260520" date="2026-05-20">
+      <description>
+        <p>Development preview with safer animated LCD output, improved Theme Designer drag refresh, six refreshed starter themes, weather widgets, Now Playing/EQ improvements and experimental Linux packaging.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>

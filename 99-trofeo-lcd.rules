@@ -1,0 +1,4 @@
+# Thermalright Trofeo LCD - udev rule for non-root access
+# Install: sudo cp 99-trofeo-lcd.rules /etc/udev/rules.d/
+# Reload: sudo udevadm control --reload-rules && sudo udevadm trigger
+SUBSYSTEM=="usb", ATTR{idVendor}=="0416", ATTR{idProduct}=="5408", MODE="0666", TAG+="uaccess"

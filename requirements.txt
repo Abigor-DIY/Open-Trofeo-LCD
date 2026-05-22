@@ -1,0 +1,5 @@
+Pillow>=10.0.0
+PySide6>=6.6.0
+opencv-python-headless>=4.9.0
+pyusb>=1.2.0
+trcc-linux>=9.4.0
