@@ -1,0 +1,69 @@
+diff --git a/trofeo_gui.py b/trofeo_gui.py
+index 987a581..5f74dfc 100644
+--- a/trofeo_gui.py
++++ b/trofeo_gui.py
+@@ -15582,6 +15582,27 @@ class TrofeoGui(QMainWindow):
+     def _apply_item_position(self, collection: str, item: dict[str, Any], x: int, y: int) -> tuple[int, int, int, int]:
+         return apply_item_position(item, collection, x, y, snap=self._snap_value)
+ 
++    def _set_spin_value_if_changed(self, spin: QSpinBox | QDoubleSpinBox, value: int | float) -> bool:
++        if isinstance(spin, QDoubleSpinBox):
++            next_value = float(value)
++            if abs(float(spin.value()) - next_value) < 0.0001:
++                return False
++            spin.setValue(next_value)
++            return True
++        next_value = int(value)
++        if int(spin.value()) == next_value:
++            return False
++        spin.setValue(next_value)
++        return True
++
++    def _set_geometry_spin_values(self, rect: tuple[int, int, int, int]) -> bool:
++        changed = False
++        changed |= self._set_spin_value_if_changed(self.designer_x_spin, int(rect[0]))
++        changed |= self._set_spin_value_if_changed(self.designer_y_spin, int(rect[1]))
++        changed |= self._set_spin_value_if_changed(self.designer_w_spin, int(rect[2]))
++        changed |= self._set_spin_value_if_changed(self.designer_h_spin, int(rect[3]))
++        return changed
++
+     def _selected_nudge_step(self) -> int:
+         combo = getattr(self, "designer_nudge_step_combo", None)
+         if combo is None:
+@@ -17507,15 +17528,14 @@ class TrofeoGui(QMainWindow):
+             return False
+         item = items[index]
+         rect = self._selected_item_rect(item, collection)
++        changed = False
+         self._designer_updating = True
+         try:
+-            self.designer_x_spin.setValue(int(rect[0]))
+-            self.designer_y_spin.setValue(int(rect[1]))
+-            self.designer_w_spin.setValue(int(rect[2]))
+-            self.designer_h_spin.setValue(int(rect[3]))
++            changed = self._set_geometry_spin_values(rect)
+         finally:
+             self._designer_updating = False
+-        self._update_preview_canvas_overlay()
++        if changed:
++            self._update_preview_canvas_overlay()
+         return True
+ 
+     def _sync_drag_editor_state(self, collection: str, index: int) -> None:
+@@ -17535,13 +17555,10 @@ class TrofeoGui(QMainWindow):
+         rect = self._selected_item_rect(item, collection)
+         self._designer_updating = True
+         try:
+-            self.designer_x_spin.setValue(int(rect[0]))
+-            self.designer_y_spin.setValue(int(rect[1]))
+-            self.designer_w_spin.setValue(int(rect[2]))
+-            self.designer_h_spin.setValue(int(rect[3]))
++            self._set_geometry_spin_values(rect)
+             if collection == "images":
+-                self.designer_opacity_spin.setValue(float(item.get("opacity", 1.0)))
+-                self.designer_rotation_spin.setValue(int(item.get("rotation", 0)))
++                self._set_spin_value_if_changed(self.designer_opacity_spin, float(item.get("opacity", 1.0)))
++                self._set_spin_value_if_changed(self.designer_rotation_spin, int(item.get("rotation", 0)))
+             elif collection == "texts":
+                 self.designer_text_edit.setText(str(item.get("text", "")))
+             elif collection == "stats":

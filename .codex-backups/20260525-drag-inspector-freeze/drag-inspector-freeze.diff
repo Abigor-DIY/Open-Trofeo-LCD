@@ -1,0 +1,25 @@
+diff --git a/trofeo_gui.py b/trofeo_gui.py
+index 5f74dfc..f0d1032 100644
+--- a/trofeo_gui.py
++++ b/trofeo_gui.py
+@@ -15777,6 +15777,8 @@ class TrofeoGui(QMainWindow):
+         tabs = getattr(self, "inspector_tabs", None)
+         if tabs is None or preferred_widget is None:
+             return
++        if getattr(self, "_designer_drag_active", False) and not force:
++            return
+         if should_switch_inspector_tab(
+             current_visible=self._inspector_tab_is_visible(tabs.currentWidget()),
+             preferred_visible=self._inspector_tab_is_visible(preferred_widget),
+@@ -16162,6 +16164,11 @@ class TrofeoGui(QMainWindow):
+         self._clamp_designer_splitter_later()
+ 
+     def load_selected_designer_item(self) -> None:
++        if getattr(self, "_designer_drag_active", False):
++            drag_target = getattr(self, "_designer_drag_target", None)
++            if drag_target is not None:
++                self._sync_drag_geometry_fields(*drag_target)
++            return
+         if getattr(self, "_designer_selection_refresh_pending", False):
+             self._designer_selection_refresh_pending = False
+             timer = getattr(self, "designer_selection_refresh_timer", None)

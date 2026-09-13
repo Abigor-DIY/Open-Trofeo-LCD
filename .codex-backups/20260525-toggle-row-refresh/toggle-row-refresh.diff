@@ -1,0 +1,22 @@
+diff --git a/trofeo_gui.py b/trofeo_gui.py
+index 6174f7e..3451525 100644
+--- a/trofeo_gui.py
++++ b/trofeo_gui.py
+@@ -15690,7 +15690,7 @@ class TrofeoGui(QMainWindow):
+             return
+         items[row]["visible"] = not bool(items[row].get("visible", True))
+         self.write_designer_to_json()
+-        self.refresh_designer_element_list()
++        self._refresh_designer_list_row(row)
+         self.designer_element_list.setCurrentRow(row)
+         self._update_preview_canvas_overlay()
+         self.schedule_preview_theme_doc()
+@@ -15703,7 +15703,7 @@ class TrofeoGui(QMainWindow):
+             return
+         items[row]["locked"] = not bool(items[row].get("locked", False))
+         self.write_designer_to_json()
+-        self.refresh_designer_element_list()
++        self._refresh_designer_list_row(row)
+         self.designer_element_list.setCurrentRow(row)
+         self._update_preview_canvas_overlay()
+         self.schedule_preview_theme_doc()

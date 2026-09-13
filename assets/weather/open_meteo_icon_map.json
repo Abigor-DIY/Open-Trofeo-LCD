@@ -1,0 +1,151 @@
+{
+  "provider": "open-meteo",
+  "icon_set": "meteocons/fill",
+  "description": "WMO weather_code mapping for Open-Meteo current and daily forecasts.",
+  "fallback": {
+    "day": "not-available.png",
+    "night": "not-available.png"
+  },
+  "codes": {
+    "0": {
+      "label": "Clear sky",
+      "day": "clear-day.png",
+      "night": "clear-night.png"
+    },
+    "1": {
+      "label": "Mainly clear",
+      "day": "mostly-clear-day.png",
+      "night": "mostly-clear-night.png"
+    },
+    "2": {
+      "label": "Partly cloudy",
+      "day": "partly-cloudy-day.png",
+      "night": "partly-cloudy-night.png"
+    },
+    "3": {
+      "label": "Overcast",
+      "day": "overcast-day.png",
+      "night": "overcast-night.png"
+    },
+    "45": {
+      "label": "Fog",
+      "day": "fog-day.png",
+      "night": "fog-night.png"
+    },
+    "48": {
+      "label": "Depositing rime fog",
+      "day": "fog.png",
+      "night": "fog.png"
+    },
+    "51": {
+      "label": "Light drizzle",
+      "day": "drizzle.png",
+      "night": "drizzle.png"
+    },
+    "53": {
+      "label": "Moderate drizzle",
+      "day": "drizzle.png",
+      "night": "drizzle.png"
+    },
+    "55": {
+      "label": "Dense drizzle",
+      "day": "drizzle.png",
+      "night": "drizzle.png"
+    },
+    "56": {
+      "label": "Light freezing drizzle",
+      "day": "sleet.png",
+      "night": "sleet.png"
+    },
+    "57": {
+      "label": "Dense freezing drizzle",
+      "day": "sleet.png",
+      "night": "sleet.png"
+    },
+    "61": {
+      "label": "Slight rain",
+      "day": "rain.png",
+      "night": "rain.png"
+    },
+    "63": {
+      "label": "Moderate rain",
+      "day": "rain.png",
+      "night": "rain.png"
+    },
+    "65": {
+      "label": "Heavy rain",
+      "day": "extreme-rain.png",
+      "night": "extreme-rain.png"
+    },
+    "66": {
+      "label": "Light freezing rain",
+      "day": "sleet.png",
+      "night": "sleet.png"
+    },
+    "67": {
+      "label": "Heavy freezing rain",
+      "day": "sleet.png",
+      "night": "sleet.png"
+    },
+    "71": {
+      "label": "Slight snow fall",
+      "day": "snow.png",
+      "night": "snow.png"
+    },
+    "73": {
+      "label": "Moderate snow fall",
+      "day": "snow.png",
+      "night": "snow.png"
+    },
+    "75": {
+      "label": "Heavy snow fall",
+      "day": "extreme-snow.png",
+      "night": "extreme-snow.png"
+    },
+    "77": {
+      "label": "Snow grains",
+      "day": "snow.png",
+      "night": "snow.png"
+    },
+    "80": {
+      "label": "Slight rain showers",
+      "day": "rain.png",
+      "night": "rain.png"
+    },
+    "81": {
+      "label": "Moderate rain showers",
+      "day": "rain.png",
+      "night": "rain.png"
+    },
+    "82": {
+      "label": "Violent rain showers",
+      "day": "extreme-rain.png",
+      "night": "extreme-rain.png"
+    },
+    "85": {
+      "label": "Slight snow showers",
+      "day": "snow.png",
+      "night": "snow.png"
+    },
+    "86": {
+      "label": "Heavy snow showers",
+      "day": "extreme-snow.png",
+      "night": "extreme-snow.png"
+    },
+    "95": {
+      "label": "Thunderstorm",
+      "day": "thunderstorms-day.png",
+      "night": "thunderstorms-night.png"
+    },
+    "96": {
+      "label": "Thunderstorm with slight hail",
+      "day": "hail.png",
+      "night": "hail.png"
+    },
+    "99": {
+      "label": "Thunderstorm with heavy hail",
+      "day": "hail.png",
+      "night": "hail.png"
+    }
+  }
+}

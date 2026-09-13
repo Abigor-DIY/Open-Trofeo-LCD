@@ -1,0 +1,38 @@
+open-trofeo-lcd (0.1.0~dev20260520+resolute7) resolute; urgency=medium
+
+  * Development preview package for Ubuntu testing.
+  * Repair theme-library path validation so a theme entry is fixed when its
+    path points at a different theme document with a matching existing file.
+  * Keep all animation assets referenced by the six bundled starter themes.
+  * Add explicit AppStream package mapping so Discover can associate the
+    open-trofeo-lcd DEB update with its application metadata.
+  * Re-render and resend the active LCD theme when brightness changes, so the
+    Configuration brightness control has a visible effect on the display.
+  * Add Theme Designer auto-arrange for selected layers or all visible widgets
+    and stats, with layout buckets for media, weather, forecast, gauges,
+    progress, sparklines and EQ.
+  * Use a lowercase AppStream/Desktop ID so Discover can associate the DEB
+    package with app metadata, author, license and screenshots.
+  * Expand AppStream metadata with clearer native-package access details.
+  * Restore reliable animated-theme LCD output by keeping live overlays in
+    full 1920x462 canvas coordinates instead of using rotated crop boxes.
+  * Prevent stale Theme Designer preview renders from snapping dragged
+    elements back visually after release.
+  * Refresh and align the six bundled starter themes with safer left/top
+    margins and more consistent media, weather, EQ and telemetry placement.
+  * Add TRCC USB recovery helper for post-suspend and timeout startup paths.
+  * Install six polished starter themes and refreshed previews.
+  * Depend on CAVA/OpenCV/Numpy for the current EQ and animation workflows.
+  * Keep TRCC as an optional acceleration path; use native PyUSB by default.
+  * Refresh AppStream metadata, Discover screenshots and package icon wiring.
+  * Build binary packages with root-owned payload files.
+  * Allow the packaged backend to start without the legacy Windows PCAP file.
+  * Bundle the captured Trofeo LCD packet template used by the stable native
+    transfer path.
+  * Install user systemd templates in the DEB and make packaged backend service
+    launches go through /usr/bin/open-trofeo-lcd so the workdir is refreshed
+    after package upgrades.
+  * Install and globally enable the packaged user backend service unit.
+  * Report real package version in the UI.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Wed, 20 May 2026 20:24:00 +0200

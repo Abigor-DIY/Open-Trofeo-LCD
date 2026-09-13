@@ -5,7 +5,10 @@ System statistics sources for Open Trofeo LCD themes.
 
 from __future__ import annotations
 
+import csv
 import os
+import queue
+import socket
 import subprocess
 import time
 import re
@@ -14,9 +17,13 @@ import threading
 import hashlib
 import json
 import mimetypes
+import tempfile
+import math
+from collections import deque
 from urllib.parse import unquote, urlparse, urlencode
 from urllib.request import Request, urlopen
 from dataclasses import dataclass
+from process_memory import ProcessMemoryCache
 
 
 def _format_percent(value: float | None) -> str:
@@ -57,10 +64,76 @@ class StatsSnapshot:
 class StatsProvider:
     def __init__(self) -> None:
         self._cpu_snapshot = None
+        self._process_memory = ProcessMemoryCache()
         self._cpu_core_snapshot = None
         self._net_io_snapshot = (time.time(), 0, 0)
         self._last_volume_snapshot = {"volume_percent": "N/A", "volume_state": "N/A"}
         self._last_volume_at = 0.0
+        self._last_game_snapshot = {
+            "game_active": "no",
+            "game_name": "N/A",
+            "game_process": "N/A",
+            "game_launcher": "N/A",
+            "game_fps": "N/A",
+            "game_fps_avg": "N/A",
+            "game_fps_min": "N/A",
+            "game_fps_max": "N/A",
+            "game_fps_1pct_low": "N/A",
+            "game_fps_0_1pct_low": "N/A",
+            "game_frametime_ms": "N/A",
+            "game_frametime_avg_ms": "N/A",
+            "game_frametime_max_ms": "N/A",
+            "game_stutter_count": "N/A",
+            "game_session_frames": "N/A",
+            "game_session_time": "N/A",
+            "game_fps_source": "none",
+            "game_overlay": "N/A",
+        }
+        self._last_game_at = 0.0
+        self._mangohud_log_path = ""
+        self._mangohud_log_scan_at = 0.0
+        self._fps_probe_lock = threading.Lock()
+        self._fps_probe_snapshot = {
+            "game_fps": "N/A",
+            "game_fps_avg": "N/A",
+            "game_fps_min": "N/A",
+            "game_fps_max": "N/A",
+            "game_fps_1pct_low": "N/A",
+            "game_fps_0_1pct_low": "N/A",
+            "game_frametime_ms": "N/A",
+            "game_frametime_avg_ms": "N/A",
+            "game_frametime_max_ms": "N/A",
+            "game_stutter_count": "N/A",
+            "game_session_frames": "N/A",
+            "game_session_time": "N/A",
+            "game_fps_source": "open-trofeo-probe-waiting",
+            "game_name": "",
+            "game_process": "",
+            "game_launcher": "",
+            "game_overlay": "",
+            "probe_pid": "",
+            "probe_updated_at": 0.0,
+        }
+        self._fps_probe_history: deque[dict[str, float]] = deque(maxlen=720)
+        self._fps_probe_session_key = ""
+        self._fps_probe_session_start_at = 0.0
+        self._fps_probe_session_sample_count = 0
+        self._fps_probe_session_fps_sum = 0.0
+        self._fps_probe_session_fps_min: float | None = None
+        self._fps_probe_session_fps_max: float | None = None
+        self._fps_probe_session_frametime_sum = 0.0
+        self._fps_probe_session_frametime_count = 0
+        self._fps_probe_session_frametime_max: float | None = None
+        self._fps_probe_session_stutter_count = 0
+        state_home = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+        self._fps_log_dir = os.path.join(state_home, "open-trofeo-lcd", "fps-sessions")
+        self._fps_log_path = ""
+        self._fps_log_error = ""
+        self._fps_log_dropped_samples = 0
+        self._fps_log_queue: queue.Queue[tuple[str, list[object]] | None] = queue.Queue(maxsize=2048)
+        self._fps_log_thread = threading.Thread(target=self._fps_log_worker, name="trofeo-fps-log", daemon=True)
+        self._fps_log_thread.start()
+        self._fps_probe_socket_path = self._default_fps_probe_socket_path()
         self._gpu_type = self._detect_gpu_type()
         self._last_media_snapshot = self._default_media_snapshot()
         self._last_media_at = 0.0
@@ -81,6 +154,1217 @@ class StatsProvider:
             os.path.expanduser("~/.local/state/open-trofeo-lcd/runtime"),
             "media-covers",
         )
+        self._audio_eq_runtime_dir = os.path.join(state_home, "open-trofeo-lcd", "audio-eq")
+        self._audio_eq_lock = threading.Lock()
+        self._audio_eq_bars: list[float] = [0.0] * 32
+        self._audio_eq_raw_bars: list[float] = [0.0] * 32
+        self._audio_eq_last_shape_at = 0.0
+        self._audio_eq_updated_at = 0.0
+        self._audio_eq_status = "unavailable"
+        self._audio_eq_source = "none"
+        self._audio_eq_process: subprocess.Popen[bytes] | None = None
+        self._audio_eq_thread_started = False
+        self._audio_eq_cava_bin = self._local_or_host_cmd("cava")
+        self._audio_eq_enabled = str(os.environ.get("OPEN_TROFEO_AUDIO_EQ", "1")).strip().lower() not in {
+            "0",
+            "false",
+            "off",
+            "no",
+        }
+        self._audio_eq_framerate = self._parse_audio_eq_framerate(os.environ.get("OPEN_TROFEO_CAVA_FRAMERATE", "30"))
+        self._audio_eq_nice = self._parse_audio_eq_nice(os.environ.get("OPEN_TROFEO_CAVA_NICE", "8"))
+        self._audio_eq_input_method = self._normalize_audio_eq_input(os.environ.get("OPEN_TROFEO_CAVA_INPUT", "auto"))
+        self._audio_eq_active_input_method = "none"
+        self._audio_eq_profile = self._normalize_audio_eq_profile(os.environ.get("OPEN_TROFEO_AUDIO_EQ_PROFILE", "responsive"))
+        self._audio_eq_sensitivity = self._parse_audio_eq_sensitivity(os.environ.get("OPEN_TROFEO_AUDIO_EQ_SENSITIVITY", "1.0"))
+        self._mangohud_bin = self._local_or_host_cmd("mangohud")
+        self._weather_runtime_dir = os.path.join(state_home, "open-trofeo-lcd", "weather")
+        self._weather_cache_path = os.path.join(self._weather_runtime_dir, "open-meteo.json")
+        self._weather_icon_map = self._load_weather_icon_map()
+        self._weather_lat = self._weather_float(os.environ.get("OPEN_TROFEO_WEATHER_LAT", ""))
+        self._weather_lon = self._weather_float(os.environ.get("OPEN_TROFEO_WEATHER_LON", ""))
+        self._weather_location = os.environ.get("OPEN_TROFEO_WEATHER_LOCATION", "").strip()
+        self._weather_refresh_s = self._parse_weather_refresh_s(os.environ.get("OPEN_TROFEO_WEATHER_REFRESH_S", "900"))
+        self._last_weather_snapshot = self._default_weather_snapshot()
+        self._last_weather_at = 0.0
+        self._last_weather_error = ""
+        self._last_weather_source = "none"
+        self._weather_lock = threading.Lock()
+        self._weather_refresh_inflight = False
+        self._start_fps_probe_server()
+        if not self._audio_eq_enabled:
+            self._audio_eq_status = "disabled"
+        elif not self._audio_eq_cava_bin:
+            self._audio_eq_status = "unavailable"
+        else:
+            self._audio_eq_status = "idle"
+            if str(os.environ.get("OPEN_TROFEO_AUDIO_EQ_EAGER", "")).strip().lower() in {"1", "true", "on", "yes"}:
+                self.ensure_audio_eq_started()
+
+    @staticmethod
+    def _default_fps_probe_socket_path() -> str:
+        configured = str(os.environ.get("OPEN_TROFEO_FPS_SOCKET", "")).strip()
+        if configured:
+            return os.path.expanduser(configured)
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        return os.path.join(runtime_dir, "open-trofeo-lcd", "fps.sock")
+
+    @staticmethod
+    def _format_fps_value(value: object) -> str:
+        try:
+            fps = float(str(value).replace(",", "."))
+        except Exception:
+            return "N/A"
+        if not (0.0 < fps < 2000.0):
+            return "N/A"
+        return f"{fps:.0f}"
+
+    @staticmethod
+    def _format_frametime_value(value: object, fps_text: str = "N/A") -> str:
+        try:
+            frametime = float(str(value).replace(",", "."))
+        except Exception:
+            frametime = 0.0
+        if frametime <= 0.0 and fps_text != "N/A":
+            try:
+                fps = float(fps_text)
+                frametime = 1000.0 / fps if fps > 0 else 0.0
+            except Exception:
+                frametime = 0.0
+        if not (0.0 < frametime < 10000.0):
+            return "N/A"
+        return f"{frametime:.1f} ms"
+
+    @staticmethod
+    def _parse_probe_float(value: object) -> float | None:
+        try:
+            parsed = float(str(value).strip().replace(",", "."))
+        except Exception:
+            return None
+        if not math.isfinite(parsed):
+            return None
+        return parsed
+
+    @staticmethod
+    def _format_plain_number(value: float | None, *, decimals: int = 0, suffix: str = "") -> str:
+        if value is None or not math.isfinite(value):
+            return "N/A"
+        if decimals <= 0:
+            return f"{value:.0f}{suffix}"
+        return f"{value:.{decimals}f}{suffix}"
+
+    @staticmethod
+    def _format_duration(seconds: float | None) -> str:
+        if seconds is None or not math.isfinite(seconds) or seconds < 0:
+            return "N/A"
+        total = int(seconds)
+        hours, rem = divmod(total, 3600)
+        minutes, secs = divmod(rem, 60)
+        if hours:
+            return f"{hours}h {minutes:02d}m"
+        if minutes:
+            return f"{minutes}m {secs:02d}s"
+        return f"{secs}s"
+
+    @staticmethod
+    def _percentile_low(values: list[float], fraction: float) -> float | None:
+        clean = sorted(v for v in values if math.isfinite(v) and v > 0.0)
+        if not clean:
+            return None
+        count = max(1, int(math.ceil(len(clean) * max(0.0, min(1.0, fraction)))))
+        return sum(clean[:count]) / count
+
+    @staticmethod
+    def _fps_log_slug(value: object) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "-", str(value or "game").strip().lower()).strip("-")
+        return slug[:48] or "game"
+
+    def _reset_fps_session_locked(self, now: float, snapshot: dict[str, object]) -> None:
+        self._fps_probe_history.clear()
+        self._fps_probe_session_start_at = now
+        self._fps_probe_session_sample_count = 0
+        self._fps_probe_session_fps_sum = 0.0
+        self._fps_probe_session_fps_min = None
+        self._fps_probe_session_fps_max = None
+        self._fps_probe_session_frametime_sum = 0.0
+        self._fps_probe_session_frametime_count = 0
+        self._fps_probe_session_frametime_max = None
+        self._fps_probe_session_stutter_count = 0
+        day = time.strftime("%Y-%m-%d", time.localtime(now))
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
+        game_slug = self._fps_log_slug(snapshot.get("game_name"))
+        pid_slug = self._fps_log_slug(snapshot.get("probe_pid") or "unknown")
+        self._fps_log_path = os.path.join(
+            self._fps_log_dir,
+            day,
+            f"{stamp}-{game_slug}-pid-{pid_slug}.csv",
+        )
+        self._fps_log_error = ""
+
+    def _update_fps_session_stats_locked(self, fps: float | None, frametime_ms: float | None) -> None:
+        if fps is not None and math.isfinite(fps) and fps > 0.0:
+            self._fps_probe_session_sample_count += 1
+            self._fps_probe_session_fps_sum += fps
+            self._fps_probe_session_fps_min = (
+                fps
+                if self._fps_probe_session_fps_min is None
+                else min(self._fps_probe_session_fps_min, fps)
+            )
+            self._fps_probe_session_fps_max = (
+                fps
+                if self._fps_probe_session_fps_max is None
+                else max(self._fps_probe_session_fps_max, fps)
+            )
+        if frametime_ms is not None and math.isfinite(frametime_ms) and frametime_ms > 0.0:
+            self._fps_probe_session_frametime_count += 1
+            self._fps_probe_session_frametime_sum += frametime_ms
+            self._fps_probe_session_frametime_max = (
+                frametime_ms
+                if self._fps_probe_session_frametime_max is None
+                else max(self._fps_probe_session_frametime_max, frametime_ms)
+            )
+            if frametime_ms >= 33.3:
+                self._fps_probe_session_stutter_count += 1
+
+    @staticmethod
+    def _fps_log_number(value: object) -> object:
+        text = str(value or "").replace(" ms", "").strip()
+        return "" if text == "N/A" else text
+
+    def _queue_fps_log_sample_locked(
+        self,
+        *,
+        now: float,
+        snapshot: dict[str, object],
+        fps: float | None,
+        frametime_ms: float | None,
+    ) -> None:
+        if not self._fps_log_path:
+            return
+        row: list[object] = [
+            f"{now:.3f}",
+            time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(now)),
+            f"{max(0.0, now - self._fps_probe_session_start_at):.3f}",
+            "" if fps is None else f"{fps:.3f}",
+            "" if frametime_ms is None else f"{frametime_ms:.3f}",
+            self._fps_log_number(snapshot.get("game_fps_avg")),
+            self._fps_log_number(snapshot.get("game_fps_min")),
+            self._fps_log_number(snapshot.get("game_fps_max")),
+            self._fps_log_number(snapshot.get("game_fps_1pct_low")),
+            self._fps_log_number(snapshot.get("game_fps_0_1pct_low")),
+            self._fps_log_number(snapshot.get("game_frametime_avg_ms")),
+            self._fps_log_number(snapshot.get("game_frametime_max_ms")),
+            self._fps_log_number(snapshot.get("game_stutter_count")),
+            self._fps_log_number(snapshot.get("game_session_frames")),
+            str(snapshot.get("game_name") or ""),
+            str(snapshot.get("game_launcher") or ""),
+            str(snapshot.get("game_fps_source") or ""),
+            str(snapshot.get("probe_pid") or ""),
+        ]
+        try:
+            self._fps_log_queue.put_nowait((self._fps_log_path, row))
+        except queue.Full:
+            self._fps_log_dropped_samples += 1
+
+    def _fps_log_worker(self) -> None:
+        header = [
+            "unix_timestamp",
+            "local_time",
+            "session_elapsed_s",
+            "fps",
+            "frametime_ms",
+            "session_avg_fps",
+            "session_min_fps",
+            "session_max_fps",
+            "one_percent_low_fps_60s",
+            "zero_point_one_percent_low_fps_60s",
+            "session_avg_frametime_ms",
+            "session_max_frametime_ms",
+            "session_stutter_samples",
+            "session_frames",
+            "game_name",
+            "launcher",
+            "source",
+            "pid",
+        ]
+        active_path = ""
+        handle = None
+        writer = None
+        while True:
+            item = self._fps_log_queue.get()
+            if item is None:
+                if handle is not None:
+                    try:
+                        handle.close()
+                    except OSError:
+                        pass
+                self._fps_log_queue.task_done()
+                return
+            path, row = item
+            try:
+                if path != active_path or handle is None or writer is None:
+                    if handle is not None:
+                        handle.close()
+                    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+                    write_header = not os.path.exists(path) or os.path.getsize(path) == 0
+                    handle = open(path, "a", encoding="utf-8", newline="", buffering=1)
+                    try:
+                        os.chmod(path, 0o600)
+                    except OSError:
+                        pass
+                    writer = csv.writer(handle)
+                    active_path = path
+                    if write_header:
+                        writer.writerow(header)
+                writer.writerow(row)
+                with self._fps_probe_lock:
+                    self._fps_log_error = ""
+            except Exception as exc:
+                with self._fps_probe_lock:
+                    self._fps_log_error = str(exc)[:240]
+                if handle is not None:
+                    try:
+                        handle.close()
+                    except OSError:
+                        pass
+                handle = None
+                writer = None
+                active_path = ""
+            finally:
+                self._fps_log_queue.task_done()
+
+    def close_fps_logging(self, timeout_s: float = 2.0) -> None:
+        if not self._fps_log_thread.is_alive():
+            return
+        try:
+            self._fps_log_queue.put(None, timeout=max(0.1, timeout_s))
+        except queue.Full:
+            return
+        self._fps_log_thread.join(timeout=max(0.1, timeout_s))
+
+    def _fps_history_stats_locked(self, now: float) -> dict[str, str]:
+        while self._fps_probe_history and now - float(self._fps_probe_history[0].get("at", 0.0)) > 120.0:
+            self._fps_probe_history.popleft()
+        recent = [sample for sample in self._fps_probe_history if now - float(sample.get("at", 0.0)) <= 60.0]
+        fps_values = [float(sample["fps"]) for sample in recent if float(sample.get("fps", 0.0)) > 0.0]
+        frame_values = [float(sample["frametime_ms"]) for sample in recent if float(sample.get("frametime_ms", 0.0)) > 0.0]
+        avg_fps = (
+            self._fps_probe_session_fps_sum / self._fps_probe_session_sample_count
+            if self._fps_probe_session_sample_count > 0
+            else None
+        )
+        avg_frame = (
+            self._fps_probe_session_frametime_sum / self._fps_probe_session_frametime_count
+            if self._fps_probe_session_frametime_count > 0
+            else None
+        )
+        return {
+            "game_fps_avg": self._format_plain_number(avg_fps),
+            "game_fps_min": self._format_plain_number(self._fps_probe_session_fps_min),
+            "game_fps_max": self._format_plain_number(self._fps_probe_session_fps_max),
+            "game_fps_1pct_low": self._format_plain_number(self._percentile_low(fps_values, 0.01)),
+            "game_fps_0_1pct_low": self._format_plain_number(self._percentile_low(fps_values, 0.001)),
+            "game_frametime_avg_ms": self._format_plain_number(avg_frame, decimals=1, suffix=" ms"),
+            "game_frametime_max_ms": self._format_plain_number(self._fps_probe_session_frametime_max, decimals=1, suffix=" ms"),
+            "game_stutter_count": str(self._fps_probe_session_stutter_count) if self._fps_probe_session_frametime_count else "N/A",
+            "game_session_time": self._format_duration(now - self._fps_probe_session_start_at if self._fps_probe_session_start_at > 0 else None),
+        }
+
+    def _start_fps_probe_server(self) -> None:
+        path = self._fps_probe_socket_path
+        if not path:
+            return
+
+        def _worker() -> None:
+            sock: socket.socket | None = None
+            try:
+                parent = os.path.dirname(path)
+                os.makedirs(parent, mode=0o700, exist_ok=True)
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+                try:
+                    sock.bind(path)
+                except OSError:
+                    return
+                try:
+                    os.chmod(path, 0o600)
+                except OSError:
+                    pass
+                sock.settimeout(1.0)
+                while True:
+                    try:
+                        raw, _addr = sock.recvfrom(4096)
+                    except socket.timeout:
+                        continue
+                    except OSError:
+                        break
+                    self._accept_fps_probe_payload(raw)
+            finally:
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except OSError:
+                        pass
+
+        threading.Thread(target=_worker, name="trofeo-fps-probe", daemon=True).start()
+
+    def _accept_fps_probe_payload(self, raw: bytes) -> None:
+        try:
+            payload = json.loads(raw.decode("utf-8", "replace"))
+        except Exception:
+            return
+        if not isinstance(payload, dict):
+            return
+        fps_text = self._format_fps_value(payload.get("fps", payload.get("game_fps", "")))
+        frametime_text = self._format_frametime_value(
+            payload.get("frametime_ms", payload.get("game_frametime_ms", "")),
+            fps_text,
+        )
+        if fps_text == "N/A" and frametime_text == "N/A":
+            return
+        now = time.time()
+        fps_float = self._parse_probe_float(payload.get("fps", payload.get("game_fps", "")))
+        frametime_float = self._parse_probe_float(payload.get("frametime_ms", payload.get("game_frametime_ms", "")))
+        if fps_float is not None and not (0.0 < fps_float < 2000.0):
+            fps_float = None
+        if frametime_float is not None and not (0.0 < frametime_float < 10000.0):
+            frametime_float = None
+        if (frametime_float is None or frametime_float <= 0.0) and fps_float is not None and fps_float > 0.0:
+            frametime_float = 1000.0 / fps_float
+        session_frames = str(payload.get("session_frames") or payload.get("frame_count") or "").strip()
+        snapshot = {
+            "game_fps": fps_text,
+            "game_frametime_ms": frametime_text,
+            "game_fps_source": str(payload.get("source") or "open-trofeo-probe")[:48],
+            "game_name": str(payload.get("game_name") or payload.get("name") or "")[:80],
+            "game_process": str(payload.get("game_process") or payload.get("process") or "")[:80],
+            "game_launcher": str(payload.get("game_launcher") or payload.get("launcher") or "")[:48],
+            "game_overlay": str(payload.get("game_overlay") or payload.get("overlay") or "none")[:80],
+            "probe_pid": str(payload.get("pid") or "")[:32],
+            "game_session_frames": session_frames if session_frames else "N/A",
+            "probe_updated_at": now,
+        }
+        with self._fps_probe_lock:
+            session_key = "|".join(
+                [
+                    str(snapshot.get("probe_pid") or ""),
+                    str(snapshot.get("game_name") or ""),
+                    str(snapshot.get("game_launcher") or ""),
+                ]
+            )
+            previous_at = float(self._fps_probe_snapshot.get("probe_updated_at") or 0.0)
+            if session_key != self._fps_probe_session_key or (previous_at > 0.0 and now - previous_at > 8.0):
+                self._fps_probe_session_key = session_key
+                self._reset_fps_session_locked(now, snapshot)
+            if fps_float is not None or frametime_float is not None:
+                self._fps_probe_history.append(
+                    {
+                        "at": now,
+                        "fps": max(0.0, fps_float or 0.0),
+                        "frametime_ms": max(0.0, frametime_float or 0.0),
+                    }
+                )
+            self._update_fps_session_stats_locked(fps_float, frametime_float)
+            snapshot.update(self._fps_history_stats_locked(now))
+            snapshot["game_fps_log_path"] = self._fps_log_path
+            self._queue_fps_log_sample_locked(
+                now=now,
+                snapshot=snapshot,
+                fps=fps_float,
+                frametime_ms=frametime_float,
+            )
+            self._fps_probe_snapshot = snapshot
+        game_snapshot = dict(self._last_game_snapshot)
+        game_snapshot.update(
+            {
+                "game_active": "yes",
+                "game_fps": snapshot["game_fps"],
+                "game_frametime_ms": snapshot["game_frametime_ms"],
+                "game_fps_source": snapshot["game_fps_source"],
+            }
+        )
+        for key in (
+            "game_fps_avg",
+            "game_fps_min",
+            "game_fps_max",
+            "game_fps_1pct_low",
+            "game_fps_0_1pct_low",
+            "game_frametime_avg_ms",
+            "game_frametime_max_ms",
+            "game_stutter_count",
+            "game_session_frames",
+            "game_session_time",
+        ):
+            game_snapshot[key] = snapshot.get(key, "N/A")
+        for key in ("game_name", "game_process", "game_launcher", "game_overlay"):
+            value = str(snapshot.get(key) or "").strip()
+            if value:
+                game_snapshot[key] = value
+        self._last_game_snapshot = game_snapshot
+        self._last_game_at = now
+
+    def fps_probe_status(self) -> dict[str, object]:
+        with self._fps_probe_lock:
+            snapshot = dict(self._fps_probe_snapshot)
+            log_path = self._fps_log_path
+            log_error = self._fps_log_error
+            dropped_samples = self._fps_log_dropped_samples
+        updated_at = float(snapshot.get("probe_updated_at") or 0.0)
+        age = time.time() - updated_at if updated_at > 0 else None
+        session = {
+            key: str(snapshot.get(key) or "N/A")
+            for key in (
+                "game_name",
+                "game_launcher",
+                "game_fps",
+                "game_fps_avg",
+                "game_fps_min",
+                "game_fps_max",
+                "game_fps_1pct_low",
+                "game_fps_0_1pct_low",
+                "game_frametime_ms",
+                "game_frametime_avg_ms",
+                "game_frametime_max_ms",
+                "game_stutter_count",
+                "game_session_frames",
+                "game_session_time",
+                "game_fps_source",
+            )
+        }
+        return {
+            "socket_path": self._fps_probe_socket_path,
+            "active": "yes" if age is not None and age <= 2.5 else "no",
+            "age_ms": "N/A" if age is None else f"{int(age * 1000)}",
+            "source": str(snapshot.get("game_fps_source") or "open-trofeo-probe-waiting"),
+            "log_path": log_path,
+            "log_error": log_error,
+            "log_dropped_samples": dropped_samples,
+            "session": session,
+        }
+
+    def _read_fps_probe_stats(self) -> dict[str, str] | None:
+        with self._fps_probe_lock:
+            snapshot = dict(self._fps_probe_snapshot)
+        updated_at = float(snapshot.get("probe_updated_at") or 0.0)
+        if updated_at <= 0 or (time.time() - updated_at) > 2.5:
+            return None
+        fps = str(snapshot.get("game_fps") or "N/A")
+        frametime = str(snapshot.get("game_frametime_ms") or "N/A")
+        if fps == "N/A" and frametime == "N/A":
+            return None
+        return {key: str(value) for key, value in snapshot.items() if key != "probe_updated_at"}
+
+    def game_status(self) -> dict[str, str]:
+        out = dict(self._last_game_snapshot)
+        source = str(out.get("game_fps_source") or "")
+        if source.startswith("open-trofeo") and self._read_fps_probe_stats() is None:
+            out["game_fps"] = "N/A"
+            out["game_frametime_ms"] = "N/A"
+            for key in (
+                "game_fps_avg",
+                "game_fps_min",
+                "game_fps_max",
+                "game_fps_1pct_low",
+                "game_fps_0_1pct_low",
+                "game_frametime_avg_ms",
+                "game_frametime_max_ms",
+                "game_stutter_count",
+                "game_session_frames",
+                "game_session_time",
+            ):
+                out[key] = "N/A"
+            out["game_fps_source"] = "open-trofeo-probe-waiting"
+        return out
+
+    def _start_audio_eq_thread(self) -> None:
+        if self._audio_eq_thread_started:
+            return
+        if not self._audio_eq_enabled:
+            self._audio_eq_status = "disabled"
+            return
+        if not self._audio_eq_cava_bin:
+            self._audio_eq_status = "unavailable"
+            return
+        self._audio_eq_thread_started = True
+        thread = threading.Thread(target=self._audio_eq_worker, name="trofeo-audio-eq", daemon=True)
+        thread.start()
+
+    def ensure_audio_eq_started(self) -> dict[str, object]:
+        self._start_audio_eq_thread()
+        return self.audio_eq_status()
+
+    @staticmethod
+    def _normalize_audio_eq_input(value: object) -> str:
+        method = str(value or "auto").strip().lower() or "auto"
+        if method not in {"auto", "pulse", "pipewire", "alsa", "fifo", "sndio", "oss", "portaudio"}:
+            return "pulse"
+        return method
+
+    def _audio_eq_input_candidates(self) -> list[str]:
+        method = self._normalize_audio_eq_input(self._audio_eq_input_method)
+        if method == "auto":
+            return ["pipewire", "pulse", "alsa"]
+        return [method]
+
+    @staticmethod
+    def _normalize_audio_eq_profile(value: object) -> str:
+        profile = str(value or "balanced").strip().lower() or "balanced"
+        if profile not in {"responsive", "balanced", "smooth"}:
+            return "balanced"
+        return profile
+
+    @staticmethod
+    def _parse_audio_eq_sensitivity(value: object) -> float:
+        try:
+            return max(0.35, min(2.5, float(value)))
+        except (TypeError, ValueError):
+            return 1.0
+
+    @staticmethod
+    def _parse_audio_eq_framerate(value: object) -> int:
+        try:
+            return max(10, min(60, int(float(value))))
+        except (TypeError, ValueError):
+            return 30
+
+    @staticmethod
+    def _parse_audio_eq_nice(value: object) -> int:
+        try:
+            return max(0, min(19, int(float(value))))
+        except (TypeError, ValueError):
+            return 8
+
+    def _audio_eq_command(self, config_path: str) -> list[str]:
+        cmd = [*self._audio_eq_cava_bin, "-p", config_path]
+        nice_value = int(getattr(self, "_audio_eq_nice", 8) or 0)
+        nice_bin = shutil.which("nice") if nice_value > 0 else None
+        if nice_bin:
+            return [nice_bin, "-n", str(nice_value), *cmd]
+        return cmd
+
+    @staticmethod
+    def _audio_eq_profile_settings(profile: str) -> dict[str, float]:
+        if profile == "responsive":
+            return {"attack": 0.010, "release": 0.060, "gate": 0.008, "gamma": 0.62, "blend": 0.03}
+        if profile == "smooth":
+            return {"attack": 0.045, "release": 0.220, "gate": 0.022, "gamma": 0.78, "blend": 0.16}
+        return {"attack": 0.020, "release": 0.105, "gate": 0.014, "gamma": 0.68, "blend": 0.07}
+
+    def set_audio_eq_config(
+        self,
+        *,
+        input_method: object | None = None,
+        profile: object | None = None,
+        sensitivity: object | None = None,
+        restart: bool = True,
+    ) -> dict[str, object]:
+        if input_method is not None:
+            self._audio_eq_input_method = self._normalize_audio_eq_input(input_method)
+        if profile is not None:
+            self._audio_eq_profile = self._normalize_audio_eq_profile(profile)
+        if sensitivity is not None:
+            self._audio_eq_sensitivity = self._parse_audio_eq_sensitivity(sensitivity)
+        if restart:
+            with self._audio_eq_lock:
+                self._audio_eq_bars = [0.0] * 32
+                self._audio_eq_raw_bars = [0.0] * 32
+                self._audio_eq_last_shape_at = 0.0
+                self._audio_eq_updated_at = 0.0
+                self._audio_eq_status = "restarting" if self._audio_eq_cava_bin else "unavailable"
+                self._audio_eq_source = "cava" if self._audio_eq_cava_bin else "none"
+                self._audio_eq_active_input_method = "none"
+            proc = self._audio_eq_process
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            self._start_audio_eq_thread()
+        return self.audio_eq_status()
+
+    def _audio_eq_config_path(self, input_method: str | None = None) -> str:
+        runtime_dir = self._audio_eq_runtime_dir
+        try:
+            os.makedirs(runtime_dir, exist_ok=True)
+        except OSError:
+            runtime_dir = os.path.join(tempfile.gettempdir(), "open-trofeo-lcd", "audio-eq")
+            os.makedirs(runtime_dir, exist_ok=True)
+        path = os.path.join(runtime_dir, "cava.conf")
+        input_method = self._normalize_audio_eq_input(input_method or self._audio_eq_input_method)
+        if input_method == "auto":
+            input_method = "pipewire"
+        framerate = int(getattr(self, "_audio_eq_framerate", 30) or 30)
+        content = "\n".join(
+            [
+                "[general]",
+                "bars = 32",
+                f"framerate = {framerate}",
+                "autosens = 1",
+                "",
+                "[input]",
+                f"method = {input_method}",
+                "",
+                "[output]",
+                "method = raw",
+                "data_format = ascii",
+                "ascii_max_range = 1000",
+                "channels = mono",
+                "",
+            ]
+        )
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(content)
+        except Exception:
+            pass
+        return path
+
+    @staticmethod
+    def _parse_audio_eq_line(raw: bytes) -> list[float]:
+        if not raw:
+            return []
+        if raw.startswith(b"\x1b]") or raw.startswith(b"\x1b["):
+            return []
+        text = raw.decode("utf-8", errors="ignore").strip()
+        if re.search(r"[A-Za-z]", text):
+            return []
+        numbers = [float(match) for match in re.findall(r"-?\d+(?:\.\d+)?", text)]
+        if len(numbers) >= 2:
+            peak = max(1.0, max(numbers))
+            scale = 1000.0 if peak <= 1000.0 else peak
+            return [max(0.0, min(1.0, value / scale)) for value in numbers[:64]]
+        values = [byte for byte in raw.strip() if byte not in (10, 13, 59, 32, 9)]
+        if not values:
+            return []
+        if len(values) < 2:
+            return []
+        peak = max(1, max(values))
+        return [max(0.0, min(1.0, value / peak)) for value in values[:64]]
+
+    @staticmethod
+    def _resample_audio_eq_levels(levels: list[float], count: int = 32) -> list[float]:
+        clean = [max(0.0, min(1.0, float(value))) for value in levels if isinstance(value, (int, float))]
+        if not clean:
+            return [0.0] * count
+        if len(clean) == count:
+            return clean
+        if len(clean) == 1:
+            return [clean[0]] * count
+        out: list[float] = []
+        for idx in range(count):
+            pos = (idx / float(max(1, count - 1))) * (len(clean) - 1)
+            left = int(math.floor(pos))
+            right = min(len(clean) - 1, left + 1)
+            frac = pos - left
+            out.append(clean[left] * (1.0 - frac) + clean[right] * frac)
+        return out
+
+    def _shape_audio_eq_levels_locked(self, levels: list[float], now: float) -> list[float]:
+        raw = self._resample_audio_eq_levels(levels, 32)
+        previous = self._audio_eq_bars if len(self._audio_eq_bars) == 32 else [0.0] * 32
+        dt = max(1.0 / 120.0, min(0.25, now - self._audio_eq_last_shape_at)) if self._audio_eq_last_shape_at > 0 else 1.0 / 30.0
+        settings = self._audio_eq_profile_settings(self._audio_eq_profile)
+        attack = 1.0 - math.exp(-dt / settings["attack"])
+        release = 1.0 - math.exp(-dt / settings["release"])
+        shaped: list[float] = []
+        gate = settings["gate"]
+        gamma = settings["gamma"]
+        sensitivity = self._audio_eq_sensitivity
+        for idx, value in enumerate(raw):
+            if value <= gate:
+                target = 0.0
+            else:
+                target = min(1.0, (((value - gate) / (1.0 - gate)) ** gamma) * sensitivity)
+            prev = previous[idx]
+            alpha = attack if target >= prev else release
+            shaped.append(prev + (target - prev) * alpha)
+        if len(shaped) >= 3:
+            blend = settings["blend"]
+            smoothed = list(shaped)
+            for idx in range(1, len(shaped) - 1):
+                smoothed[idx] = shaped[idx] * (1.0 - blend * 2.0) + shaped[idx - 1] * blend + shaped[idx + 1] * blend
+            shaped = smoothed
+        self._audio_eq_raw_bars = raw
+        self._audio_eq_last_shape_at = now
+        return [max(0.0, min(1.0, value)) for value in shaped]
+
+    def _audio_eq_worker(self) -> None:
+        input_attempt = 0
+        while True:
+            try:
+                candidates = self._audio_eq_input_candidates()
+                active_input = candidates[input_attempt % len(candidates)]
+                config_path = self._audio_eq_config_path(active_input)
+                with self._audio_eq_lock:
+                    self._audio_eq_status = "starting"
+                    self._audio_eq_source = "cava"
+                    self._audio_eq_active_input_method = active_input
+                process = subprocess.Popen(
+                    self._audio_eq_command(config_path),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+                self._audio_eq_process = process
+                levels_seen = False
+                with self._audio_eq_lock:
+                    self._audio_eq_status = "running"
+                    self._audio_eq_source = "cava"
+                    self._audio_eq_active_input_method = active_input
+                assert process.stdout is not None
+                for line in iter(process.stdout.readline, b""):
+                    levels = self._parse_audio_eq_line(line)
+                    if not levels:
+                        continue
+                    levels_seen = True
+                    now = time.time()
+                    with self._audio_eq_lock:
+                        self._audio_eq_bars = self._shape_audio_eq_levels_locked(levels, now)
+                        self._audio_eq_updated_at = now
+                        self._audio_eq_status = "running"
+                        self._audio_eq_source = "cava"
+                return_code = process.wait(timeout=1.0)
+                if levels_seen:
+                    input_attempt = 0
+                elif self._audio_eq_input_method == "auto":
+                    input_attempt += 1
+                if return_code:
+                    with self._audio_eq_lock:
+                        self._audio_eq_status = f"error:cava-exit-{return_code}"
+                        self._audio_eq_source = "cava"
+            except Exception as exc:
+                with self._audio_eq_lock:
+                    self._audio_eq_status = f"error:{type(exc).__name__}"
+                    self._audio_eq_source = "cava"
+                if self._audio_eq_input_method == "auto":
+                    input_attempt += 1
+            finally:
+                process = self._audio_eq_process
+                self._audio_eq_process = None
+                if process is not None and process.poll() is None:
+                    try:
+                        process.terminate()
+                    except Exception:
+                        pass
+            time.sleep(5.0)
+
+    def read_audio_eq_stats(self) -> dict[str, str]:
+        now = time.time()
+        with self._audio_eq_lock:
+            bars = list(self._audio_eq_bars)
+            raw_bars = list(self._audio_eq_raw_bars)
+            updated_at = float(self._audio_eq_updated_at or 0.0)
+            status = str(self._audio_eq_status or "unavailable")
+            source = str(self._audio_eq_source or "none")
+            active_input = str(self._audio_eq_active_input_method or "none")
+        age_ms = int((now - updated_at) * 1000) if updated_at > 0 else -1
+        if status == "running" and age_ms > 1800:
+            status = "stale"
+        return {
+            "audio_eq_bars": json.dumps(bars, separators=(",", ":")),
+            "audio_eq_raw_bars": json.dumps(raw_bars, separators=(",", ":")),
+            "audio_eq_source": source,
+            "audio_eq_status": status,
+            "audio_eq_age_ms": "N/A" if age_ms < 0 else str(age_ms),
+            "audio_eq_active_input": active_input,
+        }
+
+    def audio_eq_status(self) -> dict[str, object]:
+        stats = self.read_audio_eq_stats()
+        bars: list[float] = []
+        raw_bars: list[float] = []
+        try:
+            parsed = json.loads(stats.get("audio_eq_bars", "[]"))
+            if isinstance(parsed, list):
+                for value in parsed:
+                    try:
+                        bars.append(max(0.0, min(1.0, float(value))))
+                    except (TypeError, ValueError):
+                        continue
+        except Exception:
+            bars = []
+        try:
+            parsed_raw = json.loads(stats.get("audio_eq_raw_bars", "[]"))
+            if isinstance(parsed_raw, list):
+                for value in parsed_raw:
+                    try:
+                        raw_bars.append(max(0.0, min(1.0, float(value))))
+                    except (TypeError, ValueError):
+                        continue
+        except Exception:
+            raw_bars = []
+        return {
+            "status": stats.get("audio_eq_status", "unavailable"),
+            "source": stats.get("audio_eq_source", "none"),
+            "age_ms": stats.get("audio_eq_age_ms", "N/A"),
+            "bar_count": len(bars),
+            "peak": round(max(bars), 3) if bars else 0.0,
+            "raw_peak": round(max(raw_bars), 3) if raw_bars else 0.0,
+            "cava_available": bool(self._audio_eq_cava_bin),
+            "enabled": bool(self._audio_eq_enabled),
+            "thread_started": bool(self._audio_eq_thread_started),
+            "framerate": int(getattr(self, "_audio_eq_framerate", 30) or 30),
+            "nice": int(getattr(self, "_audio_eq_nice", 8) or 0),
+            "input_method": self._audio_eq_input_method,
+            "active_input": stats.get("audio_eq_active_input", "none"),
+            "profile": self._audio_eq_profile,
+            "sensitivity": round(self._audio_eq_sensitivity, 3),
+            "config_dir": self._audio_eq_runtime_dir,
+        }
+
+    @staticmethod
+    def _parse_weather_refresh_s(value: object) -> float:
+        try:
+            return max(300.0, float(value or 900))
+        except (TypeError, ValueError):
+            return 900.0
+
+    def weather_config(self) -> dict[str, object]:
+        return {
+            "lat": self._weather_lat,
+            "lon": self._weather_lon,
+            "location": self._weather_location,
+            "refresh_s": self._weather_refresh_s,
+            "enabled": self._weather_lat is not None and self._weather_lon is not None,
+        }
+
+    def weather_status(self) -> dict[str, object]:
+        cached = self._read_weather_cache()
+        cached_at = 0.0
+        if cached:
+            try:
+                cached_at = float(cached.get("fetched_at", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                cached_at = 0.0
+        now = time.time()
+        snapshot = self._last_weather_snapshot or self._default_weather_snapshot()
+        return {
+            **self.weather_config(),
+            "cache_path": self._weather_cache_path,
+            "cache_exists": bool(cached),
+            "cache_age_s": round(now - cached_at, 1) if cached_at > 0 else None,
+            "last_update_age_s": round(now - self._last_weather_at, 1) if self._last_weather_at > 0 else None,
+            "last_source": self._last_weather_source,
+            "last_error": self._last_weather_error,
+            "condition": snapshot.get("weather_condition", "N/A"),
+            "temperature": snapshot.get("weather_temp_c", "N/A"),
+            "location_label": snapshot.get("weather_location", self._weather_location or "N/A"),
+        }
+
+    def set_weather_config(
+        self,
+        *,
+        lat: float | None = None,
+        lon: float | None = None,
+        location: str | None = None,
+        refresh_s: float | None = None,
+    ) -> dict[str, object]:
+        self._weather_lat = lat
+        self._weather_lon = lon
+        if location is not None:
+            self._weather_location = str(location).strip()
+        if refresh_s is not None:
+            self._weather_refresh_s = self._parse_weather_refresh_s(refresh_s)
+        self._last_weather_at = 0.0
+        self._last_weather_snapshot = self._default_weather_snapshot()
+        self._last_weather_error = ""
+        self._last_weather_source = "config"
+        return self.weather_config()
+
+    def _load_weather_icon_map(self) -> dict[str, object]:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "weather", "open_meteo_icon_map.json")
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _weather_float(value: str) -> float | None:
+        text = str(value or "").strip().replace(",", ".")
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _format_weather_number(value: object, suffix: str = "", digits: int = 0) -> str:
+        if value is None:
+            return "N/A"
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return "N/A"
+        if digits <= 0:
+            text = f"{number:.0f}"
+        else:
+            text = f"{number:.{digits}f}"
+        return f"{text}{suffix}"
+
+    @staticmethod
+    def _default_weather_snapshot() -> dict[str, str]:
+        out = {
+            "weather_location": "N/A",
+            "weather_temp_c": "N/A",
+            "weather_feels_like_c": "N/A",
+            "weather_humidity_percent": "N/A",
+            "weather_wind_kph": "N/A",
+            "weather_precip_mm": "N/A",
+            "weather_cloud_percent": "N/A",
+            "weather_code": "N/A",
+            "weather_condition": "N/A",
+            "weather_icon": "not-available.svg",
+            "weather_icon_path": "",
+            "weather_is_day": "N/A",
+            "weather_daily_json": "[]",
+        }
+        for idx in range(7):
+            out.update(
+                {
+                    f"weather_day_{idx}_label": "N/A",
+                    f"weather_day_{idx}_condition": "N/A",
+                    f"weather_day_{idx}_icon": "not-available.svg",
+                    f"weather_day_{idx}_icon_path": "",
+                    f"weather_day_{idx}_temp_min_c": "N/A",
+                    f"weather_day_{idx}_temp_max_c": "N/A",
+                    f"weather_day_{idx}_precip_mm": "N/A",
+                }
+            )
+        return out
+
+    def _weather_icon_for_code(self, code: object, is_day: bool = True) -> tuple[str, str]:
+        fallback = self._weather_icon_map.get("fallback", {}) if isinstance(self._weather_icon_map, dict) else {}
+        fallback_name = "not-available.svg"
+        if isinstance(fallback, dict):
+            fallback_name = str(fallback.get("day" if is_day else "night") or fallback.get("day") or fallback_name)
+        codes = self._weather_icon_map.get("codes", {}) if isinstance(self._weather_icon_map, dict) else {}
+        entry = codes.get(str(code)) if isinstance(codes, dict) else None
+        if not isinstance(entry, dict):
+            return "N/A", fallback_name
+        label = str(entry.get("label") or "N/A")
+        icon_name = str(entry.get("day" if is_day else "night") or entry.get("day") or fallback_name)
+        return label, icon_name
+
+    @staticmethod
+    def _weekday_label(date_text: str) -> str:
+        try:
+            parsed = time.strptime(date_text, "%Y-%m-%d")
+            return time.strftime("%a", parsed)
+        except Exception:
+            return str(date_text or "N/A")
+
+    def _weather_icon_path(self, icon_name: str) -> str:
+        name = os.path.basename(str(icon_name or ""))
+        if not name:
+            return ""
+        root = os.path.dirname(os.path.abspath(__file__))
+        preferred_dir = "png" if name.lower().endswith(".png") else "fill"
+        candidates = [
+            os.path.join(root, "assets", "weather", "icons", "meteocons", preferred_dir, name),
+            os.path.join(root, "assets", "weather", "icons", "meteocons", "png", os.path.splitext(name)[0] + ".png"),
+            os.path.join(root, "assets", "weather", "icons", "meteocons", "fill", os.path.splitext(name)[0] + ".svg"),
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return ""
+
+    def _read_weather_cache(self) -> dict[str, object] | None:
+        try:
+            if not os.path.exists(self._weather_cache_path):
+                return None
+            with open(self._weather_cache_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _write_weather_cache(self, data: dict[str, object]) -> None:
+        try:
+            os.makedirs(self._weather_runtime_dir, exist_ok=True)
+            tmp_path = f"{self._weather_cache_path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, ensure_ascii=False)
+            os.replace(tmp_path, self._weather_cache_path)
+        except Exception:
+            pass
+
+    def _normalize_weather_response(self, data: dict[str, object], location: str) -> dict[str, str]:
+        out = self._default_weather_snapshot()
+        out["weather_location"] = location or "N/A"
+
+        current = data.get("current", {})
+        if not isinstance(current, dict):
+            current = {}
+        code = current.get("weather_code")
+        is_day = str(current.get("is_day", "1")) != "0"
+        condition, icon_name = self._weather_icon_for_code(code, is_day=is_day)
+        out.update(
+            {
+                "weather_temp_c": self._format_weather_number(current.get("temperature_2m"), "°C"),
+                "weather_feels_like_c": self._format_weather_number(current.get("apparent_temperature"), "°C"),
+                "weather_humidity_percent": self._format_weather_number(current.get("relative_humidity_2m"), "%"),
+                "weather_wind_kph": self._format_weather_number(current.get("wind_speed_10m"), " km/h"),
+                "weather_precip_mm": self._format_weather_number(current.get("precipitation"), " mm", digits=1),
+                "weather_cloud_percent": self._format_weather_number(current.get("cloud_cover"), "%"),
+                "weather_code": "N/A" if code is None else str(code),
+                "weather_condition": condition,
+                "weather_icon": icon_name,
+                "weather_icon_path": self._weather_icon_path(icon_name),
+                "weather_is_day": "1" if is_day else "0",
+            }
+        )
+
+        daily = data.get("daily", {})
+        forecast: list[dict[str, object]] = []
+        if isinstance(daily, dict):
+            dates = daily.get("time") if isinstance(daily.get("time"), list) else []
+            codes = daily.get("weather_code") if isinstance(daily.get("weather_code"), list) else []
+            mins = daily.get("temperature_2m_min") if isinstance(daily.get("temperature_2m_min"), list) else []
+            maxs = daily.get("temperature_2m_max") if isinstance(daily.get("temperature_2m_max"), list) else []
+            precips = daily.get("precipitation_sum") if isinstance(daily.get("precipitation_sum"), list) else []
+            winds = daily.get("wind_speed_10m_max") if isinstance(daily.get("wind_speed_10m_max"), list) else []
+            for idx in range(min(7, len(dates))):
+                day_code = codes[idx] if idx < len(codes) else None
+                day_condition, day_icon = self._weather_icon_for_code(day_code, is_day=True)
+                row = {
+                    "date": str(dates[idx]),
+                    "weekday": self._weekday_label(str(dates[idx])),
+                    "code": day_code,
+                    "condition": day_condition,
+                    "icon": day_icon,
+                    "temp_min_c": mins[idx] if idx < len(mins) else None,
+                    "temp_max_c": maxs[idx] if idx < len(maxs) else None,
+                    "precip_mm": precips[idx] if idx < len(precips) else None,
+                    "wind_kph": winds[idx] if idx < len(winds) else None,
+                }
+                forecast.append(row)
+                out.update(
+                    {
+                        f"weather_day_{idx}_label": str(row["weekday"]),
+                        f"weather_day_{idx}_condition": str(row["condition"]),
+                        f"weather_day_{idx}_icon": day_icon,
+                        f"weather_day_{idx}_icon_path": self._weather_icon_path(day_icon),
+                        f"weather_day_{idx}_temp_min_c": self._format_weather_number(row["temp_min_c"], "°C"),
+                        f"weather_day_{idx}_temp_max_c": self._format_weather_number(row["temp_max_c"], "°C"),
+                        f"weather_day_{idx}_precip_mm": self._format_weather_number(row["precip_mm"], " mm", digits=1),
+                    }
+                )
+        out["weather_daily_json"] = json.dumps(forecast, ensure_ascii=False, separators=(",", ":"))
+        return out
+
+    def _cached_weather_snapshot(self) -> tuple[dict[str, str] | None, float]:
+        cached = self._read_weather_cache()
+        if cached and isinstance(cached.get("normalized"), dict):
+            try:
+                cached_at = float(cached.get("fetched_at", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                cached_at = 0.0
+            return {str(k): str(v) for k, v in cached["normalized"].items()}, cached_at  # type: ignore[index]
+        return None, 0.0
+
+    def _refresh_weather_stats_sync(
+        self,
+        *,
+        now: float | None = None,
+        cached_snapshot: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        lat = self._weather_lat
+        lon = self._weather_lon
+        if lat is None or lon is None:
+            self._last_weather_source = "disabled"
+            return self._default_weather_snapshot()
+
+        now = time.time() if now is None else now
+        params = {
+            "latitude": f"{lat:.5f}",
+            "longitude": f"{lon:.5f}",
+            "current": "temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation,weather_code,cloud_cover,wind_speed_10m",
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,sunrise,sunset",
+            "forecast_days": "7",
+            "timezone": "auto",
+            "wind_speed_unit": "kmh",
+        }
+        location = self._weather_location or f"{lat:.3f},{lon:.3f}"
+        url = "https://api.open-meteo.com/v1/forecast?" + urlencode(params)
+        try:
+            req = Request(url, headers={"User-Agent": "OpenTrofeoLCD/1.0"})
+            with urlopen(req, timeout=2.5) as response:
+                payload = response.read()
+            data = json.loads(payload.decode("utf-8"))
+            if not isinstance(data, dict):
+                raise RuntimeError("invalid-weather-payload")
+            normalized = self._normalize_weather_response(data, location)
+            self._last_weather_snapshot = normalized
+            self._last_weather_at = now
+            self._last_weather_error = ""
+            self._last_weather_source = "open-meteo"
+            self._write_weather_cache({"fetched_at": now, "provider": "open-meteo", "raw": data, "normalized": normalized})
+            return dict(normalized)
+        except Exception as exc:
+            self._last_weather_error = str(exc)
+            if cached_snapshot:
+                self._last_weather_snapshot = dict(cached_snapshot)
+                self._last_weather_at = now
+                self._last_weather_source = "cache-fallback"
+                return dict(self._last_weather_snapshot)
+            self._last_weather_source = "error"
+            return self._default_weather_snapshot()
+
+    def _start_weather_refresh_thread(self, cached_snapshot: dict[str, str] | None = None) -> None:
+        with self._weather_lock:
+            if self._weather_refresh_inflight:
+                return
+            self._weather_refresh_inflight = True
+
+        def _worker() -> None:
+            try:
+                self._refresh_weather_stats_sync(cached_snapshot=cached_snapshot)
+            finally:
+                with self._weather_lock:
+                    self._weather_refresh_inflight = False
+
+        threading.Thread(target=_worker, name="trofeo-weather-refresh", daemon=True).start()
+
+    def read_weather_stats(self, *, blocking: bool = False, force: bool = False) -> dict[str, str]:
+        lat = self._weather_lat
+        lon = self._weather_lon
+        if lat is None or lon is None:
+            self._last_weather_source = "disabled"
+            return self._default_weather_snapshot()
+
+        now = time.time()
+        refresh_s = self._weather_refresh_s
+        if not force and now - self._last_weather_at < refresh_s:
+            self._last_weather_source = "memory"
+            return dict(self._last_weather_snapshot)
+
+        cached_snapshot, cached_at = self._cached_weather_snapshot()
+        if not force and cached_snapshot and now - cached_at < refresh_s:
+            self._last_weather_snapshot = dict(cached_snapshot)
+            self._last_weather_at = now
+            self._last_weather_error = ""
+            self._last_weather_source = "cache"
+            return dict(self._last_weather_snapshot)
+
+        if blocking or force:
+            return self._refresh_weather_stats_sync(now=now, cached_snapshot=cached_snapshot)
+
+        fallback = dict(cached_snapshot or self._last_weather_snapshot or self._default_weather_snapshot())
+        self._start_weather_refresh_thread(cached_snapshot=cached_snapshot)
+        if cached_snapshot:
+            self._last_weather_snapshot = dict(cached_snapshot)
+            self._last_weather_source = "stale-cache-refreshing"
+        else:
+            self._last_weather_source = "refreshing"
+        return fallback
 
     @staticmethod
     def _default_media_snapshot() -> dict[str, str]:
@@ -94,6 +1378,46 @@ class StatsProvider:
             "media_video_frame_path": "",
             "media_source_url": "",
         }
+
+    @staticmethod
+    def _media_snapshot_has_content(snapshot: dict[str, str]) -> bool:
+        title = str(snapshot.get("media_title", "")).strip()
+        artist = str(snapshot.get("media_artist", "")).strip()
+        cover = str(snapshot.get("media_cover_path", "")).strip()
+        return bool((title and title != "N/A") or (artist and artist != "N/A") or cover)
+
+    def _remember_media_snapshot(self, snapshot: dict[str, str]) -> None:
+        if not self._media_snapshot_has_content(snapshot):
+            return
+        self._last_media_snapshot = dict(snapshot)
+        self._last_media_at = time.time()
+
+    def _apply_recent_media_fallback(self, snapshot: dict[str, str], *, max_age_s: float = 600.0) -> dict[str, str]:
+        if (time.time() - self._last_media_at) > max_age_s:
+            return snapshot
+        fallback = dict(self._last_media_snapshot)
+        if not self._media_snapshot_has_content(fallback):
+            return snapshot
+        out = dict(snapshot)
+        for key in (
+            "media_title",
+            "media_artist",
+            "media_album",
+            "media_cover_path",
+            "media_video_frame_path",
+            "media_source_url",
+        ):
+            current = str(out.get(key, "")).strip()
+            if current and current != "N/A":
+                continue
+            previous = str(fallback.get(key, "")).strip()
+            if previous and previous != "N/A":
+                out[key] = previous
+        current_app = str(out.get("media_app", "")).strip()
+        previous_app = str(fallback.get("media_app", "")).strip()
+        if (not current_app or current_app == "N/A") and previous_app and previous_app != "N/A":
+            out["media_app"] = previous_app
+        return out
 
     @staticmethod
     def _media_priority(player_name: str, state: str, title: str) -> tuple[int, int, int]:
@@ -628,9 +1952,9 @@ class StatsProvider:
             return dict(self._last_volume_snapshot)
 
         out = {"volume_percent": "N/A", "volume_state": "N/A"}
-        try:
-            wpctl = self._local_or_host_cmd("wpctl")
-            if wpctl:
+        wpctl = self._local_or_host_cmd("wpctl")
+        if wpctl:
+            try:
                 payload = subprocess.check_output(
                     wpctl + ["get-volume", "@DEFAULT_AUDIO_SINK@"],
                     encoding="utf-8",
@@ -641,9 +1965,13 @@ class StatsProvider:
                 if match:
                     out["volume_percent"] = f"{int(round(float(match.group(1)) * 100.0))}%"
                 out["volume_state"] = "muted" if "MUTED" in payload.upper() else "active"
-            else:
-                pactl = self._local_or_host_cmd("pactl")
-                if pactl:
+            except Exception:
+                pass
+
+        if out["volume_percent"] == "N/A":
+            pactl = self._local_or_host_cmd("pactl")
+            if pactl:
+                try:
                     vol_payload = subprocess.check_output(
                         pactl + ["get-sink-volume", "@DEFAULT_SINK@"],
                         encoding="utf-8",
@@ -660,26 +1988,30 @@ class StatsProvider:
                         timeout=0.35,
                     ).strip()
                     out["volume_state"] = "muted" if "yes" in mute_payload.lower() else "active"
-                else:
-                    pamixer = self._local_or_host_cmd("pamixer")
-                    if pamixer:
-                        volume_value = subprocess.check_output(
-                            pamixer + ["--get-volume"],
-                            encoding="utf-8",
-                            stderr=subprocess.DEVNULL,
-                            timeout=0.35,
-                        ).strip()
-                        if volume_value.isdigit():
-                            out["volume_percent"] = f"{int(volume_value)}%"
-                        mute_value = subprocess.check_output(
-                            pamixer + ["--get-mute"],
-                            encoding="utf-8",
-                            stderr=subprocess.DEVNULL,
-                            timeout=0.35,
-                        ).strip()
-                        out["volume_state"] = "muted" if mute_value.lower() == "true" else "active"
-        except Exception:
-            pass
+                except Exception:
+                    pass
+
+        if out["volume_percent"] == "N/A":
+            pamixer = self._local_or_host_cmd("pamixer")
+            if pamixer:
+                try:
+                    volume_value = subprocess.check_output(
+                        pamixer + ["--get-volume"],
+                        encoding="utf-8",
+                        stderr=subprocess.DEVNULL,
+                        timeout=0.35,
+                    ).strip()
+                    if volume_value.isdigit():
+                        out["volume_percent"] = f"{int(volume_value)}%"
+                    mute_value = subprocess.check_output(
+                        pamixer + ["--get-mute"],
+                        encoding="utf-8",
+                        stderr=subprocess.DEVNULL,
+                        timeout=0.35,
+                    ).strip()
+                    out["volume_state"] = "muted" if mute_value.lower() == "true" else "active"
+                except Exception:
+                    pass
 
         self._last_volume_snapshot = dict(out)
         self._last_volume_at = now
@@ -705,6 +2037,382 @@ class StatsProvider:
                     })
             except Exception: pass
         return stats
+
+    @staticmethod
+    def _read_proc_text(path: str, *, binary: bool = False) -> str:
+        try:
+            mode = "rb" if binary else "r"
+            kwargs = {} if binary else {"encoding": "utf-8", "errors": "replace"}
+            with open(path, mode, **kwargs) as handle:
+                payload = handle.read()
+            if isinstance(payload, bytes):
+                return payload.replace(b"\x00", b" ").decode("utf-8", "replace")
+            return str(payload)
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _read_proc_environ(path: str) -> dict[str, str]:
+        try:
+            with open(path, "rb") as handle:
+                payload = handle.read()
+        except Exception:
+            return {}
+        out: dict[str, str] = {}
+        for chunk in payload.split(b"\x00"):
+            if not chunk or b"=" not in chunk:
+                continue
+            key, value = chunk.split(b"=", 1)
+            try:
+                key_text = key.decode("utf-8", "replace")
+                value_text = value.decode("utf-8", "replace")
+            except Exception:
+                continue
+            if key_text:
+                out[key_text] = value_text
+        return out
+
+    @staticmethod
+    def _clean_process_label(value: str) -> str:
+        label = os.path.basename(str(value or "").strip().strip('"').replace("\\", "/"))
+        if not label:
+            return "N/A"
+        if label.lower() in {
+            "winedevice",
+            "winedevice.exe",
+            "wineserver",
+            "services.exe",
+            "explorer.exe",
+            "conhost.exe",
+            "rundll32.exe",
+            "wineboot.exe",
+            "start.exe",
+        }:
+            return "N/A"
+        if label.lower().endswith(".exe"):
+            label = label[:-4]
+        return label[:48]
+
+    @staticmethod
+    def _score_game_process(comm: str, cmdline: str, environ: str, environ_map: dict[str, str] | None = None) -> tuple[int, str, str]:
+        environ_map = environ_map or {}
+        haystack = f"{comm}\n{cmdline}\n{environ}".lower()
+        launcher = "N/A"
+        score = 0
+        configured_name = str(environ_map.get("OPEN_TROFEO_GAME_NAME", "")).strip()
+        configured_launcher = str(environ_map.get("OPEN_TROFEO_GAME_LAUNCHER", "")).strip()
+        if configured_name:
+            score += 120
+            launcher = configured_launcher or launcher
+        if "steamapp" in environ.lower() or "steamgameid" in environ.lower():
+            score += 80
+            launcher = "Steam"
+        if "/steamapps/common/" in haystack or "/steamapps/compatdata/" in haystack:
+            score += 70
+            launcher = "Steam"
+        if "proton" in haystack or "pressure-vessel" in haystack:
+            score += 30
+            launcher = "Steam/Proton"
+        if "lutris" in haystack:
+            score += 40
+            launcher = "Lutris"
+        if "heroic" in haystack:
+            score += 35
+            launcher = "Heroic"
+        if "gamescope" in haystack:
+            score += 25
+            launcher = "gamescope"
+        if "mangohud" in haystack:
+            score += 15
+        lowered_comm = comm.lower()
+        helper_names = {
+            "steam",
+            "steam.exe",
+            "steamwebhelper",
+            "steam-runtime-la",
+            "pressure-vessel",
+            "wineserver",
+            "winedevice",
+            "winedevice.exe",
+            "services.exe",
+            "explorer.exe",
+            "conhost.exe",
+            "rundll32.exe",
+            "wineboot.exe",
+            "start.exe",
+            "steamservice.exe",
+            "iscriptevaluator.exe",
+            "dxsetup.exe",
+            "xalia.exe",
+            "crashhandler",
+            "mangohud",
+            "mangoapp",
+            "gamescope",
+        }
+        helper_markers = (
+            "legacycompat",
+            "iscriptevaluator",
+            "steamservice.exe",
+            "dxsetup.exe",
+            "_commonredist",
+            "runasadmin.vdf",
+        )
+        is_helper = lowered_comm in helper_names or lowered_comm.startswith("steamwebhelper")
+        if is_helper:
+            score -= 45 if configured_name else 220
+        if any(marker in haystack for marker in helper_markers):
+            score -= 140
+        if lowered_comm.endswith(".exe") and lowered_comm not in helper_names:
+            score += 35
+        if any(token in haystack for token in ("unityplayer", "unreal", "godot", "gamemoderun")):
+            score += 20
+        label = StatsProvider._clean_process_label(configured_name or comm)
+        if label == "N/A":
+            parts = cmdline.split()
+            label = StatsProvider._clean_process_label(parts[0] if parts else "")
+        return score, label, launcher
+
+    def _detect_game_process(self) -> dict[str, str]:
+        best: tuple[int, int, str, str, str] | None = None
+        overlays: set[str] = set()
+        steam_running = False
+        try:
+            pids = [entry for entry in os.listdir("/proc") if entry.isdigit()]
+        except Exception:
+            pids = []
+        for pid_text in pids:
+            base = f"/proc/{pid_text}"
+            comm = self._read_proc_text(f"{base}/comm").strip()
+            cmdline = self._read_proc_text(f"{base}/cmdline", binary=True).strip()
+            lowered = f"{comm} {cmdline}".lower()
+            if not comm and not cmdline:
+                continue
+            if "steam" in lowered:
+                steam_running = True
+            if "mangohud" in lowered:
+                overlays.add("MangoHud")
+            if "mangoapp" in lowered:
+                overlays.add("mangoapp")
+            if "gamescope" in lowered:
+                overlays.add("gamescope")
+            environ = ""
+            environ_map: dict[str, str] = {}
+            if any(token in lowered for token in ("steam", "proton", "wine", ".exe", "game", "lutris", "heroic", "gamescope", "mangohud")):
+                environ_map = self._read_proc_environ(f"{base}/environ")
+                environ = " ".join(f"{key}={value}" for key, value in environ_map.items())
+            score, label, launcher = self._score_game_process(comm, cmdline, environ, environ_map)
+            if score <= 40:
+                continue
+            try:
+                pid = int(pid_text)
+            except ValueError:
+                pid = 0
+            candidate = (score, pid, label, launcher, comm or label)
+            if best is None or candidate[0] > best[0]:
+                best = candidate
+        if best is None:
+            return {
+                "game_active": "no",
+                "game_name": "N/A",
+                "game_process": "N/A",
+                "game_launcher": "Steam" if steam_running else "N/A",
+                "game_overlay": ", ".join(sorted(overlays)) if overlays else "N/A",
+            }
+        _score, _pid, label, launcher, process = best
+        return {
+            "game_active": "yes",
+            "game_name": label,
+            "game_process": process,
+            "game_launcher": launcher,
+            "game_overlay": ", ".join(sorted(overlays)) if overlays else "N/A",
+        }
+
+    @staticmethod
+    def _parse_mangohud_output_folders() -> list[str]:
+        candidates: list[str] = []
+        for raw in (
+            os.environ.get("OPEN_TROFEO_MANGOHUD_LOG_DIR", ""),
+            os.environ.get("MANGOHUD_OUTPUT_FOLDER", ""),
+        ):
+            path = os.path.expanduser(str(raw or "").strip())
+            if path:
+                candidates.append(path)
+        config_path = os.path.expanduser("~/.config/MangoHud/MangoHud.conf")
+        try:
+            with open(config_path, "r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#") or "=" not in stripped:
+                        continue
+                    key, value = stripped.split("=", 1)
+                    if key.strip() == "output_folder":
+                        candidates.append(os.path.expanduser(value.strip().strip('"').strip("'")))
+        except Exception:
+            pass
+        candidates.extend(
+            [
+                os.path.expanduser("~/mangologs"),
+                os.path.expanduser("~/.local/share/MangoHud"),
+                os.path.expanduser("~/.local/state/MangoHud"),
+            ]
+        )
+        out: list[str] = []
+        seen: set[str] = set()
+        for path in candidates:
+            normalized = os.path.abspath(path)
+            if normalized not in seen and os.path.isdir(normalized):
+                seen.add(normalized)
+                out.append(normalized)
+        return out
+
+    def _latest_mangohud_log(self) -> str:
+        now = time.time()
+        if (now - self._mangohud_log_scan_at) < 10.0:
+            return self._mangohud_log_path
+        deadline = now + 0.2
+        best: tuple[float, str] | None = None
+        for folder in StatsProvider._parse_mangohud_output_folders():
+            try:
+                for root, dirs, files in os.walk(folder):
+                    if time.time() > deadline:
+                        self._mangohud_log_scan_at = time.time()
+                        return self._mangohud_log_path
+                    depth = os.path.relpath(root, folder).count(os.sep)
+                    if depth >= 1:
+                        dirs[:] = []
+                    if depth > 1:
+                        continue
+                    for name in files:
+                        lowered = name.lower()
+                        if not lowered.endswith((".csv", ".log", ".txt")):
+                            continue
+                        path = os.path.join(root, name)
+                        try:
+                            mtime = os.path.getmtime(path)
+                        except OSError:
+                            continue
+                        if best is None or mtime > best[0]:
+                            best = (mtime, path)
+            except Exception:
+                continue
+        self._mangohud_log_path = "" if best is None else best[1]
+        self._mangohud_log_scan_at = time.time()
+        return self._mangohud_log_path
+
+    @staticmethod
+    def _parse_float_token(token: str) -> float | None:
+        cleaned = str(token or "").strip().strip('"').replace(",", ".")
+        match = re.search(r"-?\d+(?:\.\d+)?", cleaned)
+        if not match:
+            return None
+        try:
+            return float(match.group(0))
+        except ValueError:
+            return None
+
+    @classmethod
+    def _read_mangohud_fps(cls, path: str) -> tuple[str, str, str]:
+        if not path:
+            return "N/A", "N/A", "no-log"
+        try:
+            age = time.time() - os.path.getmtime(path)
+        except OSError:
+            return "N/A", "N/A", "no-log"
+        if age > 20.0:
+            return "N/A", "N/A", "stale-log"
+        try:
+            with open(path, "rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - 65536), os.SEEK_SET)
+                payload = handle.read().decode("utf-8", "replace")
+        except Exception:
+            return "N/A", "N/A", "read-error"
+        lines = [line.strip() for line in payload.splitlines() if line.strip()]
+        data_lines = [line for line in lines if not line.startswith(("#", "---"))]
+        if not data_lines:
+            return "N/A", "N/A", "empty-log"
+        header: list[str] = []
+        for line in data_lines:
+            lowered = line.lower()
+            if "fps" in lowered and any(char.isalpha() for char in line):
+                header = [part.strip().strip('"').lower() for part in re.split(r"[;,]\s*|\s{2,}", line) if part.strip()]
+        last = data_lines[-1]
+        parts = [part.strip() for part in re.split(r"[;,]\s*|\s+", last) if part.strip()]
+        fps: float | None = None
+        frametime: float | None = None
+        if header and len(header) <= len(parts):
+            for idx, name in enumerate(header):
+                if fps is None and name in {"fps", "framerate", "frame_rate"}:
+                    fps = cls._parse_float_token(parts[idx])
+                if frametime is None and name in {"frametime", "frame_time", "ms", "frame_ms"}:
+                    frametime = cls._parse_float_token(parts[idx])
+        if fps is None:
+            numeric = [value for value in (cls._parse_float_token(part) for part in parts) if value is not None]
+            plausible = [value for value in numeric if 1.0 <= value <= 1000.0]
+            if plausible:
+                fps = plausible[0]
+        if fps is not None and frametime is None and fps > 0:
+            frametime = 1000.0 / fps
+        fps_text = "N/A" if fps is None else f"{fps:.0f}"
+        frame_text = "N/A" if frametime is None else f"{frametime:.1f} ms"
+        return fps_text, frame_text, "mangohud-log"
+
+    def read_game_stats(self) -> dict[str, str]:
+        now = time.time()
+        if (now - self._last_game_at) < 0.8:
+            return dict(self._last_game_snapshot)
+        out = self._detect_game_process()
+        probe = self._read_fps_probe_stats()
+        if probe is not None:
+            out["game_fps"] = probe.get("game_fps", "N/A")
+            out["game_frametime_ms"] = probe.get("game_frametime_ms", "N/A")
+            out["game_fps_source"] = probe.get("game_fps_source", "open-trofeo-probe")
+            for key in (
+                "game_fps_avg",
+                "game_fps_min",
+                "game_fps_max",
+                "game_fps_1pct_low",
+                "game_fps_0_1pct_low",
+                "game_frametime_avg_ms",
+                "game_frametime_max_ms",
+                "game_stutter_count",
+                "game_session_frames",
+                "game_session_time",
+            ):
+                out[key] = probe.get(key, "N/A")
+            for key in ("game_name", "game_process", "game_launcher", "game_overlay"):
+                value = str(probe.get(key) or "").strip()
+                if value:
+                    out[key] = value
+            out["game_active"] = "yes"
+        elif str(os.environ.get("OPEN_TROFEO_MANGOHUD_FALLBACK", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+            fps, frametime, source = self._read_mangohud_fps(self._latest_mangohud_log())
+            out["game_fps"] = fps
+            out["game_frametime_ms"] = frametime
+            if source == "no-log" and not self._mangohud_bin:
+                source = "mangohud-not-installed"
+            out["game_fps_source"] = source
+        else:
+            out["game_fps"] = "N/A"
+            out["game_frametime_ms"] = "N/A"
+            for key in (
+                "game_fps_avg",
+                "game_fps_min",
+                "game_fps_max",
+                "game_fps_1pct_low",
+                "game_fps_0_1pct_low",
+                "game_frametime_avg_ms",
+                "game_frametime_max_ms",
+                "game_stutter_count",
+                "game_session_frames",
+                "game_session_time",
+            ):
+                out[key] = "N/A"
+            out["game_fps_source"] = "open-trofeo-probe-waiting"
+        self._last_game_snapshot = dict(out)
+        self._last_game_at = now
+        return out
 
     def read_cpu_usage_percent(self) -> str:
         current_total, _ = _parse_proc_stat()
@@ -865,7 +2573,7 @@ class StatsProvider:
         playerctl_cmd = self._playerctl_cmd()
 
         if not playerctl_cmd:
-            return self._read_media_now_playing_mpris(out)
+            return self._apply_recent_media_fallback(self._read_media_now_playing_mpris(out), max_age_s=8.0)
 
         try:
             payload = subprocess.check_output(
@@ -919,9 +2627,7 @@ class StatsProvider:
                         out.get("media_source_url", ""),
                         out["media_cover_path"],
                     )
-                    if title or artist:
-                        self._last_media_snapshot = dict(out)
-                        self._last_media_at = time.time()
+                    self._remember_media_snapshot(out)
                     return out
         except Exception:
             pass
@@ -952,20 +2658,8 @@ class StatsProvider:
             mpris_out = self._read_media_now_playing_mpris(dict(out))
             if mpris_out.get("media_app") != "N/A" or mpris_out.get("media_title") != "N/A":
                 return mpris_out
-        if out["media_state"] in {"playing", "paused"} and (time.time() - self._last_media_at) <= 600.0:
-            fallback = dict(self._last_media_snapshot)
-            if fallback.get("media_title") and fallback["media_title"] != "N/A":
-                out["media_title"] = fallback["media_title"]
-            if fallback.get("media_artist"):
-                out["media_artist"] = fallback["media_artist"]
-            if fallback.get("media_cover_path"):
-                out["media_cover_path"] = fallback["media_cover_path"]
-            if fallback.get("media_video_frame_path"):
-                out["media_video_frame_path"] = fallback["media_video_frame_path"]
-            if fallback.get("media_source_url"):
-                out["media_source_url"] = fallback["media_source_url"]
-            if out["media_app"] == "N/A" and fallback.get("media_app"):
-                out["media_app"] = fallback["media_app"]
+        if out["media_state"] in {"playing", "paused"}:
+            out = self._apply_recent_media_fallback(out)
         return out
 
     @staticmethod
@@ -1106,9 +2800,7 @@ class StatsProvider:
             out.get("media_source_url", ""),
             out["media_cover_path"],
         )
-        if title or artist:
-            self._last_media_snapshot = dict(out)
-            self._last_media_at = time.time()
+        self._remember_media_snapshot(out)
         return out
 
     def snapshot(self) -> StatsSnapshot:
@@ -1119,8 +2811,11 @@ class StatsProvider:
         disk = self.read_disk_usage()
         dl_speed, ul_speed = self.read_net_speeds()
         volume = self.read_volume_stats()
+        audio_eq = self.read_audio_eq_stats()
+        game = self.read_game_stats()
         gpu = self.read_gpu_stats()
         media = self._read_media_now_playing()
+        weather = self.read_weather_stats()
 
         values = {
             "hostname": os.uname().nodename if hasattr(os, "uname") else "unknown",
@@ -1143,8 +2838,12 @@ class StatsProvider:
             "net_dl_kbps": f"{dl_speed:.1f} KB/s",
             "net_ul_kbps": f"{ul_speed:.1f} KB/s",
             **volume,
+            **audio_eq,
+            **game,
             "uptime_human": "N/A" if uptime is None else f"{uptime[0]}h {uptime[1]}m",
             **gpu,
             **media,
+            **weather,
+            **self._process_memory.snapshot(),
         }
         return StatsSnapshot(values=values)

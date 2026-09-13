@@ -28,18 +28,42 @@ KNOWN_STAT_SOURCES = [
     "disk_used_gb", "disk_total_gb", "disk_percent",
     "net_dl_kbps", "net_ul_kbps",
     "volume_percent", "volume_state",
+    "audio_eq_bars", "audio_eq_raw_bars", "audio_eq_source", "audio_eq_status", "audio_eq_age_ms",
+    "game_active", "game_name", "game_process", "game_launcher",
+    "game_fps", "game_fps_avg", "game_fps_min", "game_fps_max", "game_fps_1pct_low", "game_fps_0_1pct_low",
+    "game_frametime_ms", "game_frametime_avg_ms", "game_frametime_max_ms",
+    "game_stutter_count", "game_session_frames", "game_session_time", "game_fps_source", "game_overlay",
     "gpu_name", "gpu_temp", "gpu_load", "vram_used_mb", "vram_total_mb", "vram_percent",
     "uptime_human",
     "media_title", "media_artist", "media_app", "media_state",
+    "weather_location", "weather_temp_c", "weather_feels_like_c",
+    "weather_humidity_percent", "weather_wind_kph", "weather_precip_mm",
+    "weather_cloud_percent", "weather_code", "weather_condition",
+    "weather_icon", "weather_icon_path", "weather_is_day", "weather_daily_json",
+    "weather_day_0_label", "weather_day_0_condition", "weather_day_0_icon", "weather_day_0_temp_min_c", "weather_day_0_temp_max_c", "weather_day_0_precip_mm",
+    "weather_day_1_label", "weather_day_1_condition", "weather_day_1_icon", "weather_day_1_temp_min_c", "weather_day_1_temp_max_c", "weather_day_1_precip_mm",
+    "weather_day_2_label", "weather_day_2_condition", "weather_day_2_icon", "weather_day_2_temp_min_c", "weather_day_2_temp_max_c", "weather_day_2_precip_mm",
+    "weather_day_3_label", "weather_day_3_condition", "weather_day_3_icon", "weather_day_3_temp_min_c", "weather_day_3_temp_max_c", "weather_day_3_precip_mm",
+    "weather_day_4_label", "weather_day_4_condition", "weather_day_4_icon", "weather_day_4_temp_min_c", "weather_day_4_temp_max_c", "weather_day_4_precip_mm",
+    "weather_day_5_label", "weather_day_5_condition", "weather_day_5_icon", "weather_day_5_temp_min_c", "weather_day_5_temp_max_c", "weather_day_5_precip_mm",
+    "weather_day_6_label", "weather_day_6_condition", "weather_day_6_icon", "weather_day_6_temp_min_c", "weather_day_6_temp_max_c", "weather_day_6_precip_mm",
 ]
 
 KNOWN_ALIGN = {"left", "center", "right"}
 KNOWN_FIT = {"contain", "cover", "stretch"}
 KNOWN_BACKGROUND_KIND = {"generated", "image", "color"}
-KNOWN_IMAGE_SOURCES = {"media_cover", "media_video_frame", "analog_clock"}
+KNOWN_IMAGE_SOURCES = {
+    "media_cover",
+    "media_video_frame",
+    "analog_clock",
+    "weather_icon",
+    *(f"weather_day_{idx}_icon" for idx in range(7)),
+}
 KNOWN_CLOCK_STYLE = {"classic", "modern", "nordic"}
+KNOWN_STAT_SOURCES += [f"process_ram_{rank}_{field}" for rank in range(1, 5) for field in ("name", "pid", "mb", "gib")]
 KNOWN_STAT_DISPLAY = {"text", "progress", "gauge", "sparkline", "equalizer"}
 KNOWN_GAUGE_VALUE_LAYOUT = frozenset({"center", "below", "beside"})
+KNOWN_WIDGET_KINDS = {"weather_current", "weather_forecast_7d", "media_now_playing", "gaming_performance"}
 
 class ThemeValidationError(RuntimeError):
     pass
@@ -300,6 +324,11 @@ def _normalize_stat_item(raw: Any, idx: int) -> dict[str, Any]:
     equalizer_bars = max(6, min(64, equalizer_bars))
     equalizer_gap = int(_expect_number(data.get("equalizer_gap", 4), f"{path}.equalizer_gap"))
     equalizer_gap = max(0, min(16, equalizer_gap))
+    equalizer_color_preset = str(data.get("equalizer_color_preset", "custom")).strip().lower() or "custom"
+    if equalizer_color_preset not in {"custom", "neon", "cyan", "rainbow", "thermal"}:
+        equalizer_color_preset = "custom"
+    equalizer_threshold = float(_expect_number(data.get("equalizer_threshold", 1.0), f"{path}.equalizer_threshold"))
+    equalizer_threshold = max(0.0, min(1.0, equalizer_threshold))
 
     return {
         "id": str(data.get("id", f"stat_{idx}")).strip() or f"stat_{idx}",
@@ -344,6 +373,12 @@ def _normalize_stat_item(raw: Any, idx: int) -> dict[str, Any]:
         "equalizer_bars": equalizer_bars,
         "equalizer_gap": equalizer_gap,
         "equalizer_mirror": bool(data.get("equalizer_mirror", False)),
+        "equalizer_color_preset": equalizer_color_preset,
+        "equalizer_threshold": equalizer_threshold,
+        "equalizer_threshold_color": _normalize_color(
+            data.get("equalizer_threshold_color", [255, 86, 96, 255]),
+            f"{path}.equalizer_threshold_color",
+        ),
         "align": align,
         "z_index": int(_expect_number(data.get("z_index", 220), f"{path}.z_index")),
         "visible": bool(data.get("visible", True)),
@@ -404,6 +439,32 @@ def _normalize_image_item(raw: Any, idx: int) -> dict[str, Any]:
     }
 
 
+def _normalize_widget_item(raw: Any, idx: int) -> dict[str, Any]:
+    path = f"widgets[{idx}]"
+    data = _expect_dict(raw, path)
+    kind = _expect_str(data.get("kind", ""), f"{path}.kind").strip().lower()
+    if kind not in KNOWN_WIDGET_KINDS:
+        raise _fail(f"{path}.kind", f"must be one of {sorted(KNOWN_WIDGET_KINDS)}")
+    settings = data.get("settings", {})
+    if settings is None:
+        settings = {}
+    settings = _expect_dict(settings, f"{path}.settings")
+    opacity = float(_expect_number(data.get("opacity", 1.0), f"{path}.opacity"))
+    if not (0.0 <= opacity <= 1.0):
+        raise _fail(f"{path}.opacity", "must be in range 0.0..1.0")
+    return {
+        "id": str(data.get("id", f"widget_{idx}")).strip() or f"widget_{idx}",
+        "kind": kind,
+        "rect": _normalize_rect(data.get("rect"), f"{path}.rect"),
+        "style": str(data.get("style", "compact")).strip() or "compact",
+        "settings": deepcopy(settings),
+        "opacity": opacity,
+        "z_index": int(_expect_number(data.get("z_index", 210), f"{path}.z_index")),
+        "visible": bool(data.get("visible", True)),
+        "locked": bool(data.get("locked", False)),
+    }
+
+
 def _normalize_effects(raw: Any) -> dict[str, Any]:
     data = _expect_dict(raw, "effects")
     animation_raw = data.get("animation", {})
@@ -436,6 +497,16 @@ def _normalize_effects(raw: Any) -> dict[str, Any]:
         normalized_frame_durations.extend([default_duration] * (len(normalized_frame_paths) - len(normalized_frame_durations)))
     elif len(normalized_frame_durations) > len(normalized_frame_paths):
         normalized_frame_durations = normalized_frame_durations[: len(normalized_frame_paths)]
+    loop_start = None
+    loop_end = None
+    if normalized_frame_paths and ("loop_start" in animation_data or "loop_end" in animation_data):
+        loop_start = int(_expect_number(animation_data.get("loop_start", 0), "effects.animation.loop_start"))
+        loop_end = int(_expect_number(animation_data.get("loop_end", len(normalized_frame_paths) - 1), "effects.animation.loop_end"))
+        frame_max = len(normalized_frame_paths) - 1
+        loop_start = max(0, min(frame_max, loop_start))
+        loop_end = max(0, min(frame_max, loop_end))
+        if loop_end < loop_start:
+            loop_start, loop_end = loop_end, loop_start
 
     motion_tracks_raw = data.get("motion_tracks", [])
     if motion_tracks_raw is None:
@@ -465,18 +536,24 @@ def _normalize_effects(raw: Any) -> dict[str, Any]:
                 "opacity_to": opacity_to,
             }
         )
+    animation_out = {
+        "enabled": bool(animation_data.get("enabled", False)),
+        "use_as_background": bool(animation_data.get("use_as_background", True)),
+        "fps": fps,
+        "current_frame": current_frame,
+        "loop": bool(animation_data.get("loop", True)),
+        "smooth_loop": bool(animation_data.get("smooth_loop", True)),
+        "frame_paths": normalized_frame_paths,
+        "frame_durations_ms": normalized_frame_durations,
+    }
+    if loop_start is not None and loop_end is not None:
+        animation_out["loop_start"] = loop_start
+        animation_out["loop_end"] = loop_end
+
     out = {
         "show_grid": bool(data.get("show_grid", False)),
         "show_safe_area": bool(data.get("show_safe_area", False)),
-        "animation": {
-            "enabled": bool(animation_data.get("enabled", False)),
-            "use_as_background": bool(animation_data.get("use_as_background", True)),
-            "fps": fps,
-            "current_frame": current_frame,
-            "loop": bool(animation_data.get("loop", True)),
-            "frame_paths": normalized_frame_paths,
-            "frame_durations_ms": normalized_frame_durations,
-        },
+        "animation": animation_out,
         "slideshow": {"enabled": False},
         "motion_tracks": normalized_motion_tracks,
         "import_report": _expect_dict(data.get("import_report", {}), "effects.import_report") if data.get("import_report", {}) is not None else {},
@@ -514,6 +591,7 @@ def normalize_theme_document(raw: dict[str, Any]) -> dict[str, Any]:
         merged = merge_gauge_preset(_expect_dict(item, f"stats[{idx}]"), meta)
         stats.append(_normalize_stat_item(merged, idx))
     images = [_normalize_image_item(item, idx) for idx, item in enumerate(_expect_list(data.get("images", []), "images"))]
+    widgets = [_normalize_widget_item(item, idx) for idx, item in enumerate(_expect_list(data.get("widgets", []), "widgets"))]
     effects = _normalize_effects(data.get("effects", {}))
 
     return {
@@ -524,6 +602,7 @@ def normalize_theme_document(raw: dict[str, Any]) -> dict[str, Any]:
         "texts": texts,
         "stats": stats,
         "images": images,
+        "widgets": widgets,
         "effects": effects,
     }
 

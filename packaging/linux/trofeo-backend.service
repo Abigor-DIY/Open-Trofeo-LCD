@@ -1,0 +1,15 @@
+[Unit]
+Description=Open Trofeo LCD Backend API
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/open-trofeo-lcd --backend-service-run
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

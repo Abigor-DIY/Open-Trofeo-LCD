@@ -1,0 +1,22 @@
+.TH OPEN-TROFEO-LCD 1 "2026-05-19" "Open Trofeo LCD" "User Commands"
+.SH NAME
+open-trofeo-lcd \- launch the Open Trofeo LCD desktop editor
+.SH SYNOPSIS
+.B open-trofeo-lcd
+.RI [ options ]
+.SH DESCRIPTION
+.nh
+.B Open Trofeo LCD
+starts the Linux backend and graphical theme editor for Thermalright Trofeo LCD
+cooler displays. The packaged launcher copies the read-only application tree to
+a per-user working directory before starting the Python GUI.
+.SH FILES
+.TP
+.I /usr/share/open-trofeo-lcd
+Packaged application files.
+.TP
+.I ~/.local/share/open-trofeo-lcd-workdir
+Per-user writable working copy used by the launcher.
+.SH SEE ALSO
+.BR playerctl (1),
+.BR cava (1)

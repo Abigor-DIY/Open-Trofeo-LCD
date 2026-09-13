@@ -1,0 +1,88 @@
+app-id: io.github.abigordiy.open-trofeo-lcd
+runtime: org.freedesktop.Platform
+runtime-version: "25.08"
+sdk: org.freedesktop.Sdk
+command: open-trofeo-lcd
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=x11
+  - --socket=wayland
+  - --socket=session-bus
+  - --socket=pulseaudio
+  - --talk-name=org.mpris.MediaPlayer2.*
+  - --talk-name=org.freedesktop.Flatpak
+  - --device=all
+  - --filesystem=home
+  - --persist=.local/state/open-trofeo-lcd
+  - --env=PYTHONUNBUFFERED=1
+
+modules:
+  - name: python-dependencies
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      - python3 -m pip install --prefix=/app --no-cache-dir -r requirements.txt
+    sources:
+      - type: file
+        path: requirements.txt
+
+  - name: open-trofeo-lcd
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/share/open-trofeo-lcd
+      - python3 -c "from pathlib import Path; import hashlib; h=hashlib.sha256(); [h.update(p.as_posix().encode()+b'\0'+p.read_bytes()) for p in sorted(Path('.').rglob('*')) if p.is_file() and '.git' not in p.parts and p.name != '.flatpak-source-version']; print(h.hexdigest()[:16])" > .flatpak-source-version
+      - cp -a . /app/share/open-trofeo-lcd
+      - install -Dm755 packaging/flatpak/open-trofeo-lcd /app/bin/open-trofeo-lcd
+      - install -Dm644 packaging/flatpak/io.github.abigordiy.open-trofeo-lcd.desktop /app/share/applications/io.github.abigordiy.open-trofeo-lcd.desktop
+      - install -Dm644 packaging/flatpak/io.github.abigordiy.open-trofeo-lcd.metainfo.xml /app/share/metainfo/io.github.abigordiy.open-trofeo-lcd.metainfo.xml
+      - install -Dm644 packaging/flatpak/io.github.abigordiy.open-trofeo-lcd.svg /app/share/icons/hicolor/scalable/apps/io.github.abigordiy.open-trofeo-lcd.svg
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - .agents
+          - .codex
+          - .flatpak-builder
+          - build-dir
+          - repo
+          - repo-current
+          - dist
+          - .venv
+          - .venv-gui
+          - .venv-trcc
+          - .codex-backups
+          - .trofeo-backend.env
+          - .trofeo-service.env
+          - .trofeo-playlist.json
+          - .trofeo-theme-autosave.json
+          - .trofeo-themes.json
+          - .trofeo-ttcr-stat-rules.json
+          - .trofeo-ui-state.json
+          - __pycache__
+          - backups
+          - Anim_temp
+          - temp_img
+          - TTCR_Windows
+          - Windows_Cap
+          - themes/linux_matrix_blue_assets
+          - themes/new_theme_minimal_assets
+          - themes/heritage_duality_assets/2026-05-13
+          - header_scan_logs
+          - live_test_logs
+          - reference_protocol_logs
+          - reference_timing_logs
+          - dzis.pcapng
+          - Windows_Cap/trofeo_live_19808.pcap
+          - Windows_Cap/trofeo_live_38096.pcap
+          - Windows_Cap/trofeo_live_45188.pcap
+          - Windows_Cap/trofeo_live_9336.pcap
+          - "*.pcapng"
+          - "*.pcap"
+          - "*.pyc"
+          - "*.pyo"
+          - "*.log"

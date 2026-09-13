@@ -36,17 +36,32 @@
   - mini wykres liniowy
   - mini wykres slupkowy
 - Dodac wskaznik glosnosci jako gotowy komponent / widget motywu.
+- Dodac widget pogody `forecast hourly` / prognoza godzinowa jako gotowy
+  komponent i preset w designerze.
 
 ## Etap 4 - Przygotowanie publikacji Linux
 
+- Status: w toku.
+- 2026-05-19:
+  - rootowy `open-trofeo-lcd.desktop` nie zawiera juz lokalnych sciezek `/home/...`,
+  - Flatpak manifest wyklucza lokalne katalogi robocze i duze capture/cache z paczki,
+  - dodano `scripts/check_linux_release.py` do walidacji motywow, screenow, metainfo, desktop entry i manifestu,
+  - dodano `scripts/build_portable_release.sh` do tworzenia portable `tar.gz` z aktualnego commita,
+  - dokumentacja opisuje walidacje Linux release i portable tarball.
+- 2026-05-19:
+  - dodano wspolny wrapper systemowy `packaging/linux/open-trofeo-lcd`, ktory kopiuje `/usr/share/open-trofeo-lcd` do zapisywalnego workdir uzytkownika,
+  - dodano szkielet DEB w `packaging/deb/debian`,
+  - dodano szkielet RPM w `packaging/rpm/open-trofeo-lcd.spec`,
+  - dodano `scripts/build_deb_package.sh` i `scripts/build_rpm_package.sh`,
+  - dodano `docs/linux-packaging.md` z opisem runtime layoutu i ryzyk przed publikacja.
 - Uporzadkowac strukturę:
   - `open-trofeo-lcd.desktop`
   - ikona aplikacji
   - katalog `packaging/`
 - Przygotowac pakiety:
+  - `tar.gz` portable
   - `deb`
   - `rpm`
-  - `tar.gz` portable
   - opcjonalnie `AppImage`
 - Zdecydowac model runtime:
   - systemowy Python + zaleznosci
@@ -54,6 +69,7 @@
 
 ## Etap 5 - Uzytecznosc projektanta
 
+- Status: zakonczony. Canvas obsluguje zaznaczanie, przesuwanie, skalowanie z uchwytami naroznymi i bocznymi, crop dla obrazow, snap, undo/redo, kompaktowy inspector/Weather, grupowe presety pozycji, szybkie akcje warstw, bounds grupy oraz edycje przezroczystosci dla obrazow, paneli i widgetow.
 - Umozliwic przesuwanie elementow kursorem myszy bezposrednio na canvasie.
 - Umozliwic skalowanie elementow kursorem myszy z uchwytami resize.
 - Dodac male menu narzedzi w edytorze:
@@ -69,8 +85,28 @@
 
 ## Etap 6 - Wydanie
 
+- Status: w toku.
+- 2026-05-18:
+  - launcher lokalny tworzy `.trofeo-backend.env` z przykładu, jeżeli go brakuje,
+  - `main.py` uruchamia backend z tymi samymi parametrami co service script,
+  - dodano `--status` / `--check-runtime` do szybkiej diagnostyki zależności i aktywnego backendu,
+  - `scripts/run_trofeo_gui.sh` przepuszcza tryby diagnostyczne i backend-only do launchera,
+  - dodano `scripts/trofeo_status.sh` jako szybki status bez startowania GUI/backendu.
 - CI build dla artefaktow Linux.
 - Testy na Ubuntu / Debian, Fedora i Arch.
+- Przygotowac pelny tor dystrybucji Fedora/RPM:
+  - Fedora Workstation,
+  - Bazzite Linux,
+  - Nobara Linux,
+  - zaleznosci i udev/service zgodne z gamingowymi spinami.
+- Przygotowac pozycjonowanie projektu jako dodatek do stanowisk gamingowych
+  typu Steam Machine / SteamOS-like PC: statystyki gry, LCD bez nakladki na
+  ekranie gry, profile motywow dla gier i Steam.
+- Doprecyzowac dystrybucje i UX FPS probe:
+  - wspolpraca launch options z innymi overlayami i narzedziami gry,
+  - limit dlugosci komendy Steam i ewentualny krotki wrapper,
+  - instrukcje dla gier poza Steam: Lutris, Heroic, Bottles, skroty desktopowe
+    i uruchamianie z terminala.
 - Checklista wydania:
   - GUI
   - backend
@@ -82,30 +118,60 @@
 
 ## Etap 7 - Animation Studio
 
-- Wydzielic kontroler sekwencji animacji z `trofeo_gui.py` do modulu animacji:
+- Status: zakonczony.
+- 2026-05-18:
+  - dodano wspolny, deterministyczny snapshot danych dla podgladow GUI/dokumentacji,
+  - galeria i okna podgladu renderuja motywy `theme-doc` jako pelna kompozycje z widgetami/statami,
+  - `Composite preview` w Animation Studio jest domyslnie wlaczony i nie odpytuje live zrodel danych.
+- 2026-05-18:
+  - dodano kolejke/debounce generowania miniaturek klatek,
+  - kolejne odswiezenia timeline nie uruchamiaja rownoleglych workerow dla tych samych obrazow,
+  - cache miniaturek ma limit, zeby dlugie animacje nie rozpychaly pamieci GUI.
+- 2026-05-18:
+  - payload miniaturek aktualizuje tylko ikony listy i thumbnail map timeline,
+  - unikamy pelnej przebudowy `QListWidget` po kazdej paczce miniaturek.
+- 2026-05-18:
+  - dodano postep importu/eksportu animacji w statusie zadan,
+  - dodano anulowanie importu/eksportu, w tym przerywanie ffmpeg przy imporcie wideo,
+  - Etap 7 domkniety: kontroler animacji, podglady, hold/repeat, workery, narzedzia montazowe i ergonomia timeline sa wdrozone.
+- Zrobione: wydzielic kontroler sekwencji animacji z `trofeo_gui.py` do modulu animacji:
   - normalizacja `effects.animation`
   - wybor aktualnej klatki
   - usuwanie, przesuwanie i powtarzanie klatek
   - bezpieczne uzupelnianie `frame_durations_ms`
-- Rozdzielic podglad na dwa tryby:
+- Zrobione: rozdzielic podglad na dwa tryby:
   - `Frame preview` dla surowej klatki z dysku
   - `Composite preview` dla finalnego renderu motywu z overlayami
-- Dodac `hold / repeat` bez kopiowania plikow:
+- Zrobione: dodac `hold / repeat` bez kopiowania plikow:
   - wydluzanie czasu klatki przez `duration_ms`
   - osobna akcja fizycznego duplikowania assetu tylko gdy uzytkownik tego chce
-- Przeniesc ciezsze operacje poza glowny watek GUI:
+- Zrobione: przeniesc ciezsze operacje poza glowny watek GUI:
   - import klatek
   - ekstrakcja `.zt`
   - eksport ZIP
   - generowanie miniaturek
-- Dodac narzedzia montazowe:
+- Zrobione: dodac narzedzia montazowe:
   - reverse
   - ping-pong
   - normalize durations
   - retime selection
   - loop range in/out
-- Dodac komfort pracy:
+- Zrobione: dodac komfort pracy:
   - zoom timeline
   - onion skin
   - skroty transportu
   - informacja o koszcie animacji dla USB/LCD
+
+## Backlog funkcji
+
+- Zegary swiatowe jako gotowy widget: czas dla wybranych miast na swiecie, np. 3 konfigurowalne zegary w jednym komponencie.
+- Statystyki gier/FPS jako gotowy widget: FPS, frametime/frames i dane z linuksowych nakladek, gdy uruchomiona jest gra.
+- Automatyczne przelaczanie na zdefiniowany w konfiguracji motyw gaming po
+  wykryciu gry, jako opcjonalny tryb z mozliwoscia powrotu do poprzedniego
+  motywu po zakonczeniu gry. Zrobione dla podstawowego wyjscia z gry; dodano
+  tez eksperymentalny powrot po utracie FPS/frame time przy minimalizacji gry,
+  z opoznieniem konfigurowanym w `Configuration > Gaming FPS`.
+- Orientacja pionowa wyswietlacza: profile layoutu, podglad i renderer dla obrotu 90/270 stopni.
+- Hostowanie motywow w sieci: zdalny katalog motywow, pobieranie/import paczek oraz aktualizacje motywow z kontrola wersji.
+- Dystrybucja gaming Linux: Fedora, Bazzite i Nobara jako wspierane sciezki
+  instalacji RPM, z instrukcja dla Steam Flatpak/native i integracja FPS probe.

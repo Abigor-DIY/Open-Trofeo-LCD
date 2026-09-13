@@ -3,11 +3,320 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
+
+TranslateFn = Callable[[str, str], str]
+
+
+def refresh_animation_studio_labels(owner: object, translate: TranslateFn) -> None:
+    """Refresh labels and tooltips for Animation Studio controls."""
+    if hasattr(owner, "animation_studio_open_json_btn"):
+        owner.animation_studio_open_json_btn.setText(translate("Open JSON…", "Otwórz JSON…"))
+        owner.animation_studio_open_json_btn.setToolTip(
+            translate(
+                "Same theme file; background animation is under effects.animation.",
+                "Ten sam plik motywu; animacja tła jest w effects.animation.",
+            )
+        )
+    if hasattr(owner, "animation_studio_save_as_btn"):
+        owner.animation_studio_save_as_btn.setText(translate("Save As…", "Zapisz jako…"))
+        owner.animation_studio_save_as_btn.setToolTip(
+            translate(
+                "Create a new theme file from the current animation edit.",
+                "Utwórz nowy plik motywu z bieżącej edycji animacji.",
+            )
+        )
+    if hasattr(owner, "animation_studio_back_btn"):
+        owner.animation_studio_back_btn.setText(translate("← Theme Designer", "← Projektant motywów"))
+    if hasattr(owner, "animation_studio_quick_export_btn"):
+        owner.animation_studio_quick_export_btn.setText(translate("Export", "Eksportuj"))
+        owner.animation_studio_quick_export_btn.setToolTip(
+            translate("Export the full animation sequence to ZIP.", "Eksportuj całą sekwencję animacji do ZIP.")
+        )
+    if hasattr(owner, "animation_studio_title_label"):
+        owner.animation_studio_title_label.setText(translate("Animation Studio", "Studio animacji"))
+    if hasattr(owner, "animation_studio_subtitle_label"):
+        owner.animation_studio_subtitle_label.setText(
+            translate(
+                "Create and manage frame-based animations for Trofeo LCD.",
+                "Twórz i zarządzaj animacjami klatkowymi dla Trofeo LCD.",
+            )
+        )
+    if hasattr(owner, "animation_worker_status_label") and hasattr(owner, "_refresh_animation_worker_status"):
+        owner._refresh_animation_worker_status()
+    if hasattr(owner, "animation_cancel_worker_btn"):
+        owner.animation_cancel_worker_btn.setText(translate("Cancel task", "Anuluj zadanie"))
+        owner.animation_cancel_worker_btn.setToolTip(
+            translate(
+                "Request cancellation for the current animation import or export.",
+                "Poproś o przerwanie bieżącego importu lub eksportu animacji.",
+            )
+        )
+    if hasattr(owner, "animation_preview_title_label"):
+        owner.animation_preview_title_label.setText(translate("Preview", "Podgląd"))
+    if hasattr(owner, "animation_auto_composite_chk"):
+        owner.animation_auto_composite_chk.setText(translate("Auto composite", "Auto kompozycja"))
+        owner.animation_auto_composite_chk.setToolTip(
+            translate(
+                "Render the full theme preview whenever the selected frame changes.",
+                "Renderuj pełny podgląd motywu przy każdej zmianie wybranej klatki.",
+            )
+        )
+    if hasattr(owner, "animation_refresh_composite_btn"):
+        owner.animation_refresh_composite_btn.setText(translate("Refresh composite", "Odśwież kompozycję"))
+        owner.animation_refresh_composite_btn.setToolTip(
+            translate("Render the full theme with the current animation frame.", "Wyrenderuj pełny motyw z bieżącą klatką animacji.")
+        )
+    if hasattr(owner, "animation_onion_skin_chk"):
+        owner.animation_onion_skin_chk.setText(translate("Onion skin", "Onion skin"))
+        owner.animation_onion_skin_chk.setToolTip(
+            translate(
+                "Overlay previous and next animation frames over the current frame.",
+                "Nałóż poprzednią i następną klatkę animacji na bieżącą klatkę.",
+            )
+        )
+    if hasattr(owner, "bg_animation_export_btn") and not getattr(owner, "_animation_export_in_flight", False):
+        owner.bg_animation_export_btn.setText(translate("Export", "Eksportuj"))
+        owner.bg_animation_export_btn.setToolTip(
+            translate(
+                "Render animation frames to a ZIP archive in a background worker.",
+                "Renderuj klatki animacji do archiwum ZIP w tle.",
+            )
+        )
+        if hasattr(owner, "animation_export_loop_btn"):
+            owner.animation_export_loop_btn.setText(translate("Export Loop", "Eksport pętli"))
+            owner.animation_export_loop_btn.setToolTip(
+                translate(
+                    "Export only the active animation loop range to ZIP.",
+                    "Eksportuj do ZIP tylko aktywny zakres pętli animacji.",
+                )
+            )
+        if hasattr(owner, "animation_export_selection_btn"):
+            owner.animation_export_selection_btn.setText(translate("Export Sel", "Eksport zazn."))
+            owner.animation_export_selection_btn.setToolTip(
+                translate(
+                    "Export only selected animation frames to ZIP.",
+                    "Eksportuj do ZIP tylko zaznaczone klatki animacji.",
+                )
+            )
+    if not getattr(owner, "_animation_import_in_flight", False):
+        if hasattr(owner, "bg_animation_import_btn"):
+            owner.bg_animation_import_btn.setText(translate("Import", "Importuj"))
+            owner.bg_animation_import_btn.setToolTip(
+                translate(
+                    "Replace the current sequence with selected frames or a TTCR container. Files are prepared in the background.",
+                    "Zastąp bieżącą sekwencję wybranymi klatkami lub kontenerem TTCR. Pliki są przygotowywane w tle.",
+                )
+            )
+        if hasattr(owner, "bg_animation_add_btn"):
+            owner.bg_animation_add_btn.setText(translate("Add", "Dodaj"))
+            owner.bg_animation_add_btn.setToolTip(
+                translate(
+                    "Append selected frames to the current sequence. Files are prepared in the background.",
+                    "Dopisz wybrane klatki do bieżącej sekwencji. Pliki są przygotowywane w tle.",
+                )
+            )
+    if hasattr(owner, "bg_animation_duplicate_btn"):
+        owner.bg_animation_duplicate_btn.setText(translate("Duplicate asset", "Duplikuj asset"))
+        owner.bg_animation_duplicate_btn.setToolTip(
+            translate("Create real copied frame files.", "Utwórz fizyczne kopie plików klatek.")
+        )
+    if hasattr(owner, "bg_animation_hold_repeat_btn"):
+        owner.bg_animation_hold_repeat_btn.setText(translate("Hold ×N", "Hold ×N"))
+        owner.bg_animation_hold_repeat_btn.setToolTip(
+            translate(
+                "Extend selected frame durations without copying files.",
+                "Wydłuż czas zaznaczonych klatek bez kopiowania plików.",
+            )
+        )
+    if hasattr(owner, "animation_bulk_apply_duration_btn"):
+        owner.animation_bulk_apply_duration_btn.setText(translate("Retime selection", "Ustaw czas zaznaczenia"))
+        owner.animation_bulk_apply_duration_btn.setToolTip(
+            translate(
+                "Set the duration for selected frames only.",
+                "Ustaw czas tylko dla zaznaczonych klatek.",
+            )
+        )
+    if hasattr(owner, "animation_stabilize_btn") and not getattr(owner, "_animation_stabilize_in_flight", False):
+        owner.animation_stabilize_btn.setText(translate("Stabilize", "Stabilizuj"))
+        owner.animation_stabilize_btn.setToolTip(
+            translate(
+                "Align selected frames to the first selected frame using OpenCV ECC. If no range is selected, align the full sequence.",
+                "Wyrównaj zaznaczone klatki do pierwszej zaznaczonej przez OpenCV ECC. Bez zaznaczenia wyrównuje całą sekwencję.",
+            )
+        )
+    _refresh_stabilize_mode_combo(owner, translate)
+    if hasattr(owner, "bg_animation_normalize_duration_btn"):
+        owner.bg_animation_normalize_duration_btn.setText(translate("Normalize", "Wyrównaj"))
+        owner.bg_animation_normalize_duration_btn.setToolTip(
+            translate(
+                "Set all selected frames, or the whole sequence if nothing is selected, to this duration.",
+                "Ustaw ten czas dla zaznaczonych klatek albo całej sekwencji, gdy nic nie zaznaczono.",
+            )
+        )
+    if hasattr(owner, "bg_animation_reverse_btn"):
+        owner.bg_animation_reverse_btn.setText(translate("Reverse", "Odwróć"))
+        owner.bg_animation_reverse_btn.setToolTip(
+            translate(
+                "Reverse selected frames, or the whole sequence if nothing is selected.",
+                "Odwróć zaznaczone klatki albo całą sekwencję, gdy nic nie zaznaczono.",
+            )
+        )
+    if hasattr(owner, "bg_animation_pingpong_btn"):
+        owner.bg_animation_pingpong_btn.setText(translate("Ping-pong", "Ping-pong"))
+        owner.bg_animation_pingpong_btn.setToolTip(
+            translate(
+                "Append a mirrored tail using frame references, without copying files.",
+                "Dodaj lustrzany ogon z referencji klatek, bez kopiowania plików.",
+            )
+        )
+    if hasattr(owner, "animation_select_range_btn"):
+        owner.animation_select_range_btn.setText(translate("Range", "Zakres"))
+        owner.animation_select_range_btn.setToolTip(
+            translate(
+                "Select every frame between the first and last selected frame. Shortcut: R.",
+                "Zaznacz wszystkie klatki między pierwszą i ostatnią zaznaczoną. Skrót: R.",
+            )
+        )
+    if hasattr(owner, "animation_invert_selection_btn"):
+        owner.animation_invert_selection_btn.setText(translate("Invert", "Odwróć zazn."))
+        owner.animation_invert_selection_btn.setToolTip(
+            translate("Invert frame selection. Shortcut: Ctrl+I.", "Odwróć zaznaczenie klatek. Skrót: Ctrl+I.")
+        )
+    if hasattr(owner, "animation_clear_selection_btn"):
+        owner.animation_clear_selection_btn.setText(translate("Clear Sel", "Wyczyść zazn."))
+        owner.animation_clear_selection_btn.setToolTip(
+            translate("Clear frame selection. Shortcut: Esc.", "Wyczyść zaznaczenie klatek. Skrót: Esc.")
+        )
+    if hasattr(owner, "animation_timeline_home_btn"):
+        owner.animation_timeline_home_btn.setText(translate("Start", "Start"))
+        owner.animation_timeline_home_btn.setToolTip(
+            translate("Scroll timeline to the first frame. Shortcut: Home.", "Przewiń oś czasu do pierwszej klatki. Skrót: Home.")
+        )
+    if hasattr(owner, "animation_timeline_end_btn"):
+        owner.animation_timeline_end_btn.setText(translate("End", "Koniec"))
+        owner.animation_timeline_end_btn.setToolTip(
+            translate("Scroll timeline to the last frame. Shortcut: End.", "Przewiń oś czasu do ostatniej klatki. Skrót: End.")
+        )
+    if hasattr(owner, "animation_loop_from_selection_btn"):
+        owner.animation_loop_from_selection_btn.setText(translate("Loop Sel", "Pętla z zazn."))
+        owner.animation_loop_from_selection_btn.setToolTip(
+            translate(
+                "Set preview loop from selected frame range. Shortcut: Ctrl+R.",
+                "Ustaw pętlę podglądu z zaznaczonego zakresu. Skrót: Ctrl+R.",
+            )
+        )
+    if hasattr(owner, "animation_trim_selection_btn"):
+        owner.animation_trim_selection_btn.setText(translate("Trim Sel", "Przytnij zazn."))
+        owner.animation_trim_selection_btn.setToolTip(
+            translate(
+                "Keep only selected frames in the sequence. Asset files are not deleted. Shortcut: Ctrl+T.",
+                "Zostaw w sekwencji tylko zaznaczone klatki. Pliki assetów nie są usuwane. Skrót: Ctrl+T.",
+            )
+        )
+    if hasattr(owner, "animation_timeline_label"):
+        owner.animation_timeline_label.setText(translate("Timeline", "Oś czasu"))
+        owner.animation_timeline_label.setToolTip(
+            translate(
+                "Shortcuts: Space play/pause, I/O loop in/out, Ctrl+L clear loop, Delete remove, Ctrl+A select all, R range, Ctrl+I invert, Esc clear, Ctrl+R loop selection, Ctrl+T trim, +/- zoom.",
+                "Skróty: Spacja play/pause, I/O loop in/out, Ctrl+L czyść pętlę, Delete usuń, Ctrl+A zaznacz wszystko, R zakres, Ctrl+I odwróć, Esc wyczyść, Ctrl+R pętla z zazn., Ctrl+T przytnij, +/- zoom.",
+            )
+        )
+    if hasattr(owner, "animation_timeline_hint_label"):
+        owner.animation_timeline_hint_label.setText(
+            translate(
+                "Click a frame to select it. Drag to select a range. Use Set In / Set Out to mark a loop.",
+                "Kliknij klatkę, aby ją wybrać. Przeciągnij, aby zaznaczyć zakres. Użyj In / Out do pętli.",
+            )
+        )
+    if hasattr(owner, "animation_loop_in_btn"):
+        owner.animation_loop_in_btn.setText(translate("Set In", "Ustaw In"))
+        owner.animation_loop_in_btn.setToolTip(
+            translate("Set loop start to the current frame.", "Ustaw początek pętli na bieżącej klatce.")
+        )
+    if hasattr(owner, "animation_loop_out_btn"):
+        owner.animation_loop_out_btn.setText(translate("Set Out", "Ustaw Out"))
+        owner.animation_loop_out_btn.setToolTip(
+            translate("Set loop end to the current frame.", "Ustaw koniec pętli na bieżącej klatce.")
+        )
+    if hasattr(owner, "animation_loop_clear_btn"):
+        owner.animation_loop_clear_btn.setText(translate("Clear Loop", "Wyczyść pętlę"))
+        owner.animation_loop_clear_btn.setToolTip(
+            translate("Preview the full animation sequence again.", "Podglądaj ponownie całą sekwencję animacji.")
+        )
+    if hasattr(owner, "bg_animation_repeat_all_btn"):
+        owner.bg_animation_repeat_all_btn.setText(translate("Duplicate sequence ×N", "Duplikuj sekwencję ×N"))
+    if hasattr(owner, "bg_animation_enabled_chk"):
+        owner.bg_animation_enabled_chk.setText(translate("Animation enabled", "Animacja aktywna"))
+    if hasattr(owner, "bg_animation_use_bg_chk"):
+        owner.bg_animation_use_bg_chk.setText(translate("Use as background", "Użyj jako tła"))
+    if hasattr(owner, "animation_studio_fps_label"):
+        owner.animation_studio_fps_label.setText(translate("FPS", "FPS"))
+    if hasattr(owner, "animation_studio_frame_index_label"):
+        owner.animation_studio_frame_index_label.setText(translate("Frame", "Klatka"))
+    if hasattr(owner, "animation_studio_duration_label"):
+        owner.animation_studio_duration_label.setText(translate("Duration (ms)", "Czas (ms)"))
+    if hasattr(owner, "animation_studio_bulk_duration_label"):
+        owner.animation_studio_bulk_duration_label.setText(translate("Bulk duration (ms)", "Zbiorczy czas (ms)"))
+    if hasattr(owner, "animation_onion_skin_opacity_label"):
+        owner.animation_onion_skin_opacity_label.setText(translate("Opacity", "Przezrocz."))
+    if hasattr(owner, "animation_loop_close_seam_btn"):
+        owner.animation_loop_close_seam_btn.setText(translate("Close Seam", "Domknij pętlę"))
+    _refresh_preview_scale_combo(owner, translate)
+    if hasattr(owner, "animation_duplicate_repeat_spin"):
+        owner.animation_duplicate_repeat_spin.setToolTip(
+            translate(
+                "Duplicate the selected frames this many times (copies files).",
+                "Tyle razy zduplikuj zaznaczone klatki (kopiuje pliki).",
+            )
+        )
+
+
+def _refresh_stabilize_mode_combo(owner: object, translate: TranslateFn) -> None:
+    combo = getattr(owner, "animation_stabilize_mode_combo", None)
+    if combo is None:
+        return
+    cur_data = combo.currentData()
+    combo.blockSignals(True)
+    labels = [
+        translate("Safe Translation", "Safe Translation"),
+        translate("Auto Safe", "Auto Safe"),
+        translate("Affine", "Affine"),
+        translate("Euclidean", "Euclidean"),
+        translate("Translation", "Translation"),
+    ]
+    for idx, label in enumerate(labels):
+        if idx < combo.count():
+            combo.setItemText(idx, label)
+    match = combo.findData(cur_data)
+    if match >= 0:
+        combo.setCurrentIndex(match)
+    combo.blockSignals(False)
+    combo.setToolTip(
+        translate(
+            "Stabilization model. Safe modes reject aggressive warps and avoid visible frame deformation.",
+            "Model stabilizacji. Tryby Safe odrzucają agresywne transformacje i unikają widocznej deformacji klatek.",
+        )
+    )
+
+
+def _refresh_preview_scale_combo(owner: object, translate: TranslateFn) -> None:
+    combo = getattr(owner, "animation_preview_scale_combo", None)
+    if combo is None or combo.count() < 4:
+        return
+    cur = combo.currentIndex()
+    combo.blockSignals(True)
+    combo.setItemText(0, translate("Fit width", "Dopasuj szerokość"))
+    combo.setItemText(1, "100%")
+    combo.setItemText(2, "150%")
+    combo.setItemText(3, "200%")
+    combo.setCurrentIndex(cur)
+    combo.blockSignals(False)
 
 
 @dataclass(frozen=True)
@@ -88,6 +397,10 @@ class AnimationSequenceController:
         animation["loop"] = bool(animation.get("loop", True))
         animation["frame_paths"] = frame_paths
         animation["frame_durations_ms"] = frame_durations
+        animation["smooth_loop"] = bool(animation.get("smooth_loop", True))
+        if loop_start is not None and loop_end is not None:
+            animation["loop_start"] = loop_start
+            animation["loop_end"] = loop_end
 
         return AnimationSequence(
             frame_paths=frame_paths,
@@ -237,6 +550,29 @@ class AnimationSequenceController:
         animation["current_frame"] = insert_at
         return self.normalize()
 
+    def close_loop_seam(self, indices: list[int] | None = None) -> AnimationSequence:
+        seq = self.normalize()
+        if seq.frame_count < 2:
+            return seq
+        rows = self._valid_indices(indices, seq.frame_count)
+        if len(rows) < 2:
+            rows = list(range(seq.frame_count))
+        first = rows[0]
+        insert_at = rows[-1] + 1
+        paths = list(seq.frame_paths)
+        durations = list(seq.frame_durations_ms)
+        paths.insert(insert_at, paths[first])
+        durations.insert(insert_at, durations[first])
+        animation = self.animation()
+        animation["frame_paths"] = paths
+        animation["frame_durations_ms"] = durations[: len(paths)]
+        animation["enabled"] = bool(paths)
+        animation["current_frame"] = insert_at
+        loop_start, loop_end = self._normalized_loop_range(animation, seq.frame_count)
+        if loop_start is not None and loop_end is not None and loop_start == rows[0] and loop_end == rows[-1]:
+            animation["loop_end"] = insert_at
+        return self.normalize()
+
     def repeat_timing(self, indices: list[int], multiplier: int) -> AnimationSequence:
         seq = self.normalize()
         repeat = max(1, int(multiplier))
@@ -384,6 +720,17 @@ class AnimationTimelineWidget(QWidget):
         self.setFixedWidth(self._content_width())
         self.updateGeometry()
         self.update()
+
+    def update_thumbnails(self, thumbnails: dict[int, QPixmap]) -> None:
+        n = len(self._durations)
+        changed = False
+        for index, pixmap in thumbnails.items():
+            idx = int(index)
+            if 0 <= idx < n and isinstance(pixmap, QPixmap) and not pixmap.isNull():
+                self._thumbnails[idx] = pixmap
+                changed = True
+        if changed:
+            self.update()
 
     def set_playhead(self, index: int) -> None:
         n = len(self._durations)

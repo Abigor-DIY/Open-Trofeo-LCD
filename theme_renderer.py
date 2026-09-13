@@ -8,7 +8,9 @@ Stage 3.2: render a validated theme document into a 1920x462 image.
 from __future__ import annotations
 
 import argparse
+import colorsys
 from copy import deepcopy
+import json
 import math
 from pathlib import Path
 import re
@@ -33,6 +35,8 @@ FONT_FAMILY_FILES = {
     "Noto Sans": "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
     "Noto Serif": "/usr/share/fonts/truetype/noto/NotoSerif-Regular.ttf",
 }
+_WEATHER_ICON_IMAGE_CACHE: dict[tuple[str, int, int, int, int], Image.Image] = {}
+_WEATHER_ICON_FRAME_CACHE: dict[tuple[str, int, int, int, int], Image.Image] = {}
 
 
 def _rgba(color: list[int]) -> tuple[int, int, int, int]:
@@ -231,6 +235,44 @@ def _parse_numeric_stat_value(value: str) -> float | None:
         return None
 
 
+def _looks_like_percent_source(source: object, value: object) -> bool:
+    source_text = str(source or "").strip().lower()
+    value_text = str(value or "").strip()
+    return (
+        "%" in value_text
+        or source_text.endswith("_percent")
+        or source_text in {
+            "cpu_usage_percent",
+            "cpu_core_avg_percent",
+            "cpu_core_max_percent",
+            "gpu_load",
+            "mem_percent",
+            "disk_percent",
+            "vram_percent",
+            "volume_percent",
+        }
+    )
+
+
+def _coerce_stat_range(item: dict[str, Any], value: object) -> tuple[float, float]:
+    min_value = float(item.get("min_value", 0.0))
+    max_value = float(item.get("max_value", 100.0))
+    if max_value <= min_value:
+        return 0.0, 100.0
+    # Percent-like sources must remain 0..100. Older themes or manual edits can
+    # leave a 0..1 range, which clamps 2%, 9%, 64% to the top/end of the widget.
+    if _looks_like_percent_source(item.get("source", ""), value) and max_value <= 1.0:
+        return 0.0, 100.0
+    return min_value, max_value
+
+
+def _stat_ratio(numeric_value: float, min_value: float, max_value: float) -> float:
+    span = max_value - min_value
+    if span <= 0:
+        return 0.0
+    return max(0.0, min(1.0, (float(numeric_value) - min_value) / span))
+
+
 _GAUGE_ANGLE_SMOOTH: dict[str, float] = {}
 _SPARKLINE_HISTORY: dict[str, list[float]] = {}
 
@@ -333,8 +375,7 @@ def _draw_stat_progress(
     bar_height = max(10, min(24, box_height - label_height))
     radius = max(5, min(12, bar_height // 2))
     draw.rounded_rectangle((bar_left, bar_top, bar_left + bar_width, bar_top + bar_height), radius=radius, fill=track_fill)
-    span = max_value - min_value
-    ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
+    ratio = _stat_ratio(numeric_value, min_value, max_value)
     fill_width = int(round(bar_width * ratio))
     if fill_width > 0:
         draw.rounded_rectangle(
@@ -692,13 +733,10 @@ def _draw_stat_sparkline(
 
     if not history:
         return
-    span = max_value - min_value
-    if span <= 0:
-        span = 1.0
     normalized: list[tuple[float, float]] = []
     count = max(1, len(history))
     for idx, raw in enumerate(history):
-        ratio = max(0.0, min(1.0, (raw - min_value) / span))
+        ratio = _stat_ratio(raw, min_value, max_value)
         px = plot_left if count == 1 else plot_left + ((plot_right - plot_left) * idx / (count - 1))
         py = plot_bottom - ratio * max(1, plot_bottom - plot_top)
         normalized.append((px, py))
@@ -723,6 +761,48 @@ def _draw_stat_sparkline(
         end_x, end_y = normalized[-1]
         dot_r = max(2, line_width + 1)
         draw.ellipse((end_x - dot_r, end_y - dot_r, end_x + dot_r, end_y + dot_r), fill=value_fill)
+
+
+def _resampled_audio_eq_levels(snapshot: dict[str, str], count: int) -> list[float]:
+    raw = snapshot.get("audio_eq_bars")
+    if not raw:
+        return []
+    try:
+        age_ms = int(float(str(snapshot.get("audio_eq_age_ms", "0") or "0")))
+    except (TypeError, ValueError):
+        age_ms = 0
+    if age_ms > 750:
+        return []
+    try:
+        parsed = json.loads(str(raw))
+    except Exception:
+        parsed = []
+    if not isinstance(parsed, list):
+        return []
+    levels: list[float] = []
+    for value in parsed:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        levels.append(max(0.0, min(1.0, number)))
+    if not levels:
+        return []
+    target = max(1, int(count))
+    if len(levels) == target:
+        return levels
+    if target == 1:
+        return [max(levels)]
+    if len(levels) == 1:
+        return [levels[0]] * target
+    out: list[float] = []
+    for idx in range(target):
+        pos = (idx / float(target - 1)) * (len(levels) - 1)
+        left = int(math.floor(pos))
+        right = min(len(levels) - 1, left + 1)
+        frac = pos - left
+        out.append(levels[left] * (1.0 - frac) + levels[right] * frac)
+    return out
 
 
 def _draw_stat_equalizer(
@@ -786,8 +866,7 @@ def _draw_stat_equalizer(
         vb = draw.textbbox((0, 0), value_text, font=value_font)
         vx = plot_right - (vb[2] - vb[0])
         _draw_styled_text(draw, (vx, y + pad_y), value_text, font=value_font, fill=value_fill, bold=True, underline=False)
-    span = max_value - min_value
-    ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
+    ratio = _stat_ratio(numeric_value, min_value, max_value)
     media_state = str(snapshot.get("media_state", "")).strip().lower()
     is_playing = media_state == "playing"
     is_paused = media_state == "paused"
@@ -797,23 +876,49 @@ def _draw_stat_equalizer(
     total_w = bar_width * bars + gap * (bars - 1)
     start_x = plot_left + max(0, (content_w - total_w) // 2)
     mid_y = plot_top + plot_h / 2.0
+    live_levels = _resampled_audio_eq_levels(snapshot, bars)
+    preset = str(item.get("equalizer_color_preset", "custom")).strip().lower()
+    threshold = max(0.0, min(1.0, float(item.get("equalizer_threshold", 1.0) or 1.0)))
+    threshold_rgba = _rgba(item.get("equalizer_threshold_color", [255, 86, 96, 255]))
+    threshold_color = (
+        threshold_rgba[0],
+        threshold_rgba[1],
+        threshold_rgba[2],
+        min(threshold_rgba[3], max(fill_color[3], value_fill[3])),
+    )
     seed = (sum(ord(ch) for ch in str(item.get("id", "eq"))) % 31) / 7.0
     phase_t = time.time() * (3.6 if is_playing else 1.2)
     for idx in range(bars):
         px = start_x + idx * (bar_width + gap)
-        phase = phase_t + seed + idx * 0.63
-        slow = (math.sin(phase) + 1.0) * 0.5
-        fast = (math.sin(phase * 1.93 + 0.7) + 1.0) * 0.5
-        pulse = (math.sin(phase * 0.47 + 1.8) + 1.0) * 0.5
-        combined = slow * 0.46 + fast * 0.36 + pulse * 0.18
-        weight = 0.62 + 0.38 * math.sin(((idx + 1) / float(bars + 1)) * math.pi)
-        if is_playing:
-            level = min(1.0, 0.10 + combined * ((0.28 + ratio * 0.64) * weight))
-        elif is_paused:
-            level = min(0.34, 0.05 + combined * 0.16 * weight)
+        if live_levels:
+            level = live_levels[idx]
+            if is_paused:
+                level = min(0.34, level * 0.35)
+            elif not is_playing:
+                level = min(0.16, level * 0.16)
         else:
-            level = 0.06 + combined * 0.06 * weight
-        bar_fill = _lerp_rgba(fill_color, value_fill, max(0.0, min(1.0, level)) * 0.72)
+            phase = phase_t + seed + idx * 0.63
+            slow = (math.sin(phase) + 1.0) * 0.5
+            fast = (math.sin(phase * 1.93 + 0.7) + 1.0) * 0.5
+            pulse = (math.sin(phase * 0.47 + 1.8) + 1.0) * 0.5
+            combined = slow * 0.46 + fast * 0.36 + pulse * 0.18
+            weight = 0.62 + 0.38 * math.sin(((idx + 1) / float(bars + 1)) * math.pi)
+            if is_playing:
+                level = min(1.0, 0.10 + combined * ((0.28 + ratio * 0.64) * weight))
+            elif is_paused:
+                level = min(0.34, 0.05 + combined * 0.16 * weight)
+            else:
+                level = 0.06 + combined * 0.06 * weight
+        bar_fill = _equalizer_bar_color(
+            preset=preset,
+            index=idx,
+            bars=bars,
+            level=level,
+            fill_color=fill_color,
+            value_fill=value_fill,
+            threshold=threshold,
+            threshold_color=threshold_color,
+        )
         if mirror:
             half_h = max(2, int(round((plot_h * 0.48) * level)))
             top = int(round(mid_y - half_h))
@@ -827,6 +932,42 @@ def _draw_stat_equalizer(
             radius=max(2, min(6, bar_width // 2)),
             fill=bar_fill,
         )
+
+
+def _equalizer_bar_color(
+    *,
+    preset: str,
+    index: int,
+    bars: int,
+    level: float,
+    fill_color: tuple[int, int, int, int],
+    value_fill: tuple[int, int, int, int],
+    threshold: float,
+    threshold_color: tuple[int, int, int, int],
+) -> tuple[int, int, int, int]:
+    normalized = max(0.0, min(1.0, level))
+    if 0.0 <= threshold < 1.0 and normalized >= threshold:
+        return threshold_color
+    preset = preset if preset in {"neon", "cyan", "rainbow", "thermal"} else "custom"
+    if preset == "rainbow":
+        pos = index / float(max(1, bars - 1))
+        hue = (0.68 - 0.68 * pos) % 1.0
+        red, green, blue = colorsys.hsv_to_rgb(hue, 0.72, 1.0)
+        alpha = max(fill_color[3], value_fill[3])
+        return int(red * 255), int(green * 255), int(blue * 255), alpha
+    if preset == "thermal":
+        alpha = max(fill_color[3], value_fill[3])
+        low = (90, 220, 132, alpha)
+        mid = (246, 231, 112, alpha)
+        high = (255, 86, 96, alpha)
+        if normalized < 0.58:
+            return _lerp_rgba(low, mid, normalized / 0.58)
+        return _lerp_rgba(mid, high, (normalized - 0.58) / 0.42)
+    if preset == "cyan":
+        return _lerp_rgba((70, 190, 255, fill_color[3]), (230, 248, 255, value_fill[3]), normalized * 0.68)
+    if preset == "neon":
+        return _lerp_rgba((102, 226, 120, fill_color[3]), (246, 231, 152, value_fill[3]), normalized * 0.72)
+    return _lerp_rgba(fill_color, value_fill, normalized * 0.72)
 
 
 def _motion_progress(track: dict[str, Any], frame_index: int) -> float:
@@ -854,7 +995,7 @@ def _apply_motion_tracks(theme: ThemeDocument) -> ThemeDocument:
     frame_index = int(animation.get("current_frame", 0)) if isinstance(animation, dict) else 0
     data = deepcopy(theme.data)
     indexed: dict[str, dict[str, Any]] = {}
-    for key in ("texts", "stats", "images"):
+    for key in ("texts", "stats", "images", "widgets"):
         for item in data.get(key, []):
             if isinstance(item, dict):
                 indexed[str(item.get("id", "")).strip()] = item
@@ -1169,6 +1310,17 @@ def render_images(canvas: Image.Image, theme: ThemeDocument, base_dir: Path, sna
         x, y, w, h = item["rect"]
         if source == "analog_clock":
             fitted = _render_analog_clock(item, snapshot, w, h)
+        elif source == "weather_icon" or (source.startswith("weather_day_") and source.endswith("_icon")):
+            icon_path_key = "weather_icon_path" if source == "weather_icon" else f"{source}_path"
+            icon_path = str(snapshot.get(icon_path_key, "")).strip()
+            if not icon_path:
+                continue
+            src_path = _resolve_asset_path(base_dir, icon_path)
+            if not src_path.exists():
+                continue
+            src = Image.open(src_path).convert("RGBA")
+            src = _apply_crop_box(src, item.get("crop_box"))
+            fitted = _fit_image(src, w, h, item["fit"])
         elif source in {"media_cover", "media_video_frame"}:
             cover_path = ""
             if source == "media_video_frame":
@@ -1299,8 +1451,7 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
         marquee = bool(item.get("marquee", False))
         numeric_value = _parse_numeric_stat_value(value)
         if display in {"progress", "gauge", "sparkline", "equalizer"} and numeric_value is not None:
-            min_value = float(item.get("min_value", 0.0))
-            max_value = float(item.get("max_value", 100.0))
+            min_value, max_value = _coerce_stat_range(item, value)
             if display == "progress":
                 _draw_stat_progress(
                     canvas,
@@ -1316,8 +1467,7 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
                     fill_color=fill_color,
                 )
             elif display == "gauge":
-                span = max_value - min_value
-                target_ratio = 0.0 if span <= 0 else max(0.0, min(1.0, (numeric_value - min_value) / span))
+                target_ratio = _stat_ratio(numeric_value, min_value, max_value)
                 cache_key = f"{item.get('id', 'stat')}::{item.get('source', '')}"
                 smooth_f = float(item.get("gauge_smooth", 0.32))
                 display_ratio = _smooth_gauge_ratio(cache_key, target_ratio, smooth_f)
@@ -1445,6 +1595,726 @@ def render_stats(canvas: Image.Image, theme: ThemeDocument, snapshot: dict[str, 
                 )
 
 
+def _scaled_font(size: int, scale: float, *, bold: bool = False, font_family: str = "DejaVu Sans") -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    return _load_font(max(8, int(round(size * scale))), bold=bold, font_family=font_family)
+
+
+def _draw_widget_text(
+    draw: ImageDraw.ImageDraw,
+    xy: tuple[int, int],
+    text: str,
+    *,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    fill: tuple[int, int, int, int],
+    max_width: int,
+) -> None:
+    draw.text(xy, _ellipsize_text(draw, str(text or "N/A"), font, max(1, max_width)), font=font, fill=fill)
+
+
+def _font_height(draw: ImageDraw.ImageDraw, font: ImageFont.FreeTypeFont | ImageFont.ImageFont, text: str = "Hg") -> int:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return max(1, bbox[3] - bbox[1])
+
+
+def _weather_widget_content_scale(
+    width: int,
+    height: int,
+    base_width: int,
+    base_height: int,
+    *,
+    min_scale: float,
+    max_scale: float,
+) -> float:
+    sx = max(0.05, float(width) / max(1.0, float(base_width)))
+    sy = max(0.05, float(height) / max(1.0, float(base_height)))
+    uniform = min(sx, sy)
+    balanced = math.sqrt(sx * sy)
+    return max(min_scale, min(max_scale, max(uniform, min(balanced, sy * 1.08))))
+
+
+def _weather_icon_scale(settings: dict[str, Any]) -> float:
+    try:
+        value = float(settings.get("icon_scale", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        value = 1.0
+    return max(0.45, min(2.5, value))
+
+
+def _weather_icon_image(source: str, snapshot: dict[str, str], base_dir: Path, size: tuple[int, int]) -> Image.Image | None:
+    icon_path_key = "weather_icon_path" if source == "weather_icon" else f"{source}_path"
+    icon_path = str(snapshot.get(icon_path_key, "")).strip()
+    if not icon_path:
+        return None
+    src_path = _resolve_asset_path(base_dir, icon_path)
+    if not src_path.exists():
+        return None
+    try:
+        stat = src_path.stat()
+        cache_key = (str(src_path), int(stat.st_mtime_ns), int(stat.st_size), int(size[0]), int(size[1]))
+    except OSError:
+        return None
+    cached = _WEATHER_ICON_IMAGE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached.copy()
+    try:
+        with Image.open(src_path) as src:
+            fitted = _fit_image(src.convert("RGBA"), size[0], size[1], "contain")
+        if len(_WEATHER_ICON_IMAGE_CACHE) > 96:
+            _WEATHER_ICON_IMAGE_CACHE.clear()
+        _WEATHER_ICON_IMAGE_CACHE[cache_key] = fitted
+        return fitted.copy()
+    except Exception:
+        return None
+
+
+def _weather_icon_path_for_source(source: str, snapshot: dict[str, str], base_dir: Path) -> Path | None:
+    icon_path_key = "weather_icon_path" if source == "weather_icon" else f"{source}_path"
+    icon_path = str(snapshot.get(icon_path_key, "")).strip()
+    if not icon_path:
+        return None
+    src_path = _resolve_asset_path(base_dir, icon_path)
+    return src_path if src_path.exists() else None
+
+
+def _weather_icon_frame_image(source: str, snapshot: dict[str, str], base_dir: Path, size: tuple[int, int], settings: dict[str, Any]) -> Image.Image | None:
+    if not bool(settings.get("animate_icons", True)):
+        return None
+    src_path = _weather_icon_path_for_source(source, snapshot, base_dir)
+    if src_path is None:
+        return None
+    frame_dir = src_path.parent.parent / "frames" / src_path.stem
+    if not frame_dir.exists():
+        return None
+    frame_paths = sorted(frame_dir.glob("frame_*.png"))
+    if not frame_paths:
+        return None
+    fps = max(1.0, min(30.0, float(settings.get("icon_frame_fps", 12.0) or 12.0)))
+    frame_path = frame_paths[int(time.time() * fps) % len(frame_paths)]
+    try:
+        stat = frame_path.stat()
+        cache_key = (str(frame_path), int(stat.st_mtime_ns), int(stat.st_size), int(size[0]), int(size[1]))
+    except OSError:
+        return None
+    cached = _WEATHER_ICON_FRAME_CACHE.get(cache_key)
+    if cached is not None:
+        return cached.copy()
+    try:
+        with Image.open(frame_path) as src:
+            fitted = _fit_image(src.convert("RGBA"), size[0], size[1], "contain")
+        if len(_WEATHER_ICON_FRAME_CACHE) > 192:
+            _WEATHER_ICON_FRAME_CACHE.clear()
+        _WEATHER_ICON_FRAME_CACHE[cache_key] = fitted
+        return fitted.copy()
+    except Exception:
+        return None
+
+
+def _weather_widget_icon_image(source: str, snapshot: dict[str, str], base_dir: Path, size: tuple[int, int], settings: dict[str, Any]) -> Image.Image | None:
+    animated = _weather_icon_frame_image(source, snapshot, base_dir, size, settings)
+    if animated is not None:
+        return animated
+    icon = _weather_icon_image(source, snapshot, base_dir, size)
+    if icon is not None and bool(settings.get("animate_icons", True)):
+        return _animate_weather_icon(icon, source, snapshot, settings)
+    return icon
+
+
+def _weather_icon_context_text(source: str, snapshot: dict[str, str]) -> str:
+    keys = [source]
+    if source == "weather_icon":
+        keys.extend(("weather_condition", "weather_icon"))
+    elif source.startswith("weather_day_") and source.endswith("_icon"):
+        prefix = source[:-5]
+        keys.extend((f"{prefix}_condition", f"{prefix}_icon"))
+    else:
+        keys.extend(("weather_condition", "weather_icon"))
+    return " ".join(str(snapshot.get(key, "")) for key in keys).lower()
+
+
+def _icon_with_alpha(icon: Image.Image, alpha_scale: float) -> Image.Image:
+    faded = icon.copy()
+    alpha_scale = max(0.0, min(1.0, alpha_scale))
+    faded.putalpha(faded.getchannel("A").point(lambda a: int(a * alpha_scale)))
+    return faded
+
+
+def _animate_fog_icon(icon: Image.Image, phase: float) -> Image.Image:
+    w, h = icon.size
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    out.alpha_composite(_icon_with_alpha(icon.filter(ImageFilter.GaussianBlur(max(0.6, h * 0.012))), 0.30))
+    mist = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(mist)
+    colors = (
+        (230, 242, 250, 72),
+        (188, 214, 228, 62),
+        (255, 255, 255, 50),
+    )
+    for idx in range(6):
+        band_h = max(5, int(round(h * (0.070 + 0.012 * (idx % 2)))))
+        band_w = max(int(w * 0.42), int(w * (0.58 + 0.07 * (idx % 3))))
+        gap = max(8, int(w * 0.18))
+        speed = 6.0 + idx * 1.55
+        base_y = h * (0.24 + idx * 0.095)
+        drift_y = math.sin(phase * 0.75 + idx * 0.82) * h * 0.018
+        y = int(round(base_y + drift_y))
+        x0 = int(round(((phase * speed) + idx * w * 0.19) % (band_w + gap) - band_w))
+        color = colors[idx % len(colors)]
+        for x in range(x0, w + band_w, band_w + gap):
+            draw.rounded_rectangle(
+                (x, y, x + band_w, y + band_h),
+                radius=max(3, band_h // 2),
+                fill=color,
+            )
+    mist = mist.filter(ImageFilter.GaussianBlur(max(1.2, h * 0.022)))
+    out.alpha_composite(mist)
+    return out
+
+
+def _animate_precip_icon(icon: Image.Image, phase: float, snow: bool = False) -> Image.Image:
+    w, h = icon.size
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    out.alpha_composite(_icon_with_alpha(icon, 0.82))
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    count = 9 if snow else 7
+    travel = max(1, int(h * 0.34))
+    for idx in range(count):
+        x = int((idx * w * 0.17 + phase * (7.0 if snow else 11.0)) % max(1, w))
+        y = int((idx * h * 0.19 + phase * (9.0 if snow else 15.0)) % travel) + int(h * 0.50)
+        if snow:
+            radius = max(1, int(h * 0.022))
+            draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=(235, 248, 255, 142))
+        else:
+            length = max(5, int(h * 0.13))
+            draw.line((x, y, x - max(2, w // 18), y + length), fill=(94, 205, 255, 150), width=max(1, w // 34))
+    out.alpha_composite(layer)
+    return out
+
+
+def _animate_cloud_icon(icon: Image.Image, phase: float) -> Image.Image:
+    w, h = icon.size
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    offset = int(round(math.sin(phase * 1.25) * max(1, w * 0.030)))
+    out.alpha_composite(icon, (offset, 0))
+    glow = _icon_with_alpha(icon.filter(ImageFilter.GaussianBlur(max(1.0, h * 0.018))), 0.22)
+    out.alpha_composite(glow, (-offset, 0))
+    return out
+
+
+def _animate_weather_icon(icon: Image.Image, source: str, snapshot: dict[str, str], settings: dict[str, Any]) -> Image.Image:
+    if not bool(settings.get("animate_icons", True)):
+        return icon
+    phase = time.time() * float(settings.get("icon_animation_speed", 1.0) or 1.0)
+    text = _weather_icon_context_text(source, snapshot)
+    w, h = icon.size
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    if any(token in text for token in ("fog", "mist", "haze", "rime", "smog", "mgla", "zamg")):
+        return _animate_fog_icon(icon, phase)
+    if any(token in text for token in ("snow", "hail")):
+        return _animate_precip_icon(icon, phase, snow=True)
+    if any(token in text for token in ("rain", "drizzle", "sleet", "shower")):
+        return _animate_precip_icon(icon, phase, snow=False)
+    if any(token in text for token in ("cloud", "overcast")):
+        return _animate_cloud_icon(icon, phase)
+    angle = math.sin(phase * 1.5) * 3.0
+    scale = 1.0 + 0.035 * math.sin(phase * 2.0)
+    resized = icon.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
+    rotated = resized.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True)
+    out.alpha_composite(rotated, ((w - rotated.width) // 2, (h - rotated.height) // 2))
+    return out
+
+
+def _render_weather_current_widget(canvas: Image.Image, item: dict[str, Any], base_dir: Path, snapshot: dict[str, str]) -> None:
+    x, y, w, h = [int(v) for v in item["rect"]]
+    settings = item.get("settings", {}) if isinstance(item.get("settings", {}), dict) else {}
+    opacity = max(0.0, min(1.0, float(item.get("opacity", 1.0))))
+    scale = _weather_widget_content_scale(w, h, 500, 152, min_scale=0.55, max_scale=2.4)
+    panel = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    pdraw = ImageDraw.Draw(panel)
+    fill = _rgba(settings.get("panel_fill", [8, 14, 24, 205]))
+    if bool(settings.get("panel_enabled", True)) and fill[3] > 0:
+        pdraw.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(4, int(22 * scale)), fill=(fill[0], fill[1], fill[2], int(fill[3] * opacity)))
+    icon_size = max(36, min(int(round(88 * scale * _weather_icon_scale(settings))), int(h * 0.74), int(w * 0.30)))
+    icon_x = max(6, int(24 * scale))
+    icon_y = max(8, (h - icon_size) // 2)
+    icon = _weather_widget_icon_image("weather_icon", snapshot, base_dir, (icon_size, icon_size), settings)
+    if icon is not None:
+        panel.alpha_composite(icon, (icon_x, icon_y))
+    text_x = icon_x + icon_size + int(18 * scale)
+    right_x = max(text_x + int(180 * scale), int(w * 0.63))
+    font_family = str(settings.get("font_family", "DejaVu Sans"))
+    location_font = _scaled_font(int(settings.get("location_font_size", 18)), scale, bold=True, font_family=font_family)
+    temp_font = _scaled_font(int(settings.get("temp_font_size", 38)), scale, bold=True, font_family=font_family)
+    condition_font = _scaled_font(int(settings.get("condition_font_size", 20)), scale, font_family=font_family)
+    location_y = max(4, int(16 * scale))
+    temp_y = location_y + _font_height(pdraw, location_font) + max(1, int(3 * scale))
+    condition_y = temp_y + _font_height(pdraw, temp_font) + max(1, int(4 * scale))
+    if condition_y + _font_height(pdraw, condition_font) > h - 4:
+        condition_y = max(temp_y + _font_height(pdraw, temp_font), h - _font_height(pdraw, condition_font) - 6)
+    _draw_widget_text(pdraw, (text_x, location_y), snapshot.get("weather_location", "N/A"), font=location_font, fill=_rgba(settings.get("location_color", [235, 246, 255])), max_width=right_x - text_x - 8)
+    _draw_widget_text(pdraw, (text_x, temp_y), snapshot.get("weather_temp_c", "N/A"), font=temp_font, fill=_rgba(settings.get("temp_color", [246, 231, 152])), max_width=right_x - text_x - 8)
+    _draw_widget_text(pdraw, (text_x, condition_y), snapshot.get("weather_condition", "N/A"), font=condition_font, fill=_rgba(settings.get("condition_color", [210, 224, 240])), max_width=right_x - text_x - 8)
+    detail_font = _scaled_font(int(settings.get("detail_font_size", 18)), scale, font_family=font_family)
+    detail_color = _rgba(settings.get("detail_color", [210, 224, 240]))
+    if w - right_x > max(72, int(90 * scale)):
+        detail_y = max(4, (h - (_font_height(pdraw, detail_font) * 2 + int(8 * scale))) // 2)
+        _draw_widget_text(pdraw, (right_x, detail_y), f"Wind {snapshot.get('weather_wind_kph', 'N/A')}", font=detail_font, fill=detail_color, max_width=w - right_x - 16)
+        _draw_widget_text(pdraw, (right_x, detail_y + _font_height(pdraw, detail_font) + int(8 * scale)), f"Humidity {snapshot.get('weather_humidity_percent', 'N/A')}", font=detail_font, fill=detail_color, max_width=w - right_x - 16)
+    canvas.alpha_composite(panel, (x, y))
+
+
+def _render_weather_forecast_widget(canvas: Image.Image, item: dict[str, Any], base_dir: Path, snapshot: dict[str, str]) -> None:
+    x, y, w, h = [int(v) for v in item["rect"]]
+    settings = item.get("settings", {}) if isinstance(item.get("settings", {}), dict) else {}
+    opacity = max(0.0, min(1.0, float(item.get("opacity", 1.0))))
+    scale = _weather_widget_content_scale(w, h, 1088, 112, min_scale=0.45, max_scale=2.35)
+    panel = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    pdraw = ImageDraw.Draw(panel)
+    fill = _rgba(settings.get("panel_fill", [8, 14, 24, 190]))
+    if bool(settings.get("panel_enabled", True)) and fill[3] > 0:
+        pdraw.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(4, int(18 * scale)), fill=(fill[0], fill[1], fill[2], int(fill[3] * opacity)))
+    font_family = str(settings.get("font_family", "DejaVu Sans"))
+    title_font = _scaled_font(int(settings.get("location_font_size", 18)), scale, bold=True, font_family=font_family)
+    label_font = _scaled_font(int(settings.get("day_font_size", 17)), scale, bold=True, font_family=font_family)
+    hi_font = _scaled_font(int(settings.get("temp_max_font_size", 21)), scale, bold=True, font_family=font_family)
+    lo_font = _scaled_font(int(settings.get("temp_min_font_size", 16)), scale, font_family=font_family)
+    cond_font = _scaled_font(int(settings.get("condition_font_size", 13)), scale, font_family=font_family)
+    pad_x = max(8, int(26 * scale))
+    title_y = max(3, int(8 * scale))
+    _draw_widget_text(pdraw, (pad_x, title_y), snapshot.get("weather_location", "N/A"), font=title_font, fill=_rgba(settings.get("location_color", [235, 246, 255])), max_width=w - 2 * pad_x)
+    day_w = max(1, int((w - 2 * pad_x) / 7))
+    top = max(int(30 * scale), title_y + _font_height(pdraw, title_font) + max(2, int(5 * scale)))
+    label_h = _font_height(pdraw, label_font)
+    temp_h = _font_height(pdraw, hi_font)
+    cond_h = _font_height(pdraw, cond_font)
+    icon_y = top + label_h + max(2, int(4 * scale))
+    bottom_pad = max(3, int(5 * scale))
+    condition_y = max(icon_y, h - bottom_pad - cond_h)
+    max_icon_by_height = max(18, condition_y - icon_y - max(2, int(4 * scale)))
+    max_icon_by_width = max(18, int(day_w * 0.42))
+    icon_size = max(18, min(int(round(42 * scale * _weather_icon_scale(settings))), max_icon_by_width, max_icon_by_height))
+    for idx in range(7):
+        dx = pad_x + idx * day_w
+        _draw_widget_text(pdraw, (dx, top), snapshot.get(f"weather_day_{idx}_label", "N/A"), font=label_font, fill=_rgba(settings.get("day_color", [160, 196, 232])), max_width=day_w - 4)
+        icon = _weather_widget_icon_image(f"weather_day_{idx}_icon", snapshot, base_dir, (icon_size, icon_size), settings)
+        if icon is not None:
+            panel.alpha_composite(icon, (dx, icon_y))
+        temp_gap = max(4, int(6 * scale))
+        temp_x = dx + icon_size + temp_gap
+        temp_y = icon_y + max(0, (icon_size - temp_h) // 2) - max(0, int(2 * scale))
+        temp_y = max(icon_y, min(temp_y, max(icon_y, condition_y - temp_h - 1)))
+        temp_max_text = _ellipsize_text(
+            pdraw,
+            snapshot.get(f"weather_day_{idx}_temp_max_c", "N/A"),
+            hi_font,
+            max(1, day_w - icon_size - temp_gap),
+        )
+        pdraw.text((temp_x, temp_y), temp_max_text, font=hi_font, fill=_rgba(settings.get("temp_max_color", [246, 231, 152])))
+        temp_max_width = pdraw.textbbox((0, 0), temp_max_text, font=hi_font)[2] if temp_max_text else 0
+        temp_min_x = temp_x + temp_max_width + temp_gap
+        temp_min_width = max(1, dx + day_w - temp_min_x - 2)
+        if temp_min_width >= max(12, int(18 * scale)):
+            _draw_widget_text(
+                pdraw,
+                (temp_min_x, temp_y + max(0, int(4 * scale))),
+                snapshot.get(f"weather_day_{idx}_temp_min_c", "N/A"),
+                font=lo_font,
+                fill=_rgba(settings.get("temp_min_color", [180, 206, 232])),
+                max_width=temp_min_width,
+            )
+        _draw_widget_text(pdraw, (dx, condition_y), snapshot.get(f"weather_day_{idx}_condition", "N/A"), font=cond_font, fill=_rgba(settings.get("condition_color", [210, 224, 240])), max_width=day_w - 6)
+    canvas.alpha_composite(panel, (x, y))
+
+
+def _media_cover_image(snapshot: dict[str, str], base_dir: Path, size: tuple[int, int], *, video_frame: bool = False) -> Image.Image | None:
+    cover_path = ""
+    if video_frame:
+        cover_path = str(snapshot.get("media_video_frame_path", "")).strip() or str(snapshot.get("media_cover_path", "")).strip()
+    else:
+        cover_path = str(snapshot.get("media_cover_path", "")).strip()
+    if not cover_path:
+        return None
+    src_path = _resolve_asset_path(base_dir, cover_path)
+    if not src_path.exists():
+        return None
+    try:
+        return _fit_image(Image.open(src_path).convert("RGBA"), size[0], size[1], "cover")
+    except Exception:
+        return None
+
+
+def _media_cover_placeholder(
+    size: tuple[int, int],
+    *,
+    title: str,
+    artist: str,
+    fill: tuple[int, int, int, int],
+    accent: tuple[int, int, int, int],
+) -> Image.Image:
+    w, h = max(1, int(size[0])), max(1, int(size[1]))
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    base = (max(0, fill[0] + 10), max(0, fill[1] + 14), max(0, fill[2] + 22), min(230, max(150, fill[3])))
+    draw.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(8, min(w, h) // 8), fill=base)
+    ring = (accent[0], accent[1], accent[2], min(180, max(80, accent[3])))
+    pad = max(8, min(w, h) // 8)
+    draw.ellipse((pad, pad, w - pad, h - pad), outline=ring, width=max(2, min(w, h) // 24))
+    draw.ellipse((w * 0.43, h * 0.43, w * 0.57, h * 0.57), fill=ring)
+    initial = ""
+    for value in (title, artist):
+        clean = str(value or "").strip()
+        if clean and clean != "N/A":
+            initial = clean[0].upper()
+            break
+    if initial:
+        font = _load_font(max(16, min(w, h) // 3), bold=True)
+        bbox = draw.textbbox((0, 0), initial, font=font)
+        draw.text(((w - (bbox[2] - bbox[0])) // 2, (h - (bbox[3] - bbox[1])) // 2 - bbox[1]), initial, font=font, fill=accent)
+    return img
+
+
+def _draw_media_widget_text(
+    panel: Image.Image,
+    *,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    text: str,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    fill: tuple[int, int, int, int],
+    bold: bool = False,
+    marquee: bool = False,
+    marquee_speed: float = 55.0,
+) -> None:
+    _draw_clipped_text(
+        panel,
+        x=max(0, int(x)),
+        y=max(0, int(y)),
+        box_width=max(1, int(width)),
+        box_height=max(1, int(height)),
+        text=str(text),
+        font=font,
+        fill=fill,
+        bold=bold,
+        underline=False,
+        marquee=marquee,
+        marquee_speed=marquee_speed,
+    )
+
+
+def _draw_media_widget_equalizer(
+    panel: Image.Image,
+    *,
+    rect: tuple[int, int, int, int],
+    snapshot: dict[str, str],
+    fill_color: tuple[int, int, int, int],
+    accent_color: tuple[int, int, int, int],
+    track_color: tuple[int, int, int, int],
+    widget_id: str,
+    color_preset: str,
+    threshold: float,
+    threshold_color: tuple[int, int, int, int],
+    bars: int,
+    gap: int,
+    mirror: bool,
+) -> None:
+    x, y, w, h = rect
+    if w <= 0 or h <= 0:
+        return
+    fake_item = {
+        "id": widget_id,
+        "x": x,
+        "y": y,
+        "box_width": w,
+        "box_height": h,
+        "font_size": 22,
+        "font_family": "DejaVu Sans",
+        "equalizer_bars": bars,
+        "equalizer_gap": gap,
+        "equalizer_mirror": mirror,
+        "equalizer_color_preset": color_preset,
+        "equalizer_threshold": threshold,
+        "equalizer_threshold_color": list(threshold_color),
+        "show_value_text": False,
+    }
+    value = str(snapshot.get("volume_percent", "65"))
+    numeric = _parse_numeric_stat_value(value)
+    if numeric is None:
+        numeric = 65.0 if str(snapshot.get("media_state", "")).strip().lower() == "playing" else 18.0
+    _draw_stat_equalizer(
+        panel,
+        fake_item,
+        label="",
+        value_text="",
+        numeric_value=numeric,
+        min_value=0.0,
+        max_value=100.0,
+        label_fill=accent_color,
+        value_fill=accent_color,
+        track_fill=track_color,
+        fill_color=fill_color,
+        snapshot=snapshot,
+    )
+
+
+def _render_media_now_playing_widget(canvas: Image.Image, item: dict[str, Any], base_dir: Path, snapshot: dict[str, str]) -> None:
+    x, y, w, h = [int(v) for v in item["rect"]]
+    settings = item.get("settings", {}) if isinstance(item.get("settings", {}), dict) else {}
+    style = str(item.get("style", "standard")).strip().lower()
+    opacity = max(0.0, min(1.0, float(item.get("opacity", 1.0))))
+    scale = max(0.45, min(2.4, min(w / (932.0 if style == "hero" else 760.0), h / (176.0 if style == "hero" else 128.0))))
+    panel = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    pdraw = ImageDraw.Draw(panel)
+    panel_enabled = bool(settings.get("panel_enabled", True))
+    backdrop_enabled = bool(settings.get("backdrop_enabled", True))
+    cover_enabled = bool(settings.get("cover_enabled", True))
+    cover_placeholder_enabled = bool(settings.get("cover_placeholder_enabled", True))
+    equalizer_enabled = bool(settings.get("equalizer_enabled", True))
+    title_marquee = bool(settings.get("title_marquee", True))
+    marquee_speed = float(settings.get("title_marquee_speed", settings.get("marquee_speed", 55.0)))
+    if backdrop_enabled:
+        backdrop = _media_cover_image(snapshot, base_dir, (w, h), video_frame=True)
+        if backdrop is not None:
+            alpha = backdrop.getchannel("A")
+            alpha = alpha.point(lambda v: int(v * max(0.0, min(1.0, float(settings.get("backdrop_opacity", 0.30))))))
+            backdrop.putalpha(alpha)
+            panel.alpha_composite(backdrop, (0, 0))
+    fill = _rgba(settings.get("panel_fill", [8, 14, 24, 210]))
+    radius = max(4, int((26 if style == "hero" else 16) * scale))
+    if panel_enabled and fill[3] > 0:
+        pdraw.rounded_rectangle((0, 0, w - 1, h - 1), radius=radius, fill=(fill[0], fill[1], fill[2], int(fill[3] * opacity)))
+    font_family = str(settings.get("font_family", "DejaVu Sans"))
+    title_font = _scaled_font(int(settings.get("title_font_size", 32 if style == "hero" else 28 if style != "mini" else 20)), scale, bold=True, font_family=font_family)
+    artist_font = _scaled_font(int(settings.get("artist_font_size", 24 if style == "hero" else 22 if style != "mini" else 16)), scale, font_family=font_family)
+    detail_font = _scaled_font(int(settings.get("detail_font_size", 18)), scale, font_family=font_family)
+    title_color = _rgba(settings.get("title_color", [244, 248, 255]))
+    artist_color = _rgba(settings.get("artist_color", [210, 224, 240]))
+    detail_color = _rgba(settings.get("detail_color", [160, 196, 232]))
+    eq_color = _rgba(settings.get("equalizer_color", [102, 226, 120, 255]))
+    eq_accent = _rgba(settings.get("equalizer_accent_color", [246, 231, 152, 255]))
+    eq_track = _rgba(settings.get("equalizer_track_color", [0, 0, 0, 0]))
+    eq_preset = str(settings.get("equalizer_color_preset", "neon")).strip().lower()
+    eq_threshold = max(0.0, min(1.0, float(settings.get("equalizer_threshold", 1.0) or 1.0)))
+    eq_threshold_color = _rgba(settings.get("equalizer_threshold_color", [255, 86, 96, 255]))
+    eq_widget_id = f"{item.get('id', 'media_now_playing')}::equalizer"
+    media_title = str(snapshot.get("media_title", "N/A") or "N/A")
+    media_artist = str(snapshot.get("media_artist", "N/A") or "N/A")
+    media_app = str(snapshot.get("media_app", "N/A") or "N/A")
+    media_state = str(snapshot.get("media_state", "N/A") or "N/A")
+    if style == "mini":
+        pad = max(6, int(12 * scale))
+        gap = max(3, int(5 * scale))
+        cover_size = 0
+        cover_x = pad
+        cover_y = 0
+        if cover_enabled and w >= 220 and h >= 58:
+            cover_size = max(42, min(int(h * 0.70), int(w * 0.22)))
+            cover_y = max(4, (h - cover_size) // 2)
+            cover = _media_cover_image(snapshot, base_dir, (cover_size, cover_size))
+            if cover is None and cover_placeholder_enabled:
+                cover = _media_cover_placeholder((cover_size, cover_size), title=media_title, artist=media_artist, fill=fill, accent=title_color)
+            if cover is not None:
+                panel.alpha_composite(_apply_rounded_alpha(cover, max(5, int(10 * scale))), (cover_x, cover_y))
+        text_x = pad + cover_size + (gap * 2 if cover_size else 0)
+        text_w = max(1, w - text_x - pad)
+        top = max(4, int(9 * scale))
+        bottom = max(4, int(7 * scale))
+        title_h = max(14, min(int(28 * scale), max(14, h // 3)))
+        artist_h = max(0, min(int(20 * scale), max(0, h // 4)))
+        eq_h = max(0, h - top - title_h - artist_h - gap * 2 - bottom)
+        if equalizer_enabled and eq_h < 14:
+            artist_h = max(0, min(artist_h, h - top - title_h - gap - bottom - 14))
+            eq_h = max(0, h - top - title_h - artist_h - gap * 2 - bottom)
+        title_y = top
+        artist_y = title_y + title_h + gap
+        _draw_media_widget_text(panel, x=text_x, y=title_y, width=text_w, height=title_h, text=f"♫ {media_title}", font=title_font, fill=title_color, bold=True, marquee=title_marquee, marquee_speed=marquee_speed)
+        show_artist = artist_h >= 8
+        if show_artist:
+            _draw_media_widget_text(panel, x=text_x, y=artist_y, width=text_w, height=artist_h, text=media_artist, font=artist_font, fill=artist_color)
+        if equalizer_enabled and eq_h >= 14:
+            eq_top = (artist_y + artist_h + gap) if show_artist else (title_y + title_h + gap)
+            _draw_media_widget_equalizer(panel, rect=(text_x, eq_top, text_w, eq_h), snapshot=snapshot, fill_color=eq_color, accent_color=eq_accent, track_color=eq_track, widget_id=eq_widget_id, color_preset=eq_preset, threshold=eq_threshold, threshold_color=eq_threshold_color, bars=int(settings.get("equalizer_bars", 20)), gap=int(settings.get("equalizer_gap", 4)), mirror=bool(settings.get("equalizer_mirror", False)))
+    else:
+        cover_size = max(58, min(int(h * 0.78), int(w * 0.18)))
+        cover_x = int(20 * scale)
+        cover_y = max(8, (h - cover_size) // 2)
+        cover = _media_cover_image(snapshot, base_dir, (cover_size, cover_size)) if cover_enabled else None
+        if cover is None and cover_enabled and cover_placeholder_enabled:
+            cover = _media_cover_placeholder((cover_size, cover_size), title=media_title, artist=media_artist, fill=fill, accent=title_color)
+        if cover is not None:
+            radius = max(6, int(18 * scale))
+            cover = _apply_rounded_alpha(cover, radius)
+            panel.alpha_composite(cover, (cover_x, cover_y))
+        text_x = cover_x + cover_size + int(22 * scale) if cover_enabled else int(22 * scale)
+        max_text_w = max(1, w - text_x - int(28 * scale))
+        title_y = max(6, int(14 * scale))
+        bottom_pad = max(6, int(8 * scale))
+        gap = max(3, int(5 * scale))
+        title_h = max(18, min(int(38 * scale), max(18, h // 3)))
+        artist_h = max(14, min(int(30 * scale), max(14, h // 4)))
+        detail_h = max(0, min(int(24 * scale), max(0, h // 5)))
+        min_eq_h = 16 if h >= 92 else 0
+        eq_h = max(0, h - title_y - title_h - artist_h - detail_h - gap * 3 - bottom_pad)
+        if equalizer_enabled and eq_h < min_eq_h:
+            detail_h = 0
+            eq_h = max(0, h - title_y - title_h - artist_h - gap * 2 - bottom_pad)
+        if equalizer_enabled and eq_h < min_eq_h:
+            available_artist_h = h - title_y - title_h - gap * 2 - bottom_pad - min_eq_h
+            artist_h = max(0, min(artist_h, available_artist_h))
+            eq_h = max(0, h - title_y - title_h - artist_h - gap * 2 - bottom_pad)
+        artist_y = title_y + title_h + gap
+        detail_y = artist_y + artist_h + gap
+        eq_top = (detail_y + detail_h + gap) if detail_h > 0 else (artist_y + artist_h + gap)
+        title_prefix = "" if bool(settings.get("hide_title_prefix", True)) else "Now Playing: "
+        _draw_media_widget_text(panel, x=text_x, y=title_y, width=max_text_w, height=title_h, text=f"{title_prefix}{media_title}", font=title_font, fill=title_color, bold=True, marquee=title_marquee, marquee_speed=marquee_speed)
+        if artist_h > 0:
+            _draw_media_widget_text(panel, x=text_x, y=artist_y, width=max_text_w, height=artist_h, text=media_artist, font=artist_font, fill=artist_color)
+        if detail_h > 0:
+            _draw_media_widget_text(panel, x=text_x, y=detail_y, width=max_text_w, height=detail_h, text=f"{media_app} - {media_state}", font=detail_font, fill=detail_color)
+        if equalizer_enabled and eq_h >= 18:
+            _draw_media_widget_equalizer(panel, rect=(text_x, eq_top, max_text_w, eq_h), snapshot=snapshot, fill_color=eq_color, accent_color=eq_accent, track_color=eq_track, widget_id=eq_widget_id, color_preset=eq_preset, threshold=eq_threshold, threshold_color=eq_threshold_color, bars=int(settings.get("equalizer_bars", 20)), gap=int(settings.get("equalizer_gap", 4)), mirror=bool(settings.get("equalizer_mirror", False)))
+    canvas.alpha_composite(panel, (x, y))
+
+
+def _draw_metric_cell(
+    draw: ImageDraw.ImageDraw,
+    *,
+    rect: tuple[int, int, int, int],
+    label: str,
+    value: str,
+    label_font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    value_font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    label_color: tuple[int, int, int, int],
+    value_color: tuple[int, int, int, int],
+    fill: tuple[int, int, int, int],
+    radius: int,
+) -> None:
+    x, y, w, h = rect
+    if w <= 0 or h <= 0:
+        return
+    if fill[3] > 0:
+        draw.rounded_rectangle((x, y, x + w - 1, y + h - 1), radius=radius, fill=fill)
+    label_h = _font_height(draw, label_font)
+    value_h = _font_height(draw, value_font)
+    draw.text((x + max(5, w // 14), y + max(3, h // 10)), _ellipsize_text(draw, label, label_font, w - 10), font=label_font, fill=label_color)
+    value_text = _ellipsize_text(draw, str(value or "N/A"), value_font, w - 10)
+    draw.text((x + max(5, w // 14), y + h - value_h - max(4, h // 10)), value_text, font=value_font, fill=value_color)
+
+
+def _render_gaming_performance_widget(canvas: Image.Image, item: dict[str, Any], base_dir: Path, snapshot: dict[str, str]) -> None:
+    x, y, w, h = [int(v) for v in item["rect"]]
+    settings = item.get("settings", {}) if isinstance(item.get("settings", {}), dict) else {}
+    opacity = max(0.0, min(1.0, float(item.get("opacity", 1.0))))
+    scale = max(0.42, min(2.6, min(w / 760.0, h / 210.0)))
+    panel = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    pdraw = ImageDraw.Draw(panel)
+    fill = _rgba(settings.get("panel_fill", [5, 10, 18, 218]))
+    accent = _rgba(settings.get("accent_color", [66, 220, 255, 255]))
+    good = _rgba(settings.get("good_color", [102, 226, 120, 255]))
+    warn = _rgba(settings.get("warn_color", [246, 231, 152, 255]))
+    bad = _rgba(settings.get("bad_color", [255, 86, 96, 255]))
+    muted = _rgba(settings.get("muted_color", [150, 174, 204, 255]))
+    text = _rgba(settings.get("text_color", [238, 246, 255, 255]))
+    cell_fill = _rgba(settings.get("cell_fill", [12, 20, 32, 190]))
+    radius = max(5, int(22 * scale))
+    if bool(settings.get("panel_enabled", True)) and fill[3] > 0:
+        pdraw.rounded_rectangle((0, 0, w - 1, h - 1), radius=radius, fill=(fill[0], fill[1], fill[2], int(fill[3] * opacity)))
+    for offset, alpha in ((0, 160), (6, 70)):
+        pdraw.rounded_rectangle((offset, offset, w - 1 - offset, h - 1 - offset), radius=max(4, radius - offset), outline=(accent[0], accent[1], accent[2], alpha), width=max(1, int(2 * scale)))
+    font_family = str(settings.get("font_family", "DejaVu Sans"))
+    title_font = _scaled_font(int(settings.get("title_font_size", 24)), scale, bold=True, font_family=font_family)
+    fps_font = _scaled_font(int(settings.get("fps_font_size", 72)), scale, bold=True, font_family=font_family)
+    label_font = _scaled_font(int(settings.get("label_font_size", 15)), scale, bold=True, font_family=font_family)
+    value_font = _scaled_font(int(settings.get("value_font_size", 24)), scale, bold=True, font_family=font_family)
+    small_font = _scaled_font(int(settings.get("small_font_size", 15)), scale, font_family=font_family)
+
+    pad = max(8, int(18 * scale))
+    game_name = str(snapshot.get("game_name", "N/A") or "N/A")
+    launcher = str(snapshot.get("game_launcher", "N/A") or "N/A")
+    active = str(snapshot.get("game_active", "no")).strip().lower()
+    status_text = "LIVE" if active in {"yes", "true", "1", "active"} else "WAITING"
+    status_color = good if status_text == "LIVE" else muted
+    pdraw.text((pad, max(4, int(10 * scale))), _ellipsize_text(pdraw, game_name, title_font, max(1, int(w * 0.58))), font=title_font, fill=text)
+    badge_w = max(64, int(96 * scale))
+    badge_h = max(20, int(28 * scale))
+    pdraw.rounded_rectangle((w - pad - badge_w, pad, w - pad, pad + badge_h), radius=badge_h // 2, fill=(status_color[0], status_color[1], status_color[2], 44), outline=status_color, width=1)
+    badge_text = _ellipsize_text(pdraw, status_text, label_font, badge_w - 12)
+    badge_bbox = pdraw.textbbox((0, 0), badge_text, font=label_font)
+    pdraw.text((w - pad - badge_w + (badge_w - (badge_bbox[2] - badge_bbox[0])) // 2, pad + (badge_h - (badge_bbox[3] - badge_bbox[1])) // 2 - badge_bbox[1]), badge_text, font=label_font, fill=status_color)
+
+    fps_value = str(snapshot.get("game_fps", "N/A") or "N/A")
+    fps_numeric = _parse_numeric_stat_value(fps_value)
+    fps_color = good if fps_numeric is None or fps_numeric >= 60 else warn if fps_numeric >= 35 else bad
+    fps_x = pad
+    fps_y = max(int(48 * scale), pad + _font_height(pdraw, title_font) + int(8 * scale))
+    pdraw.text((fps_x, fps_y), fps_value, font=fps_font, fill=fps_color)
+    fps_bbox = pdraw.textbbox((0, 0), fps_value, font=fps_font)
+    pdraw.text((fps_x + max(4, fps_bbox[2] - fps_bbox[0] + int(10 * scale)), fps_y + int(13 * scale)), "FPS", font=title_font, fill=muted)
+    pdraw.text((fps_x, min(h - int(28 * scale), fps_y + _font_height(pdraw, fps_font) - int(8 * scale))), f"{snapshot.get('game_frametime_ms', 'N/A')}  |  {launcher}", font=small_font, fill=muted)
+
+    grid_x = max(int(w * 0.42), pad + int(260 * scale))
+    grid_y = max(int(52 * scale), pad + badge_h + int(12 * scale))
+    grid_w = max(1, w - grid_x - pad)
+    cols = 3 if grid_w >= int(330 * scale) else 2
+    gap = max(5, int(8 * scale))
+    cell_w = max(1, (grid_w - gap * (cols - 1)) // cols)
+    cell_h = max(40, int((h - grid_y - pad - gap) / 2))
+    avg_fps = snapshot.get("game_fps_avg", "N/A")
+    if str(avg_fps or "").strip().upper() == "N/A":
+        avg_fps = fps_value
+    max_fps = snapshot.get("game_fps_max", "N/A")
+    if str(max_fps or "").strip().upper() == "N/A":
+        max_fps = fps_value
+    min_fps = snapshot.get("game_fps_min", "N/A")
+    if str(min_fps or "").strip().upper() == "N/A":
+        min_fps = fps_value
+    metrics = [
+        ("AVG", avg_fps, good),
+        ("MIN FPS", min_fps, warn),
+        ("MAX FPS", max_fps, good),
+        ("1% LOW", snapshot.get("game_fps_1pct_low", "N/A"), warn),
+        ("0.1% LOW", snapshot.get("game_fps_0_1pct_low", "N/A"), bad),
+        ("STUTTERS", snapshot.get("game_stutter_count", "N/A"), bad),
+    ]
+    for idx, (label, value, color) in enumerate(metrics[: cols * 2]):
+        cx = grid_x + (idx % cols) * (cell_w + gap)
+        cy = grid_y + (idx // cols) * (cell_h + gap)
+        _draw_metric_cell(
+            pdraw,
+            rect=(cx, cy, cell_w, cell_h),
+            label=label,
+            value=str(value or "N/A"),
+            label_font=label_font,
+            value_font=value_font,
+            label_color=muted,
+            value_color=color,
+            fill=cell_fill,
+            radius=max(4, int(10 * scale)),
+        )
+    source_text = str(snapshot.get("game_fps_source", "N/A") or "N/A")
+    session_text = str(snapshot.get("game_session_time", "N/A") or "N/A")
+    max_ft = str(snapshot.get("game_frametime_max_ms", "N/A") or "N/A")
+    footer = f"{session_text}  |  MAX FT {max_ft}  |  {source_text}"
+    pdraw.text((pad, h - max(18, int(24 * scale))), _ellipsize_text(pdraw, footer, small_font, max(1, w - 2 * pad)), font=small_font, fill=muted)
+    canvas.alpha_composite(panel, (x, y))
+
+
+def render_widgets(canvas: Image.Image, theme: ThemeDocument, base_dir: Path, snapshot: dict[str, str]) -> None:
+    for item in _sorted_by_z(theme.data.get("widgets", [])):
+        if not bool(item.get("visible", True)):
+            continue
+        kind = str(item.get("kind", "")).strip().lower()
+        if kind == "weather_current":
+            _render_weather_current_widget(canvas, item, base_dir, snapshot)
+        elif kind == "weather_forecast_7d":
+            _render_weather_forecast_widget(canvas, item, base_dir, snapshot)
+        elif kind == "media_now_playing":
+            _render_media_now_playing_widget(canvas, item, base_dir, snapshot)
+        elif kind == "gaming_performance":
+            _render_gaming_performance_widget(canvas, item, base_dir, snapshot)
+
+
 def render_effects(canvas: Image.Image, theme: ThemeDocument) -> None:
     effects = theme.data["effects"]
     draw = ImageDraw.Draw(canvas)
@@ -1488,6 +2358,7 @@ def render_theme_document(
         render_images(canvas, themed, base_dir, snapshot)
     render_texts(canvas, themed)
     render_stats(canvas, themed, snapshot)
+    render_widgets(canvas, themed, base_dir, snapshot)
     if include_effects:
         render_effects(canvas, themed)
 

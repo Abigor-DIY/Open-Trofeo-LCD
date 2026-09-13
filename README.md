@@ -1,6 +1,32 @@
 # Thermalright Trofeo LCD — Linux Open Driver
 
-Reverse-engineered driver for the Thermalright Trofeo LCD cooler display.
+An independent, open-source Linux driver and visual theme editor for the Thermalright Trofeo LCD cooler display. Turn the display into a system monitor, media panel or external gaming dashboard.
+
+![Valhalla Command gaming dashboard — illustrative preview, not a benchmark](docs/screenshots/theme-valhalla-command.png)
+
+*Illustrative preview with synthetic data. Not a game benchmark or a photograph of the physical display.*
+
+## September 2026 gaming update
+
+- **Gaming telemetry:** FPS, frametime, session minimum/average/maximum, rolling sample-based 1% and 0.1% lows, and session CSV logging. These lows use telemetry samples, not a full per-frame benchmark capture.
+- **Valhalla Command:** CPU/GPU gauges, RAM/VRAM, temperatures, recent-value charts and top processes by resident memory (RSS; shared pages may be counted in multiple processes).
+- **Automatic game themes:** switch when game telemetry is detected and optionally restore the previous theme afterwards.
+- **Customization:** seven themes, visual Theme Designer, Animation Studio and animated backgrounds.
+- **Desktop widgets:** media/Now Playing, audio visualization, volume, current weather and forecasts.
+- **KDE VRR controls:** Automatic/Always/Off for compatible outputs. These controls do not guarantee a fix for panel-specific flicker.
+- **USB handoff fixes:** complete frame transfers before switching workers and confirm the first animation frame before reporting startup success.
+
+### Tested scope and availability
+
+Hardware validation currently covers **one Trofeo on Ubuntu/Kubuntu 26.04**, including Space Marine 2 telemetry and Valhalla/Orbital switching. Other Thermalright models are **not validated**. Bazzite and SteamOS-style PCs are future test targets, not certified supported platforms.
+
+The `0.1.0~dev20260913+gaming2` DEB was built, installed and tested locally. Launchpad accepted its signed sources; check the [build status](https://launchpad.net/~abigor82/+archive/ubuntu/open-trofeo-lcd/+build/33593779) before assuming this version is available through APT. [Ubuntu PPA](https://launchpad.net/~abigor82/+archive/ubuntu/open-trofeo-lcd) · [Gaming setup](docs/gaming-fps.md) · [Packaging](docs/linux-packaging.md).
+
+FPS integration requires setup and depends on the game/rendering path. TRCC is an optional dependency for animated output. This remains a development preview, not official Thermalright software.
+
+### Hardware and development collaboration
+
+Additional display samples, protocol documentation and technical contacts would help expand compatibility. Sponsorship or funded milestones can support implementation, testing and maintenance. [Collaboration overview and screenshots](docs/thermalright-collaboration.md).
 
 > **Development preview**
 >
@@ -23,9 +49,9 @@ Known development areas:
 - Theme Designer layout and editor tooling are still being refined.
 - Animation Studio is functional, but timeline UX, stabilization and export workflow are still evolving.
 - Some advanced widgets may need tuning for LCD refresh performance.
-- Planned widget: configurable weather block using a free API, with provider/API key/location settings in the UI.
+- Weather widgets are available, including current conditions, 7-day forecast, city search and animated icons.
 - Experimental Flatpak packaging is available for local testing, but source/venv launch is still the recommended path for now.
-- DEB/RPM packages are planned after the Flatpak runtime layout is stable.
+- DEB packaging has been tested locally on Kubuntu 26.04. RPM/Flatpak and clean-distro validation remain development work.
 
 ## Release Plan
 
@@ -33,8 +59,11 @@ Short-term publication plan:
 1. Push the current development preview to GitHub with this README warning.
 2. Keep source installation as the primary supported method for early testers.
 3. Add a Flatpak manifest with explicit USB device access notes.
-4. Build test packages: Flatpak first, then DEB/RPM if the runtime layout is stable.
-5. Publish downloadable artifacts on GitHub Releases after local install, udev and backend startup are verified.
+4. Validate release inputs with `python3 scripts/check_linux_release.py`.
+5. Build test packages: Flatpak first, then portable `tar.gz`, then DEB/RPM skeleton packages.
+6. Publish downloadable artifacts on GitHub Releases after local install, udev and backend startup are verified.
+
+Latest locally validated DEB: `0.1.0~dev20260913+gaming2` (September 13, 2026). The older stages below describe development history; see current availability above.
 
 Flatpak packaging checklist:
 - Bundle Python dependencies or use pinned modules from `requirements.txt`.
@@ -46,18 +75,29 @@ Flatpak packaging checklist:
 - Ensure only one backend instance can own the LCD device.
 
 Experimental Flatpak build instructions are available in `docs/flatpak.md`.
+DEB/RPM/portable packaging notes are available in `docs/linux-packaging.md`.
 
 ## Screenshots
 
-Application UI:
+Application UI (earlier development screenshots; current layouts may differ):
+
+![Open Trofeo LCD Theme Gallery](docs/screenshots/open-trofeo-lcd-theme-gallery.png)
+
+![Open Trofeo LCD Theme Designer](docs/screenshots/open-trofeo-lcd-theme-designer.png)
 
 ![Open Trofeo LCD Animation Studio](docs/screenshots/open-trofeo-lcd-animation-studio.png)
 
-Theme previews rendered from bundled starter themes:
+Theme previews with illustrative data, not hardware measurements:
+
+![Obsidian Pulse theme preview](docs/screenshots/theme-obsidian-pulse.png)
+
+![Orbital Relay theme preview](docs/screenshots/theme-orbital-relay.png)
 
 ![Heritage Duality theme preview](docs/screenshots/theme-heritage-duality.png)
 
 ![Verdant Bloom theme preview](docs/screenshots/theme-verdant-bloom.png)
+
+![Matrix Green theme preview](docs/screenshots/theme-matrix-green.png)
 
 ![Wolfstorm Forge theme preview](docs/screenshots/theme-wolfstorm-forge.png)
 
@@ -124,7 +164,7 @@ After each packet, the host reads a 512-byte ACK from EP1 IN.
 
 ```bash
 # Kubuntu / Ubuntu / Debian
-sudo apt install python3-venv python3-pip python3-usb python3-pil playerctl
+sudo apt install python3-venv python3-pip python3-usb python3-pil playerctl ffmpeg cava mangohud
 
 # Python dependencies used by the backend, renderer and GUI
 python3 -m venv .venv-gui
@@ -136,7 +176,33 @@ scripts/setup_gui_venv.sh
 # Optional but recommended for "Now Playing" widget (MPRIS metadata)
 # (Spotify / Chromium / YT Music web / etc.)
 playerctl -v
+
+# Optional but recommended for real-time EQ bars in Now Playing / Graphic EQ
+cava -v
+
+# Optional fallback only for game FPS widgets
+mangohud --version
 ```
+
+For live FPS widgets without an on-screen overlay, use the Open Trofeo FPS probe
+socket described in `docs/gaming-fps-probe.md`. MangoHud log reading is disabled
+by default and remains an explicit fallback only.
+
+Native Vulkan FPS probe for quick testing:
+
+```bash
+scripts/build_fps_probe.sh
+scripts/install_fps_layer_user.sh
+```
+
+For Steam Flatpak, the installer also grants the game sandbox access to the
+backend FPS socket. If this needs to be repaired manually:
+
+```bash
+scripts/configure_steam_flatpak_fps.sh
+```
+
+Steam installed from a DEB package does not need the Flatpak socket override.
 
 Python packages are tracked in `requirements.txt`:
 - `PySide6` for the Qt GUI
@@ -266,6 +332,15 @@ scripts/trofeo_backend_service.sh status
 scripts/trofeo_backend_service.sh logs
 ```
 
+For the DEB packaged app, the backend user service is installed globally as
+`trofeo-backend.service`. If a source checkout previously installed a per-user
+unit in `~/.config/systemd/user`, refresh it from the package wrapper once:
+
+```bash
+open-trofeo-lcd --install-backend-service
+systemctl --user restart trofeo-backend.service
+```
+
 Note:
 - `trofeo_backend_service.sh start` stops the old `trofeo-lcd.service` to avoid `Resource busy` conflicts.
 - Do not use `sudo` with `systemd --user`.
@@ -302,6 +377,14 @@ File: `.trofeo-backend.env`
 - `THEMES_FILE` (default: `.trofeo-themes.json`)
 - `PLAYLIST_FILE` (default: `.trofeo-playlist.json`)
 - `AUTOSTART=1` starts replay immediately when the backend starts
+- optional weather data for widgets:
+  - `OPEN_TROFEO_WEATHER_LAT`
+  - `OPEN_TROFEO_WEATHER_LON`
+  - `OPEN_TROFEO_WEATHER_LOCATION`
+  - `OPEN_TROFEO_WEATHER_REFRESH_S` (default: `900`)
+
+Weather uses Open-Meteo by default and does not require an API key. Leave
+latitude/longitude empty to keep weather sources disabled.
 
 ## Stage 2.3: Qt GUI Client
 
@@ -434,6 +517,22 @@ curl -s -X POST http://127.0.0.1:18777/v1/bundle/load \
 - Compare packet plans with `--packet-debug`
 - Per-packet ACK is required and is now the default behavior
 - Also test a small delay, e.g. `--inter-packet-delay 0.01`
+
+**LCD freezes after deep sleep / suspend:**
+- Symptoms can include an old date/time stuck on the LCD, frozen EQ/stat widgets,
+  `USBTimeoutError`, `resolution (0,0)`, or GUI errors such as
+  `Remote end closed connection without response`.
+- First try **Configuration → Quick Actions → LCD USB Recovery (sudo)** in the
+  app. It opens a terminal, stops the user backend service, runs:
+  `sudo /usr/share/open-trofeo-lcd/scripts/trofeo_usb_power_cycle.sh`, then
+  restarts the backend.
+- From a source checkout the same script is:
+  `sudo scripts/trofeo_usb_power_cycle.sh`.
+- A normal PC reboot usually helps because the USB device is enumerated again.
+  If the motherboard keeps USB powered during standby, a full power-off for a few
+  seconds is stronger than a warm reboot.
+- Physical replug is the last resort, mainly when the hub/firmware refuses a
+  software reset.
 
 **Image looks wrong:**
 - The LCD is 1920×462 — ultra-wide. Images are auto-resized

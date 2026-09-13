@@ -1,0 +1,32 @@
+diff --git a/trofeo_gui.py b/trofeo_gui.py
+index f0d1032..6174f7e 100644
+--- a/trofeo_gui.py
++++ b/trofeo_gui.py
+@@ -15099,6 +15099,12 @@ class TrofeoGui(QMainWindow):
+         self.filter_designer_element_list()
+         self.update_layer_row_visuals()
+ 
++    def _refresh_designer_list_rows_for_entries(self, entries: list[tuple[str, int]]) -> None:
++        current_collection = self._selected_collection()
++        rows = sorted({row for collection, row in entries if collection == current_collection})
++        for row in rows:
++            self._refresh_designer_list_row(row)
++
+     def _subtitle_for_item(self, item: dict[str, Any], collection: str) -> str:
+         if collection == "stats":
+             source = str(item.get("source", "")).strip()
+@@ -15655,11 +15661,13 @@ class TrofeoGui(QMainWindow):
+         actual_dy = int(first_after[1] - first_before[1])
+         self.preview_delta_label.setText(f"Δx: {actual_dx:+d}, Δy: {actual_dy:+d}")
+         self.write_designer_to_json()
+-        self.refresh_designer_element_list()
+         if first_collection != self._selected_collection():
+             combo_index = self.designer_kind_combo.findData(first_collection)
+             if combo_index >= 0 and combo_index != self.designer_kind_combo.currentIndex():
+                 self.designer_kind_combo.setCurrentIndex(combo_index)
++        self._refresh_designer_list_rows_for_entries(
++            [(collection, row) for collection, row, _item in selected]
++        )
+         if 0 <= first_row < self.designer_element_list.count():
+             self.designer_element_list.setCurrentRow(first_row)
+         self._update_preview_canvas_overlay()

@@ -1,8 +1,11 @@
-# Experimental Flatpak Packaging
+# Experimental Linux Packaging
 
 Open Trofeo LCD currently ships an experimental Flatpak manifest for local
 testing. The source/venv launcher is still the primary supported path until USB
 access and runtime permissions are verified on more systems.
+
+DEB/RPM/portable package skeletons are documented separately in
+`docs/linux-packaging.md`.
 
 ## Install Build Tools
 
@@ -16,11 +19,17 @@ flatpak install flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.
 
 ## Build And Install Locally
 
+Before building, validate the release inputs from the repository root:
+
+```bash
+python3 scripts/check_linux_release.py
+```
+
 Run from the repository root:
 
 ```bash
-flatpak-builder --force-clean --user --install build-dir packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.yml
-flatpak run io.github.AbigorDIY.OpenTrofeoLCD
+flatpak-builder --force-clean --user --install build-dir packaging/flatpak/io.github.abigordiy.open-trofeo-lcd.yml
+flatpak run io.github.abigordiy.open-trofeo-lcd
 ```
 
 ## Install Release Bundle
@@ -29,13 +38,49 @@ Download `open-trofeo-lcd-0.1.0-dev.flatpak` from the GitHub Release page, then:
 
 ```bash
 flatpak install --user ./open-trofeo-lcd-0.1.0-dev.flatpak
-flatpak run io.github.AbigorDIY.OpenTrofeoLCD
+flatpak run io.github.abigordiy.open-trofeo-lcd
+```
+
+Remove the local Flatpak test build before testing the DEB/PPA package, or KDE
+Discover and the application launcher may keep showing the Flatpak export:
+
+```bash
+flatpak uninstall --user io.github.abigordiy.open-trofeo-lcd
+rm -rf ~/.var/app/io.github.abigordiy.open-trofeo-lcd
+kbuildsycoca6
+```
+
+## Portable Tarball
+
+The portable package is source-based: it contains the tracked checkout, bundled
+themes, docs, launch scripts and release metadata. It does not include Python
+virtual environments, build directories, Flatpak caches, packet captures or
+local `.trofeo-*` state.
+
+Create it from a clean commit:
+
+```bash
+./scripts/build_portable_release.sh 0.1.0-dev
+```
+
+The script writes:
+
+```bash
+dist/open-trofeo-lcd-0.1.0-dev-portable.tar.gz
+dist/open-trofeo-lcd-0.1.0-dev-portable.tar.gz.sha256
+```
+
+After extraction, run:
+
+```bash
+./scripts/run_trofeo_gui.sh --check-runtime
+./scripts/run_trofeo_gui.sh
 ```
 
 If your environment does not expose `/dev/fuse`, use:
 
 ```bash
-flatpak-builder --force-clean --disable-rofiles-fuse --user --install build-dir packaging/flatpak/io.github.AbigorDIY.OpenTrofeoLCD.yml
+flatpak-builder --force-clean --disable-rofiles-fuse --user --install build-dir packaging/flatpak/io.github.abigordiy.open-trofeo-lcd.yml
 ```
 
 ## Current Permissions
@@ -62,6 +107,18 @@ stable public Flatpak release, this should be replaced with generated source
 entries and hashes, for example with `flatpak-pip-generator`, so builds do not
 depend on live PyPI resolution.
 
+## Host Runtime Helpers
+
+Some live widgets use host binaries when available:
+
+- `playerctl` for MPRIS Now Playing metadata from host desktop players.
+- `ffmpeg` for extracting preview frames from local video media.
+- `cava` for real-time Graphic EQ / Now Playing EQ bars. Without host `cava`,
+  the app keeps using the synthetic EQ fallback.
+- `mangohud` for optional game/FPS widgets. Game process detection works from
+  `/proc`, but live FPS values need MangoHud logging enabled for the running
+  game.
+
 ## USB Notes
 
 The LCD identifies as `0416:5408`. For source launches, install the udev rule
@@ -81,4 +138,5 @@ LCD.
   hashes.
 - The package has not yet been validated on clean systems without the source
   checkout.
-- DEB/RPM packages are planned after the Flatpak runtime layout is stable.
+- DEB/RPM skeletons are available for local packaging work, but dependency names
+  and clean VM install behavior still need distro-specific validation.

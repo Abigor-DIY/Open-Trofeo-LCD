@@ -1,0 +1,121 @@
+diff --git a/designer/geometry.py b/designer/geometry.py
+index 749fba0..4f77f68 100644
+--- a/designer/geometry.py
++++ b/designer/geometry.py
+@@ -24,6 +24,14 @@ class MoveResult:
+     group_move: bool
+ 
+ 
++@dataclass(frozen=True)
++class ResizeResult:
++    """Result of a designer resize operation."""
++
++    applied: bool
++    next_rect: tuple[int, int, int, int] | None
++
++
+ def item_rect(item: dict[str, Any], collection: str) -> tuple[int, int, int, int]:
+     """Return an element rectangle in canvas coordinates."""
+     if collection in RECT_COLLECTIONS:
+@@ -87,6 +95,19 @@ def apply_item_position(
+     return nx, ny, width, height
+ 
+ 
++def resize_item_rect(
++    item: dict[str, Any],
++    collection: str,
++    rect: tuple[int, int, int, int],
++    *,
++    snap: Callable[[int], int] | None = None,
++) -> ResizeResult:
++    """Resize an unlocked item and return the normalized rectangle."""
++    if bool(item.get("locked", False)):
++        return ResizeResult(False, None)
++    return ResizeResult(True, apply_item_rect(item, collection, rect, snap=snap))
++
++
+ def move_items_by_delta(
+     selected: list[tuple[str, int, dict[str, Any]]],
+     dx: int,
+diff --git a/tests/test_designer_geometry.py b/tests/test_designer_geometry.py
+index 5a7a715..209d056 100644
+--- a/tests/test_designer_geometry.py
++++ b/tests/test_designer_geometry.py
+@@ -1,7 +1,16 @@
+ import unittest
+ 
+ from designer.canvas import compute_snap_guides, resize_rect_from_drag, snap_rect_position
+-from designer.geometry import apply_item_position, apply_item_rect, group_bounds, item_rect, move_drag_target, move_items_by_delta, theme_items_for_collection
++from designer.geometry import (
++    apply_item_position,
++    apply_item_rect,
++    group_bounds,
++    item_rect,
++    move_drag_target,
++    move_items_by_delta,
++    resize_item_rect,
++    theme_items_for_collection,
++)
+ from designer.selection import (
+     canvas_elements,
+     current_selected_items,
+@@ -95,6 +104,21 @@ class DesignerGeometryTests(unittest.TestCase):
+         self.assertEqual(text["box_width"], 24)
+         self.assertEqual(text["box_height"], 32)
+ 
++    def test_resize_item_rect_applies_unlocked_and_skips_locked(self) -> None:
++        widget: dict[str, object] = {"rect": [10, 20, 30, 40]}
++        locked: dict[str, object] = {"rect": [1, 2, 3, 4], "locked": True}
++        snap = lambda value: int(round(value / 8) * 8)
++
++        result = resize_item_rect(widget, "widgets", (5, 9, 21, 31), snap=snap)
++        skipped = resize_item_rect(locked, "widgets", (10, 10, 20, 20), snap=snap)
++
++        self.assertTrue(result.applied)
++        self.assertEqual(result.next_rect, (8, 8, 24, 32))
++        self.assertEqual(widget["rect"], [8, 8, 24, 32])
++        self.assertFalse(skipped.applied)
++        self.assertIsNone(skipped.next_rect)
++        self.assertEqual(locked["rect"], [1, 2, 3, 4])
++
+     def test_apply_item_position_preserves_size_while_snapping_position(self) -> None:
+         widget: dict[str, object] = {"rect": [10, 20, 31, 47]}
+         text: dict[str, object] = {"x": 10, "y": 20, "box_width": 31, "box_height": 47}
+diff --git a/trofeo_gui.py b/trofeo_gui.py
+index 5453275..987a581 100644
+--- a/trofeo_gui.py
++++ b/trofeo_gui.py
+@@ -46,7 +46,7 @@ from designer.auto_layout import (
+     bucket_auto_layout_entries,
+ )
+ from designer.canvas import snap_rect_position
+-from designer.geometry import apply_item_position, apply_item_rect, group_bounds, item_rect, move_drag_target, theme_items_for_collection
++from designer.geometry import apply_item_position, apply_item_rect, group_bounds, item_rect, move_drag_target, resize_item_rect, theme_items_for_collection
+ from designer.inspector_widgets import (
+     make_color_row,
+     make_compact_color_cell,
+@@ -17487,16 +17487,18 @@ class TrofeoGui(QMainWindow):
+     def resize_designer_element(self, collection: str, index: int, x: int, y: int, width: int, height: int) -> None:
+         if self.theme_doc_model is None:
+             return
+-        if collection == "panels":
+-            items = self.theme_doc_model.get("background", {}).get("panels", [])
+-        else:
+-            items = self.theme_doc_model.get(collection, [])
++        items = self._theme_items_for_collection(collection)
+         if not isinstance(items, list) or index < 0 or index >= len(items):
+             return
+         item = items[index]
+-        if bool(item.get("locked", False)):
++        result = resize_item_rect(
++            item,
++            collection,
++            (int(x), int(y), int(width), int(height)),
++            snap=self._snap_value,
++        )
++        if not result.applied:
+             return
+-        self._apply_item_rect(collection, item, (int(x), int(y), int(width), int(height)))
+         self._sync_drag_editor_state(collection, index)
+ 
+     def _sync_drag_geometry_fields(self, collection: str, index: int) -> bool:

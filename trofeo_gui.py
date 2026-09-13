@@ -10,23 +10,20 @@ from __future__ import annotations
 import argparse
 import base64
 from copy import deepcopy
-from datetime import datetime
 import io
 import json
 import os
-import platform
+import shlex
 import shutil
-import socket
 import subprocess
 import sys
 import threading
 import time
-import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 
 from animation_limits import (
     ANIMATION_FRAMES_EXTREME_WARN,
@@ -34,8 +31,106 @@ from animation_limits import (
     ANIMATION_FRAMES_STRONG_WARN,
     ANIMATION_LIST_THUMB_MAX_FRAMES,
     ANIMATION_TIMELINE_THUMB_MAX_FRAMES,
+    VIDEO_IMPORT_MAX_FRAMES,
 )
-from animation_studio import AnimationSequenceController, AnimationTimelineWidget
+from animation_studio import AnimationSequenceController, AnimationTimelineWidget, refresh_animation_studio_labels
+from backend_client import BackendClient
+from flow_layout import FlowLayout
+from config_panel import (
+    ConfigurationPanel,
+    bind_config_panel_controls,
+    build_config_panel_callbacks,
+)
+from config_preferences import ConfigPreferencesController
+from designer.auto_layout import (
+    apply_bounded_layout_rect,
+    auto_layout_kind,
+    auto_layout_metrics,
+    auto_layout_plan,
+    bucket_auto_layout_entries,
+)
+from designer.canvas import snap_rect_position
+from designer.geometry import apply_item_position, apply_item_rect, group_bounds, item_rect, move_drag_target, resize_item_rect, theme_items_for_collection
+from designer.inspector_widgets import (
+    make_color_row,
+    make_compact_color_cell,
+    make_compact_color_grid,
+    make_compact_labeled_row,
+    make_field_label,
+    make_inspector_tab,
+    make_scrolled_inspector_tab,
+    wrap_inspector_row,
+)
+from designer.control_widgets import initialize_designer_control_widgets
+from designer.layout import (
+    clamp_designer_splitter_sizes,
+    designer_canvas_max_height,
+    designer_inspector_min_height,
+    designer_splitter_limits,
+    should_switch_inspector_tab,
+)
+from designer.layers import (
+    designer_item_display_name,
+    designer_item_matches_domain,
+    designer_item_subtitle,
+    is_media_related_layer,
+    is_weather_related_layer,
+)
+from designer.inspector_animation import setup_animation_inspector
+from designer.inspector_appearance import refresh_appearance_inspector_labels, setup_appearance_inspector
+from designer.inspector_core import setup_core_inspector
+from designer.inspector_form_labels import refresh_designer_inspector_form_labels
+from designer.inspector_gauge import setup_gauge_inspector
+from designer.inspector_geometry import refresh_geometry_preset_labels, setup_geometry_inspector
+from designer.inspector_image import setup_image_inspector
+from designer.inspector_media import setup_media_inspector
+from designer.inspector_music import refresh_music_inspector_labels, setup_music_inspector
+from designer.inspector_tabs import (
+    add_inspector_tabs,
+    apply_inspector_compact_sizing,
+    configure_inspector_form_layouts,
+    create_inspector_tabs,
+    refresh_inspector_tab_labels,
+)
+from designer.inspector_weather import refresh_weather_inspector_labels, setup_weather_inspector
+from designer.layer_actions import refresh_layer_action_labels, setup_layer_action_controls
+from designer.layer_widgets import LayerListWidget, LayerRowWidget, refresh_layer_panel_labels
+from designer.preview_label import PreviewLabel
+from designer.quick_add import populate_quick_add_menu, refresh_quick_add_groups, refresh_quick_add_labels, setup_quick_add_controls
+from designer.selection import (
+    adjust_selected_z,
+    canvas_elements,
+    current_selected_items,
+    move_selected_z_to_edge,
+    normalize_selection,
+    reorder_items_by_ids,
+    replacement_visible_row,
+    row_activation_selection,
+    rows_for_collection,
+    selected_items,
+    selection_entries,
+    selection_group_label,
+    toggle_item_bool,
+)
+from designer.theme_workbench_labels import refresh_theme_workbench_labels
+from designer.theme_doc_panel import ThemeDocCallbacks, bind_theme_doc_panel_controls, build_theme_doc_panel
+from designer.workspace_shell import (
+    DesignerWorkspaceCallbacks,
+    bind_designer_workspace_shell_controls,
+    build_designer_workspace_shell,
+)
+from gui_dialogs import ImagePrepDialog, TTCRImportReviewDialog, ThemePreviewDialog
+from theme_gallery import default_new_theme_path
+from theme_gallery_actions import ThemeGalleryActionController
+from theme_gallery_preview import ThemeGalleryPreviewRenderer
+from ui_section_labels import (
+    refresh_config_weather_labels,
+    refresh_configuration_action_labels,
+    refresh_log_panel_labels,
+    refresh_shell_chrome_labels,
+    refresh_system_overview_labels,
+    refresh_theme_gallery_labels,
+)
 
 try:
     from PySide6.QtCore import QEasingCurve, QPoint, QRect, QSize, Qt, QTimer, Signal, QPropertyAnimation, QUrl, QEvent, QObject
@@ -66,7 +161,6 @@ try:
         QScrollArea,
         QSplitter,
         QSpinBox,
-        QSlider,
         QSizePolicy,
         QTabWidget,
         QGraphicsOpacityEffect,
@@ -79,7 +173,6 @@ try:
         QMenu,
         QPlainTextEdit,
         QSystemTrayIcon,
-        QToolButton,
     )
 except ImportError:
     print("BŁĄD: Brak PySide6.")
@@ -88,9 +181,27 @@ except ImportError:
     raise SystemExit(1)
 
 from gauge_presets import GAUGE_PRESETS, GAUGE_PRESET_LABELS, GAUGE_PRESET_ORDER, THEME_STYLE_PRESET
+from preview_stats import PreviewStatsProvider
+from runtime_panel import LegacyRuntimeCallbacks, bind_legacy_runtime_controls, build_legacy_runtime_panel
+from shell_panel import ShellCallbacks, bind_shell_controls, build_shell
+from studio_panel import StudioCallbacks, bind_studio_panel_controls, build_studio_panel
 from theme_json_with_comments import parse_theme_json_text, theme_json_documentation_preamble
+from theme_gallery_panel import (
+    ThemeGalleryActionCallbacks,
+    ThemeGalleryRefreshCoordinator,
+    bind_theme_gallery_panel_controls,
+    build_theme_gallery_panel,
+)
+from theme_gallery_widgets import (
+    AssetGalleryCardCallbacks,
+    LibraryThemeCardCallbacks,
+    RuntimeThemeCardCallbacks,
+    build_runtime_theme_card,
+)
 from theme_schema import KNOWN_STAT_DISPLAY, KNOWN_STAT_SOURCES, ThemeDocument, normalize_theme_document, save_theme_document
 from stats_sources import StatsProvider
+from system_panel import SystemPanelCallbacks, bind_system_panel_controls, build_system_panel
+from ui_resources import UI_LANGUAGES, UI_THEMES, available_font_families, detect_app_version, load_uncached_pixmap
 
 try:
     from theme_renderer import render_theme_document, render_theme_file
@@ -116,12 +227,17 @@ IMAGE_PRESETS_PATH = Path(".trofeo-image-presets.json")
 THEME_AUTOSAVE_PATH = Path(".trofeo-theme-autosave.json")
 UI_STATE_PATH = Path(".trofeo-ui-state.json")
 TTCR_STAT_RULES_PATH = Path(".trofeo-ttcr-stat-rules.json")
+APP_STATE_DIR = Path.home() / ".local/state/open-trofeo-lcd"
+SHOW_REQUEST_PATH = APP_STATE_DIR / "show-window.request"
 
 # Stats whose data-source fields are shown on the inspector "Music" tab (audio / MPRIS / volume).
 MUSIC_AUDIO_STAT_SOURCES: frozenset[str] = frozenset(
     {
         "volume_percent",
         "volume_state",
+        "audio_eq_status",
+        "audio_eq_source",
+        "audio_eq_age_ms",
         "media_title",
         "media_artist",
         "media_app",
@@ -129,12 +245,17 @@ MUSIC_AUDIO_STAT_SOURCES: frozenset[str] = frozenset(
     }
 )
 MUSIC_RELATED_IMAGE_SOURCES: frozenset[str] = frozenset({"media_cover", "media_video_frame"})
+WEATHER_STAT_SOURCES: frozenset[str] = frozenset(source for source in KNOWN_STAT_SOURCES if source.startswith("weather_"))
+WEATHER_RELATED_IMAGE_SOURCES: frozenset[str] = frozenset({"weather_icon"})
+WEATHER_RELATED_PANEL_ID_PREFIXES: tuple[str, ...] = ("panel_weather",)
+VIDEO_BACKGROUND_EXTENSIONS: frozenset[str] = frozenset({".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v"})
 MUSIC_RELATED_PANEL_ID_PREFIXES: tuple[str, ...] = ("panel_media", "panel_volume", "panel_music_eq")
 MUSIC_VISUAL_STAT_DISPLAYS: frozenset[str] = frozenset({"equalizer"})
 DESIGNER_DOMAIN_MODES: tuple[tuple[str, str], ...] = (
     ("all", "All"),
     ("system", "System"),
     ("music", "Music"),
+    ("weather", "Weather"),
 )
 
 THEME_COLOR_PRESETS = {
@@ -171,835 +292,116 @@ THEME_COLOR_PRESETS = {
         "panel": [0, 0, 0],
     },
 }
+EQUALIZER_COLOR_PRESETS = {
+    "custom": {
+        "label": "Custom",
+        "fill": [102, 226, 120, 255],
+        "value": [246, 231, 152, 255],
+        "track": [0, 0, 0, 0],
+        "threshold": 1.0,
+        "threshold_color": [255, 86, 96, 255],
+    },
+    "neon": {
+        "label": "Neon green",
+        "fill": [102, 226, 120, 255],
+        "value": [246, 231, 152, 255],
+        "track": [0, 0, 0, 0],
+        "threshold": 0.78,
+        "threshold_color": [255, 86, 96, 255],
+    },
+    "cyan": {
+        "label": "Cyan",
+        "fill": [70, 190, 255, 255],
+        "value": [230, 248, 255, 255],
+        "track": [0, 0, 0, 0],
+        "threshold": 0.82,
+        "threshold_color": [255, 220, 92, 255],
+    },
+    "rainbow": {
+        "label": "Rainbow",
+        "fill": [102, 226, 120, 255],
+        "value": [246, 231, 152, 255],
+        "track": [0, 0, 0, 0],
+        "threshold": 1.0,
+        "threshold_color": [255, 255, 255, 255],
+    },
+    "thermal": {
+        "label": "Thermal",
+        "fill": [90, 220, 132, 255],
+        "value": [246, 231, 112, 255],
+        "track": [0, 0, 0, 0],
+        "threshold": 0.76,
+        "threshold_color": [255, 86, 96, 255],
+    },
+}
 THEME_TEMPLATE_CATALOG = [
     {
-        "title": "Dashboard",
-        "description": "Pelny dashboard z sekcjami CPU, pamięci, uptime i wyraźnym podziałem paneli.",
-        "path": "themes/dashboard_monitor.json",
-        "accent": "#59b7ff",
+        "title": "Heritage Duality",
+        "description": "Cieply animowany dashboard z odtwarzaczem, pogoda i telemetria.",
+        "path": "themes/heritage_duality.json",
+        "accent": "#f6be70",
     },
     {
-        "title": "Minimal",
-        "description": "Lekki układ z ograniczoną liczbą sekcji i większym naciskiem na czytelność.",
-        "path": "themes/minimal_monitor.json",
-        "accent": "#8fd878",
+        "title": "Matrix Green",
+        "description": "Statyczny command deck z gesta telemetria i czytelnym EQ.",
+        "path": "themes/linux_matrix_green.json",
+        "accent": "#48ec8e",
     },
     {
-        "title": "Focus",
-        "description": "Układ z większymi kartami i mocniejszym akcentem na najważniejsze statystyki.",
-        "path": "themes/focus_monitor.json",
-        "accent": "#f1b15b",
+        "title": "Verdant Bloom",
+        "description": "Zielony motyw pogodowy z prognoza, playerem i gauge.",
+        "path": "themes/verdant_bloom.json",
+        "accent": "#7ce89c",
+    },
+    {
+        "title": "Wolfstorm Forge",
+        "description": "Animowany motyw media-first z pogoda i statystykami systemu.",
+        "path": "themes/wolfstorm_forge.json",
+        "accent": "#f2b052",
+    },
+    {
+        "title": "Orbital Relay",
+        "description": "Animowany panel orbitalny z prognoza i monitorowaniem sieci.",
+        "path": "themes/orbital_relay.json",
+        "accent": "#56d2ff",
+    },
+    {
+        "title": "Obsidian Pulse",
+        "description": "Ciemny minimalistyczny dashboard z transparentnym EQ.",
+        "path": "themes/obsidian_pulse.json",
+        "accent": "#6ce8de",
     },
 ]
 
-FONT_FAMILY_FILES = {
-    "DejaVu Sans": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "DejaVu Serif": "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-    "DejaVu Sans Mono": "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-    "Liberation Sans": "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-    "Liberation Serif": "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf",
-    "Liberation Mono": "/usr/share/fonts/truetype/liberation2/LiberationMono-Regular.ttf",
-    "Noto Sans": "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-    "Noto Serif": "/usr/share/fonts/truetype/noto/NotoSerif-Regular.ttf",
-    "Ubuntu": "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
-    "JetBrains Mono": "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
-}
-UI_THEMES = {
-    "Plasma Blue": {"primary": "#1f6feb", "primary_border": "#3c86f7", "accent": "#5ec8ff"},
-    "Graphite": {"primary": "#596273", "primary_border": "#7d889a", "accent": "#c7d2e2"},
-    "Emerald": {"primary": "#1f8f6b", "primary_border": "#34b087", "accent": "#7bf0c9"},
-}
-UI_LANGUAGES = {
-    "English": "en",
-    "Polski": "pl",
-}
 PROJECT_REPOSITORY_URL = "https://github.com/Abigor-DIY/Open-Trofeo-LCD"
 PROJECT_SPONSOR_URL = "https://github.com/sponsors/Abigor-DIY"
 
+class LcdPreviewScrollArea(QScrollArea):
+    """Scroll area that keeps the LCD preview at the physical 1920x462 aspect."""
 
-def available_font_families() -> list[str]:
-    out = [name for name, path in FONT_FAMILY_FILES.items() if Path(path).exists()]
-    return out or ["DejaVu Sans"]
-
-
-class PreviewLabel(QLabel):
-    image_clicked = Signal(int, int)
-    element_selected = Signal(str, int)
-    element_moved = Signal(str, int, int, int)
-    element_resized = Signal(str, int, int, int, int, int)
-    elements_box_selected = Signal(object)
-    crop_rect_selected = Signal(object)
-    cursor_changed = Signal(object)
-    drag_started = Signal()
-    drag_finished = Signal()
+    LCD_WIDTH = 1920
+    LCD_HEIGHT = 462
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setMinimumSize(680, 190)
-        self.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
-        self.setStyleSheet("border: 1px solid #555; background: #111;")
-        self._source_pixmap: QPixmap | None = None
-        self._draw_offset_x = 0
-        self._draw_offset_y = 0
-        self._draw_width = 0
-        self._draw_height = 0
-        self._canvas_size = QSize(1920, 462)
-        self._display_rotation = 0
-        self._elements: list[dict[str, Any]] = []
-        self._selected: tuple[str, int] | None = None
-        self._selected_many: set[tuple[str, int]] = set()
-        self._drag_mode: str | None = None
-        self._drag_origin = QPoint()
-        self._drag_start_rect: tuple[int, int, int, int] | None = None
-        self._had_drag_motion = False
-        self._selection_origin_widget: QPoint | None = None
-        self._selection_current_widget: QPoint | None = None
-        self._zoom_mode = "fit"
-        self._zoom_percent = 100
-        self._guide_lines: list[dict[str, Any]] = []
-        self._movement_badge: str = ""
-        self._tool_mode = "auto"
-        self._snap_threshold = 8
-
-    def set_preview_pixmap(self, pixmap: QPixmap | None, *, display_rotation: int = 0) -> None:
-        self._display_rotation = int(display_rotation) % 360
-        if pixmap is not None and not pixmap.isNull() and self._display_rotation:
-            transform = QTransform().rotate(self._display_rotation)
-            pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
-        self._source_pixmap = pixmap
-        self._refresh_scaled_pixmap()
-
-    def set_canvas_metadata(
-        self,
-        *,
-        canvas_width: int,
-        canvas_height: int,
-        elements: list[dict[str, Any]],
-        selected: list[tuple[str, int]] | tuple[str, int] | None,
-    ) -> None:
-        self._canvas_size = QSize(max(1, canvas_width), max(1, canvas_height))
-        self._elements = elements
-        normalized: list[tuple[str, int]] = []
-        if isinstance(selected, tuple) and len(selected) == 2:
-            normalized = [(str(selected[0]), int(selected[1]))]
-        elif isinstance(selected, list):
-            for entry in selected:
-                if (
-                    isinstance(entry, tuple)
-                    and len(entry) == 2
-                    and isinstance(entry[0], str)
-                    and isinstance(entry[1], int)
-                ):
-                    normalized.append((str(entry[0]), int(entry[1])))
-        self._selected = normalized[0] if normalized else None
-        self._selected_many = set(normalized)
-        self._guide_lines = []
-        self.update()
-
-    def set_temporary_guides(self, guides: list[object], badge: str = "") -> None:
-        normalized_guides: list[dict[str, Any]] = []
-        for guide in guides:
-            entry = self._normalize_guide_entry(guide)
-            if entry is not None:
-                normalized_guides.append(entry)
-        self._guide_lines = normalized_guides
-        self._movement_badge = self._compose_guide_badge(badge, self._guide_lines)
-        self.update()
-
-    def clear_temporary_guides(self) -> None:
-        self._guide_lines = []
-        self._movement_badge = ""
-        self.update()
-
-    def set_zoom_mode(self, mode: str) -> None:
-        self._zoom_mode = mode
-        self._refresh_scaled_pixmap()
-
-    def set_zoom_percent(self, percent: int) -> None:
-        self._zoom_mode = "manual"
-        self._zoom_percent = max(25, min(300, int(percent)))
-        self._refresh_scaled_pixmap()
-
-    def set_snap_threshold(self, value: int) -> None:
-        self._snap_threshold = max(4, min(32, int(value)))
-
-    def set_tool_mode(self, mode: str) -> None:
-        normalized = str(mode).strip().lower() or "auto"
-        if normalized not in {"auto", "select", "move", "scale", "crop"}:
-            normalized = "auto"
-        self._tool_mode = normalized
-        cursor = Qt.ArrowCursor
-        if normalized == "move":
-            cursor = Qt.SizeAllCursor
-        elif normalized == "scale":
-            cursor = Qt.SizeFDiagCursor
-        elif normalized == "crop":
-            cursor = Qt.CrossCursor
-        self.setCursor(cursor)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumHeight(160)
+        self.setMaximumHeight(330)
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
-        self._refresh_scaled_pixmap()
+        self._sync_aspect_height()
 
-    def mousePressEvent(self, event) -> None:  # type: ignore[override]
-        if self._source_pixmap is None or self._draw_width <= 0 or self._draw_height <= 0:
-            return
-        pos = event.position().toPoint()
-        local_x = pos.x() - self._draw_offset_x
-        local_y = pos.y() - self._draw_offset_y
-        if local_x < 0 or local_y < 0 or local_x >= self._draw_width or local_y >= self._draw_height:
-            return
-        src_w = max(1, self._source_pixmap.width())
-        src_h = max(1, self._source_pixmap.height())
-        img_x = int(round(local_x * src_w / self._draw_width))
-        img_y = int(round(local_y * src_h / self._draw_height))
-        img_x = max(0, min(src_w - 1, img_x))
-        img_y = max(0, min(src_h - 1, img_y))
-        if self._tool_mode == "crop":
-            self._selection_origin_widget = pos
-            self._selection_current_widget = pos
-            self._drag_mode = None
-            self.update()
-            return
-        hit = self._hit_test(event.position().toPoint())
-        if self._tool_mode == "select":
-            if hit is not None:
-                collection, index, _mode = hit
-                target = (collection, index)
-                preserve_multi = target in self._selected_many and len(self._selected_many) > 1
-                self._selected = target
-                if not preserve_multi:
-                    self._selected_many = {target}
-                    self.element_selected.emit(collection, index)
-                self.update()
-                return
-            self._selection_origin_widget = pos
-            self._selection_current_widget = pos
-            return
-        if hit is not None:
-            collection, index, mode = hit
-            target = (collection, index)
-            preserve_multi = target in self._selected_many and len(self._selected_many) > 1
-            self._selected = target
-            if not preserve_multi:
-                self._selected_many = {target}
-                self.element_selected.emit(collection, index)
-            rect = self._element_rect_for_canvas(collection, index)
-            if rect is not None:
-                forced_mode = mode
-                if self._tool_mode == "move":
-                    forced_mode = "move"
-                elif self._tool_mode == "scale":
-                    if forced_mode.startswith("resize-"):
-                        pass
-                    else:
-                        forced_mode = self._preferred_resize_mode(self._canvas_rect_to_widget_rect(rect), pos)
-                self._drag_mode = forced_mode
-                self._drag_origin = QPoint(img_x, img_y)
-                self._drag_start_rect = rect
-                self._had_drag_motion = False
-                self.drag_started.emit()
-            self.update()
-            return
-        self._selection_origin_widget = pos
-        self._selection_current_widget = pos
-
-    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
-        if self._drag_mode is None or self._selected is None or self._drag_start_rect is None:
-            if self._selection_origin_widget is not None:
-                self._selection_current_widget = event.position().toPoint()
-                self.update()
-            self.cursor_changed.emit(img_pos if (img_pos := self._widget_to_image_point(event.position().toPoint())) is not None else None)
-            return
-        pos = event.position().toPoint()
-        img_pos = self._widget_to_image_point(pos)
-        if img_pos is None:
-            return
-        start_x, start_y, start_w, start_h = self._drag_start_rect
-        dx = img_pos.x() - self._drag_origin.x()
-        dy = img_pos.y() - self._drag_origin.y()
-        self._had_drag_motion = self._had_drag_motion or bool(dx or dy)
-        collection, index = self._selected
-        self.cursor_changed.emit(img_pos)
-        if self._drag_mode == "move":
-            self._guide_lines = self._compute_snap_guides(start_x + dx, start_y + dy, start_w, start_h, collection, index)
-            self.element_moved.emit(collection, index, start_x + dx, start_y + dy)
-        elif self._drag_mode.startswith("resize"):
-            next_x, next_y, next_w, next_h = self._resize_rect_from_drag(
-                self._drag_mode,
-                start_x,
-                start_y,
-                start_w,
-                start_h,
-                dx,
-                dy,
-            )
-            self._guide_lines = self._compute_snap_guides(next_x, next_y, next_w, next_h, collection, index)
-            self.element_resized.emit(
-                collection,
-                index,
-                next_x,
-                next_y,
-                next_w,
-                next_h,
-            )
-
-    def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
-        had_drag = self._drag_mode is not None and self._had_drag_motion
-        self._drag_mode = None
-        self._drag_start_rect = None
-        self._had_drag_motion = False
-        self._guide_lines = []
-        if had_drag:
-            self.drag_finished.emit()
-        elif self._selection_origin_widget is not None and self._selection_current_widget is not None:
-            selection_rect = QRect(self._selection_origin_widget, self._selection_current_widget).normalized()
-            if selection_rect.width() >= 8 or selection_rect.height() >= 8:
-                if self._tool_mode == "crop":
-                    start_img = self._widget_to_image_point(self._selection_origin_widget)
-                    end_img = self._widget_to_image_point(self._selection_current_widget)
-                    if start_img is not None and end_img is not None:
-                        left = min(start_img.x(), end_img.x())
-                        top = min(start_img.y(), end_img.y())
-                        right = max(start_img.x(), end_img.x())
-                        bottom = max(start_img.y(), end_img.y())
-                        if right - left >= 4 and bottom - top >= 4:
-                            self.crop_rect_selected.emit((left, top, right, bottom))
-                else:
-                    selected = self._elements_in_widget_rect(selection_rect)
-                    if selected:
-                        self.elements_box_selected.emit(selected)
-            else:
-                img_pos = self._widget_to_image_point(event.position().toPoint())
-                if img_pos is not None:
-                    self.image_clicked.emit(img_pos.x(), img_pos.y())
-        self._selection_origin_widget = None
-        self._selection_current_widget = None
-        self.cursor_changed.emit(None)
-        self.update()
-        super().mouseReleaseEvent(event)
-
-    def paintEvent(self, event) -> None:  # type: ignore[override]
-        super().paintEvent(event)
-        if self._draw_width <= 0 or self._draw_height <= 0 or not self._elements:
-            return
-        painter = QPainter(self)
-        try:
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            for item in self._elements:
-                if not bool(item.get("visible", True)):
-                    continue
-                rect = self._canvas_rect_to_widget_rect(item["rect"])
-                if rect.width() <= 0 or rect.height() <= 0:
-                    continue
-                key = (str(item["collection"]), int(item["index"]))
-                is_selected = key in self._selected_many or self._selected == key
-                color = "#888888" if bool(item.get("locked", False)) else ("#5ec8ff" if is_selected else "#ffb347")
-                pen = QPen(QColor(color))
-                pen.setWidth(2 if is_selected else 1)
-                painter.setPen(pen)
-                painter.drawRect(rect)
-                painter.drawText(rect.topLeft() + QPoint(4, 14), str(item["label"]))
-                if is_selected:
-                    self._paint_selection_handles(painter, rect, key == self._selected)
-            if len(self._selected_many) > 1:
-                group_rect = self._group_bounds_rect()
-                if group_rect is not None:
-                    painter.setPen(QPen(QColor("#5ec8ff"), 1, Qt.DashLine))
-                    painter.drawRoundedRect(group_rect.adjusted(-8, -8, 8, 8), 10, 10)
-                    painter.drawText(group_rect.topLeft() + QPoint(6, -6), "Group")
-            if self._selection_origin_widget is not None and self._selection_current_widget is not None:
-                select_rect = QRect(self._selection_origin_widget, self._selection_current_widget).normalized()
-                painter.setPen(QPen(QColor("#89ddff"), 1, Qt.DashLine))
-                painter.fillRect(select_rect, QColor(94, 200, 255, 36))
-                painter.drawRect(select_rect)
-            if self._guide_lines:
-                guide_pen = QPen(QColor("#45d0ff"), 1, Qt.DashLine)
-                painter.setPen(guide_pen)
-                for guide in self._guide_lines:
-                    axis = str(guide.get("axis", ""))
-                    value = int(guide.get("value", 0))
-                    if axis == "x":
-                        x = self._draw_offset_x + int(round(value * self._draw_width / max(1, self._canvas_size.width())))
-                        painter.drawLine(x, self._draw_offset_y, x, self._draw_offset_y + self._draw_height)
-                        self._paint_guide_label(painter, QPoint(x + 6, self._draw_offset_y + 24), str(guide.get("label", value)))
-                    else:
-                        y = self._draw_offset_y + int(round(value * self._draw_height / max(1, self._canvas_size.height())))
-                        painter.drawLine(self._draw_offset_x, y, self._draw_offset_x + self._draw_width, y)
-                        self._paint_guide_label(painter, QPoint(self._draw_offset_x + 30, y - 6), str(guide.get("label", value)))
-            if self._movement_badge:
-                badge_rect = QRect(self._draw_offset_x + 18, self._draw_offset_y + 22, 180, 34)
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(QColor(12, 18, 28, 220))
-                painter.drawRoundedRect(badge_rect, 8, 8)
-                painter.setPen(QColor("#7dd3fc"))
-                painter.drawText(badge_rect.adjusted(12, 0, -12, 0), Qt.AlignVCenter | Qt.AlignLeft, self._movement_badge)
-            self._paint_rulers(painter)
-        finally:
-            painter.end()
-
-    def _widget_to_image_point(self, pos: QPoint) -> QPoint | None:
-        local_x = pos.x() - self._draw_offset_x
-        local_y = pos.y() - self._draw_offset_y
-        if local_x < 0 or local_y < 0 or local_x >= self._draw_width or local_y >= self._draw_height:
-            return None
-        src_w = max(1, self._canvas_size.width())
-        src_h = max(1, self._canvas_size.height())
-        img_x = int(round(local_x * src_w / self._draw_width))
-        img_y = int(round(local_y * src_h / self._draw_height))
-        return QPoint(max(0, min(src_w - 1, img_x)), max(0, min(src_h - 1, img_y)))
-
-    def _canvas_rect_to_widget_rect(self, rect: tuple[int, int, int, int]) -> QRect:
-        src_w = max(1, self._canvas_size.width())
-        src_h = max(1, self._canvas_size.height())
-        x, y, w, h = rect
-        wx = self._draw_offset_x + int(round(x * self._draw_width / src_w))
-        wy = self._draw_offset_y + int(round(y * self._draw_height / src_h))
-        ww = max(1, int(round(w * self._draw_width / src_w)))
-        wh = max(1, int(round(h * self._draw_height / src_h)))
-        return QRect(wx, wy, ww, wh)
-
-    def _resize_handle_rects(self, rect: QRect) -> dict[str, QRect]:
-        size = 12
-        return {
-            "resize-tl": QRect(rect.left() - size // 2, rect.top() - size // 2, size, size),
-            "resize-tr": QRect(rect.right() - size // 2, rect.top() - size // 2, size, size),
-            "resize-bl": QRect(rect.left() - size // 2, rect.bottom() - size // 2, size, size),
-            "resize-br": QRect(rect.right() - size // 2, rect.bottom() - size // 2, size, size),
-        }
-
-    def _paint_selection_handles(self, painter: QPainter, rect: QRect, active: bool) -> None:
-        fill = QColor("#5ec8ff" if active else "#cfeeff")
-        outline = QColor("#0f172a")
-        painter.setPen(QPen(outline, 1))
-        painter.setBrush(fill)
-        for handle in self._resize_handle_rects(rect).values():
-            painter.drawRect(handle)
-
-    def _preferred_resize_mode(self, rect: QRect, pos: QPoint) -> str:
-        horizontal = "l" if pos.x() <= rect.center().x() else "r"
-        vertical = "t" if pos.y() <= rect.center().y() else "b"
-        return f"resize-{vertical}{horizontal}"
-
-    def _resize_rect_from_drag(
-        self,
-        mode: str,
-        x: int,
-        y: int,
-        width: int,
-        height: int,
-        dx: int,
-        dy: int,
-    ) -> tuple[int, int, int, int]:
-        left = x
-        top = y
-        right = x + width
-        bottom = y + height
-        if mode == "resize-tl":
-            left += dx
-            top += dy
-        elif mode == "resize-tr":
-            right += dx
-            top += dy
-        elif mode == "resize-bl":
-            left += dx
-            bottom += dy
-        else:
-            right += dx
-            bottom += dy
-        min_size = 1
-        if right - left < min_size:
-            if "l" in mode:
-                left = right - min_size
-            else:
-                right = left + min_size
-        if bottom - top < min_size:
-            if "t" in mode:
-                top = bottom - min_size
-            else:
-                bottom = top + min_size
-        return int(left), int(top), int(right - left), int(bottom - top)
-
-    def _group_bounds_rect(self) -> QRect | None:
-        selected_rects: list[QRect] = []
-        for item in self._elements:
-            key = (str(item["collection"]), int(item["index"]))
-            if key not in self._selected_many:
-                continue
-            rect = self._canvas_rect_to_widget_rect(item["rect"])
-            if rect.width() > 0 and rect.height() > 0:
-                selected_rects.append(rect)
-        if not selected_rects:
-            return None
-        group_rect = QRect(selected_rects[0])
-        for rect in selected_rects[1:]:
-            group_rect = group_rect.united(rect)
-        return group_rect
-
-    def _normalize_guide_entry(self, guide: object) -> dict[str, Any] | None:
-        if isinstance(guide, dict):
-            axis = str(guide.get("axis", "")).strip().lower()
-            if axis not in {"x", "y"}:
-                return None
-            try:
-                value = int(guide.get("value", 0))
-            except Exception:
-                return None
-            label = str(guide.get("label", value)).strip() or str(value)
-            return {"axis": axis, "value": value, "label": label}
-        if isinstance(guide, tuple) and len(guide) >= 2:
-            axis = str(guide[0]).strip().lower()
-            if axis not in {"x", "y"}:
-                return None
-            try:
-                value = int(guide[1])
-            except Exception:
-                return None
-            label = str(guide[2]).strip() if len(guide) >= 3 else str(value)
-            return {"axis": axis, "value": value, "label": label or str(value)}
-        return None
-
-    def _compose_guide_badge(self, badge: str, guides: list[dict[str, Any]]) -> str:
-        labels: list[str] = []
-        seen: set[str] = set()
-        for guide in guides:
-            label = str(guide.get("label", "")).strip()
-            if not label or label in seen:
-                continue
-            labels.append(label)
-            seen.add(label)
-            if len(labels) >= 2:
-                break
-        if not labels:
-            return badge
-        suffix = " • ".join(labels)
-        return f"{badge} • {suffix}" if badge else suffix
-
-    def _paint_guide_label(self, painter: QPainter, anchor: QPoint, text: str) -> None:
-        if not text:
-            return
-        metrics = painter.fontMetrics()
-        text_width = metrics.horizontalAdvance(text) + 12
-        text_height = metrics.height() + 4
-        rect = QRect(anchor.x(), anchor.y(), text_width, text_height)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(12, 18, 28, 220))
-        painter.drawRoundedRect(rect, 6, 6)
-        painter.setPen(QColor("#7dd3fc"))
-        painter.drawText(rect, Qt.AlignCenter, text)
-
-    def _hit_test(self, pos: QPoint) -> tuple[str, int, str] | None:
-        for item in reversed(self._elements):
-            if not bool(item.get("visible", True)):
-                continue
-            rect = self._canvas_rect_to_widget_rect(item["rect"])
-            for handle_name, handle_rect in self._resize_handle_rects(rect).items():
-                if handle_rect.contains(pos):
-                    return item["collection"], item["index"], handle_name
-            hit_rect = rect.adjusted(-8, -8, 8, 8)
-            if hit_rect.contains(pos):
-                return item["collection"], item["index"], "move"
-        return None
-
-    def _element_rect_for_canvas(self, collection: str, index: int) -> tuple[int, int, int, int] | None:
-        for item in self._elements:
-            if item["collection"] == collection and item["index"] == index:
-                return item["rect"]
-        return None
-
-    def _elements_in_widget_rect(self, selection_rect: QRect) -> list[tuple[str, int]]:
-        selected: list[tuple[str, int]] = []
-        for item in self._elements:
-            if not bool(item.get("visible", True)):
-                continue
-            rect = self._canvas_rect_to_widget_rect(item["rect"])
-            if selection_rect.intersects(rect):
-                selected.append((str(item["collection"]), int(item["index"])))
-        return selected
-
-    def _compute_snap_guides(
-        self,
-        x: int,
-        y: int,
-        w: int,
-        h: int,
-        collection: str,
-        index: int,
-    ) -> list[dict[str, Any]]:
-        guides: list[dict[str, Any]] = []
-        current_x = [("left", x), ("center", x + w // 2), ("right", x + w)]
-        current_y = [("top", y), ("center", y + h // 2), ("bottom", y + h)]
-        safe_left = 24
-        safe_right = max(0, self._canvas_size.width() - 24)
-        safe_top = 18
-        safe_bottom = max(0, self._canvas_size.height() - 18)
-        canvas_guides_x = [
-            (self._canvas_size.width() // 2, "canvas center"),
-            (safe_left, "safe left"),
-            (safe_right, "safe right"),
-        ]
-        canvas_guides_y = [
-            (self._canvas_size.height() // 2, "canvas middle"),
-            (safe_top, "safe top"),
-            (safe_bottom, "safe bottom"),
-        ]
-        threshold = max(4, int(getattr(self, "_snap_threshold", 8)))
-        for _edge, cx in current_x:
-            for ox, label in canvas_guides_x:
-                if abs(cx - ox) <= threshold:
-                    guides.append({"axis": "x", "value": ox, "label": label})
-        for _edge, cy in current_y:
-            for oy, label in canvas_guides_y:
-                if abs(cy - oy) <= threshold:
-                    guides.append({"axis": "y", "value": oy, "label": label})
-        for item in self._elements:
-            if item["collection"] == collection and int(item["index"]) == index:
-                continue
-            if not bool(item.get("visible", True)):
-                continue
-            rx, ry, rw, rh = item["rect"]
-            other_label = str(item.get("label", item.get("collection", "element"))).strip()[:18]
-            other_x = [
-                (rx, f"{other_label} left"),
-                (rx + rw // 2, f"{other_label} center"),
-                (rx + rw, f"{other_label} right"),
-            ]
-            other_y = [
-                (ry, f"{other_label} top"),
-                (ry + rh // 2, f"{other_label} middle"),
-                (ry + rh, f"{other_label} bottom"),
-            ]
-            for _edge, cx in current_x:
-                for ox, label in other_x:
-                    if abs(cx - ox) <= threshold:
-                        guides.append({"axis": "x", "value": ox, "label": label})
-                        break
-            for _edge, cy in current_y:
-                for oy, label in other_y:
-                    if abs(cy - oy) <= threshold:
-                        guides.append({"axis": "y", "value": oy, "label": label})
-                        break
-        unique: list[dict[str, Any]] = []
-        seen: set[tuple[str, int]] = set()
-        for item in guides:
-            key = (str(item.get("axis", "")), int(item.get("value", 0)))
-            if key not in seen:
-                unique.append(item)
-                seen.add(key)
-        return unique
-
-    def _paint_rulers(self, painter: QPainter) -> None:
-        if self._draw_width <= 0 or self._draw_height <= 0:
-            return
-        painter.setPen(QPen(QColor("#344255"), 1))
-        painter.fillRect(QRect(self._draw_offset_x, self._draw_offset_y, self._draw_width, 18), QColor(15, 20, 28, 190))
-        painter.fillRect(QRect(self._draw_offset_x, self._draw_offset_y, 26, self._draw_height), QColor(15, 20, 28, 190))
-        step_x = max(60, self._canvas_size.width() // 8)
-        step_y = max(40, self._canvas_size.height() // 6)
-        for x in range(0, self._canvas_size.width() + 1, step_x):
-            wx = self._draw_offset_x + int(round(x * self._draw_width / max(1, self._canvas_size.width())))
-            painter.drawLine(wx, self._draw_offset_y, wx, self._draw_offset_y + 10)
-            painter.drawText(wx + 2, self._draw_offset_y + 14, str(x))
-        for y in range(0, self._canvas_size.height() + 1, step_y):
-            wy = self._draw_offset_y + int(round(y * self._draw_height / max(1, self._canvas_size.height())))
-            painter.drawLine(self._draw_offset_x, wy, self._draw_offset_x + 10, wy)
-            painter.drawText(self._draw_offset_x + 12, wy - 2, str(y))
-
-    def _refresh_scaled_pixmap(self) -> None:
-        if self._source_pixmap is None or self._source_pixmap.isNull():
-            self.clear()
-            self._draw_offset_x = 0
-            self._draw_offset_y = 0
-            self._draw_width = 0
-            self._draw_height = 0
-            return
-        if self._zoom_mode == "fit":
-            scaled = self._source_pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        else:
-            width = max(1, int(self._source_pixmap.width() * self._zoom_percent / 100))
-            height = max(1, int(self._source_pixmap.height() * self._zoom_percent / 100))
-            scaled = self._source_pixmap.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.setPixmap(scaled)
-        self._draw_width = scaled.width()
-        self._draw_height = scaled.height()
-        self._draw_offset_x = max(0, (self.width() - self._draw_width) // 2)
-        self._draw_offset_y = 0 if self._zoom_mode == "fit" else max(0, (self.height() - self._draw_height) // 2)
-        self.update()
-
-
-class LayerListWidget(QListWidget):
-    rows_reordered = Signal()
-
-    def dropEvent(self, event) -> None:  # type: ignore[override]
-        super().dropEvent(event)
-        self.rows_reordered.emit()
-
-
-class LayerRowWidget(QWidget):
-    visibility_toggled = Signal()
-    lock_toggled = Signal()
-    activated = Signal(object)
-
-    def __init__(
-        self,
-        *,
-        title: str,
-        subtitle: str = "",
-        icon: QIcon,
-        visible: bool,
-        locked: bool,
-        accent: str = "#cfd7e6",
-        thumbnail: QPixmap | None = None,
-    ) -> None:
-        super().__init__()
-        self._selected = False
-        self._raw_title = title
-        self._raw_subtitle = subtitle
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 5, 6, 5)
-        layout.setSpacing(6)
-        icon_label = QLabel()
-        icon_label.setPixmap(icon.pixmap(16, 16))
-        layout.addWidget(icon_label)
-        self.thumb_label = QLabel()
-        self.thumb_label.setFixedSize(42, 28)
-        self.thumb_label.setStyleSheet("background: #0f1319; border: 1px solid #314055; border-radius: 8px;")
-        if thumbnail is not None and not thumbnail.isNull():
-            self.thumb_label.setPixmap(thumbnail.scaled(42, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        layout.addWidget(self.thumb_label)
-        self.badge_label = QLabel()
-        self.badge_label.setObjectName("layerBadgeLabel")
-        layout.addWidget(self.badge_label)
-        text_stack = QVBoxLayout()
-        text_stack.setContentsMargins(0, 0, 0, 0)
-        text_stack.setSpacing(2)
-        self.title_label = QLabel(title)
-        self.title_label.setObjectName("layerTitleLabel")
-        self.subtitle_label = QLabel(subtitle)
-        self.subtitle_label.setObjectName("layerSubtitleLabel")
-        self.title_label.setWordWrap(False)
-        self.subtitle_label.setWordWrap(False)
-        self.title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.subtitle_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        text_stack.addWidget(self.title_label)
-        text_stack.addWidget(self.subtitle_label)
-        self._accent = accent
-        self._collection = ""
-        layout.addLayout(text_stack, 1)
-        self.eye_btn = QToolButton()
-        self.eye_btn.setCheckable(True)
-        self.eye_btn.setChecked(bool(visible))
-        self._visible_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DialogYesButton)
-        self._hidden_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DialogNoButton)
-        self.eye_btn.setIcon(self._visible_icon if visible else self._hidden_icon)
-        self.eye_btn.setText("")
-        self.eye_btn.setToolTip("Pokaż / Ukryj")
-        self.eye_btn.setFixedWidth(22)
-        self.lock_btn = QToolButton()
-        self.lock_btn.setCheckable(True)
-        self.lock_btn.setChecked(bool(locked))
-        self.lock_btn.setText("L" if locked else "E")
-        self.lock_btn.setToolTip("Blokuj / Odblokuj")
-        self.lock_btn.setFixedWidth(22)
-        layout.addWidget(self.eye_btn)
-        layout.addWidget(self.lock_btn)
-        self.eye_btn.clicked.connect(self._emit_visibility)
-        self.lock_btn.clicked.connect(self._emit_lock)
-        self.setMinimumHeight(50)
-        self.set_title(title)
-        self.set_subtitle(subtitle)
-        self.set_thumbnail(thumbnail)
-        self.set_locked(bool(locked))
-        self.set_selected(False)
-
-    def set_title(self, title: str) -> None:
-        self._raw_title = title
-        badge = ""
-        rest = title
-        if title.startswith("[") and "]" in title:
-            badge, rest = title.split("]", 1)
-            badge = badge.lstrip("[")
-            rest = rest.strip()
-        self.badge_label.setText(badge)
-        self.badge_label.setVisible(bool(badge))
-        self._collection = badge
-        self._update_elided_labels()
-
-    def set_visible_state(self, visible: bool) -> None:
-        self.eye_btn.setChecked(bool(visible))
-        self.eye_btn.setIcon(self._visible_icon if visible else self._hidden_icon)
-        self.eye_btn.setText("")
-
-    def set_subtitle(self, subtitle: str) -> None:
-        self._raw_subtitle = subtitle
-        self._update_elided_labels()
-
-    def _update_elided_labels(self) -> None:
-        title_text = ""
-        if self._raw_title.startswith("[") and "]" in self._raw_title:
-            _badge, title_text = self._raw_title.split("]", 1)
-            title_text = title_text.strip()
-        else:
-            title_text = self._raw_title
-        chrome = 112 if self.thumb_label.isVisible() else 74
-        if self.badge_label.isVisible():
-            chrome += max(26, self.badge_label.sizeHint().width())
-        available = max(110, self.width() - chrome)
-        self.title_label.setText(self.title_label.fontMetrics().elidedText(title_text or self._raw_title, Qt.ElideRight, available))
-        text = self._raw_subtitle.strip()
-        self.subtitle_label.setVisible(bool(text))
-        self.subtitle_label.setText(self.subtitle_label.fontMetrics().elidedText(text, Qt.ElideRight, available))
-
-    def set_locked(self, locked: bool) -> None:
-        self.lock_btn.setChecked(bool(locked))
-        self.lock_btn.setText("🔒" if locked else "🔓")
-        self.title_label.setStyleSheet(f"color: {'#8a94a6' if locked else self._accent};")
-        self.subtitle_label.setStyleSheet(f"color: {'#657287' if locked else '#8da0b8'};")
-
-    def set_selected(self, selected: bool) -> None:
-        self._selected = bool(selected)
-        self.setStyleSheet(
-            "background: #273347; border: 1px solid #4b84f6; border-radius: 12px;"
-            if self._selected
-            else "background: rgba(18, 24, 32, 0.45); border: 1px solid rgba(68, 86, 112, 0.45); border-radius: 12px;"
-        )
-
-    def set_thumbnail(self, thumbnail: QPixmap | None) -> None:
-        if thumbnail is not None and not thumbnail.isNull():
-            self.thumb_label.setPixmap(thumbnail.scaled(42, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            self.thumb_label.setStyleSheet("background: #0f1319; border: 1px solid #314055; border-radius: 6px;")
-            self.thumb_label.setAlignment(Qt.AlignCenter)
-            self.thumb_label.setText("")
-            self.thumb_label.show()
-        elif self._collection in {"TXT", "STA", "PNL"}:
-            label_map = {"TXT": ("T", "#3a2648"), "STA": ("S", "#20394e"), "PNL": ("P", "#233129")}
-            self.thumb_label.setPixmap(QPixmap())
-            letter, bg = label_map.get(self._collection, ("", "#1b2430"))
-            self.thumb_label.setText(letter)
-            self.thumb_label.setAlignment(Qt.AlignCenter)
-            self.thumb_label.setStyleSheet(f"background: {bg}; border: 1px solid #314055; border-radius: 6px; color: #f4f8ff; font-weight: 700;")
-            self.thumb_label.show()
-        else:
-            self.thumb_label.setPixmap(QPixmap())
-            self.thumb_label.setText("")
-            self.thumb_label.hide()
-        self._update_elided_labels()
-
-    def _emit_visibility(self) -> None:
-        self.set_visible_state(self.eye_btn.isChecked())
-        self.visibility_toggled.emit()
-
-    def _emit_lock(self) -> None:
-        self.set_locked(self.lock_btn.isChecked())
-        self.lock_toggled.emit()
-
-    def mousePressEvent(self, event) -> None:  # type: ignore[override]
-        self.activated.emit(event.modifiers())
-        super().mousePressEvent(event)
-
-    def resizeEvent(self, event) -> None:  # type: ignore[override]
-        super().resizeEvent(event)
-        self._update_elided_labels()
+    def _sync_aspect_height(self) -> None:
+        width = max(1, self.viewport().width() or self.width())
+        target = int(round(width * self.LCD_HEIGHT / self.LCD_WIDTH)) + 2
+        target = max(160, min(330, target))
+        if self.minimumHeight() != target or self.maximumHeight() != target:
+            self.setMinimumHeight(target)
+            self.setMaximumHeight(target)
+            window = self.window()
+            if hasattr(window, "_clamp_designer_splitter_later"):
+                window._clamp_designer_splitter_later()
 
 
 class AnimatedCardFrame(QFrame):
@@ -1083,775 +485,22 @@ class AnimatedToolbarButton(QPushButton):
         self._offset_anim.start()
 
 
-class TTCRImportReviewDialog(QDialog):
-    def __init__(
-        self,
-        parent: QWidget | None,
-        *,
-        theme_name: str,
-        stat_sources: list[str],
-        stat_entries: list[dict[str, Any]],
-        unmapped_stats: list[Any],
-        reference_image_path: str | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Sprawdź statystyki po imporcie TTCR")
-        self.resize(860, 620)
-        self._rows: list[tuple[int, QComboBox, str]] = []
-        self._remember_rules_chk = QCheckBox("Zapamiętaj te mapowania dla kolejnych importów TTCR")
-        self._remember_rules_chk.setChecked(True)
-        self._reference_pixmap = QPixmap(reference_image_path) if reference_image_path else QPixmap()
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
-
-        intro = QLabel(
-            f"Zaimportowano motyw: <b>{theme_name}</b>.<br>"
-            "Sprawdź mapowanie statystyk TTCR na źródła Linux i popraw je w razie potrzeby."
-        )
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.NoFrame)
-        scroll_host = QWidget()
-        rows_layout = QVBoxLayout(scroll_host)
-        rows_layout.setContentsMargins(0, 0, 0, 0)
-        rows_layout.setSpacing(8)
-
-        if stat_entries:
-            grouped: dict[str, list[tuple[int, dict[str, str]]]] = {}
-            for idx, entry in enumerate(stat_entries):
-                current_source = str(entry.get("source", "")).strip()
-                category = self._group_name_for_source(current_source)
-                grouped.setdefault(category, []).append((idx, entry))
-            for category, entries in grouped.items():
-                category_box = QGroupBox(category)
-                category_layout = QVBoxLayout(category_box)
-                category_layout.setContentsMargins(10, 10, 10, 10)
-                category_layout.setSpacing(8)
-                for idx, entry in entries:
-                    row_box = QGroupBox(f"Statystyka {idx + 1}")
-                    row_layout = QHBoxLayout(row_box)
-                    row_layout.setContentsMargins(12, 12, 12, 12)
-                    row_layout.setSpacing(12)
-                    preview = QLabel()
-                    preview.setFixedSize(180, 72)
-                    preview.setObjectName("templateCardThumb")
-                    preview.setAlignment(Qt.AlignCenter)
-                    self._fill_preview_crop(preview, entry)
-                    row_layout.addWidget(preview, 0)
-                    fields_box = QWidget()
-                    fields_layout = QFormLayout(fields_box)
-                    fields_layout.setContentsMargins(0, 0, 0, 0)
-                    fields_layout.setSpacing(8)
-                    fields_layout.addRow("Etykieta TTCR", QLabel(str(entry.get("label", "")).strip() or "-"))
-                    pos_text = (
-                        f"x={int(entry.get('x', 0) or 0)}, y={int(entry.get('y', 0) or 0)}"
-                        f" • {int(entry.get('box_width', 0) or 0)}×{int(entry.get('box_height', 0) or 0)}"
-                    )
-                    pos_label = QLabel(pos_text)
-                    pos_label.setWordWrap(True)
-                    fields_layout.addRow("Pozycja / rozmiar", pos_label)
-                    combo = QComboBox()
-                    combo.addItems(stat_sources)
-                    current_source = str(entry.get("source", "")).strip()
-                    if current_source in stat_sources:
-                        combo.setCurrentText(current_source)
-                    fields_layout.addRow("Źródło Linux", combo)
-                    row_layout.addWidget(fields_box, 1)
-                    category_layout.addWidget(row_box)
-                    self._rows.append((idx, combo, str(entry.get("label", "")).strip()))
-                rows_layout.addWidget(category_box)
-        else:
-            empty = QLabel("Importer nie znalazł jednoznacznych statystyk do edycji.")
-            empty.setWordWrap(True)
-            rows_layout.addWidget(empty)
-
-        if unmapped_stats:
-            unmapped_box = QGroupBox("Do ręcznej korekty")
-            unmapped_layout = QVBoxLayout(unmapped_box)
-            hint = QLabel(
-                "Poniższe etykiety wyglądały jak statystyki TTCR. Możesz od razu przypisać im źródło Linux albo zostawić do późniejszej ręcznej edycji:"
-            )
-            hint.setWordWrap(True)
-            unmapped_layout.addWidget(hint)
-            for offset, entry in enumerate(unmapped_stats[:12], start=len(self._rows)):
-                raw_entry = entry if isinstance(entry, dict) else {"label": str(entry)}
-                row_box = QGroupBox(f"Niezmapowana statystyka {offset + 1}")
-                row_layout = QHBoxLayout(row_box)
-                row_layout.setContentsMargins(12, 12, 12, 12)
-                row_layout.setSpacing(12)
-                preview = QLabel()
-                preview.setFixedSize(180, 72)
-                preview.setObjectName("templateCardThumb")
-                preview.setAlignment(Qt.AlignCenter)
-                self._fill_preview_crop(preview, raw_entry)
-                row_layout.addWidget(preview, 0)
-                fields_box = QWidget()
-                fields_layout = QFormLayout(fields_box)
-                fields_layout.setContentsMargins(0, 0, 0, 0)
-                fields_layout.setSpacing(8)
-                label_text = str(raw_entry.get("label", "")).strip() or "-"
-                fields_layout.addRow("Etykieta TTCR", QLabel(label_text))
-                pos_text = (
-                    f"x={int(raw_entry.get('x', 0) or 0)}, y={int(raw_entry.get('y', 0) or 0)}"
-                    f" • {int(raw_entry.get('box_width', 0) or 0)}×{int(raw_entry.get('box_height', 0) or 0)}"
-                )
-                pos_label = QLabel(pos_text)
-                pos_label.setWordWrap(True)
-                fields_layout.addRow("Pozycja / rozmiar", pos_label)
-                combo = QComboBox()
-                combo.addItem("Pomiń", "")
-                combo.addItems(stat_sources)
-                fields_layout.addRow("Źródło Linux", combo)
-                row_layout.addWidget(fields_box, 1)
-                unmapped_layout.addWidget(row_box)
-                self._rows.append((offset, combo, label_text))
-            if len(unmapped_stats) > 12:
-                more = QLabel(f"... i jeszcze {len(unmapped_stats) - 12}.")
-                unmapped_layout.addWidget(more)
-            rows_layout.addWidget(unmapped_box)
-
-        rows_layout.addStretch(1)
-        scroll.setWidget(scroll_host)
-        layout.addWidget(scroll, 1)
-        layout.addWidget(self._remember_rules_chk)
-
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        cancel_btn = QPushButton("Pomiń")
-        accept_btn = QPushButton("Zastosuj mapowanie")
-        accept_btn.setObjectName("primaryButton")
-        cancel_btn.clicked.connect(self.reject)
-        accept_btn.clicked.connect(self.accept)
-        buttons.addWidget(cancel_btn)
-        buttons.addWidget(accept_btn)
-        layout.addLayout(buttons)
-
-    def selected_sources(self) -> list[tuple[int, str, str]]:
-        out: list[tuple[int, str, str]] = []
-        for idx, combo, label in self._rows:
-            source = combo.currentText().strip()
-            source_data = str(combo.currentData() if combo.currentData() is not None else source).strip()
-            if source_data:
-                out.append((idx, source_data, label))
-        return out
-
-    def remember_rules(self) -> bool:
-        return self._remember_rules_chk.isChecked()
-
-    def _group_name_for_source(self, source: str) -> str:
-        lowered = source.lower()
-        if lowered.startswith("cpu_") or lowered == "load_average":
-            return "CPU"
-        if lowered.startswith("gpu_") or lowered.startswith("vram_"):
-            return "GPU"
-        if lowered.startswith("mem_"):
-            return "Pamięć"
-        if lowered.startswith("disk_"):
-            return "Dysk"
-        if lowered.startswith("net_") or lowered == "ip_local":
-            return "Sieć"
-        if lowered.startswith("time_") or lowered.startswith("date_") or lowered.startswith("uptime_"):
-            return "Czas"
-        if lowered.startswith("host"):
-            return "System"
-        return "Inne"
-
-    def _fill_preview_crop(self, label: QLabel, entry: dict[str, Any]) -> None:
-        if self._reference_pixmap.isNull():
-            label.setText("Brak podglądu")
-            return
-        x = max(0, int(entry.get("x", 0) or 0))
-        y = max(0, int(entry.get("y", 0) or 0))
-        w = max(80, int(entry.get("box_width", 0) or 160))
-        h = max(40, int(entry.get("box_height", 0) or 56))
-        pad_x = max(40, w // 3)
-        pad_y = max(24, h // 2)
-        crop = self._reference_pixmap.copy(
-            max(0, x - pad_x),
-            max(0, y - pad_y),
-            min(self._reference_pixmap.width() - max(0, x - pad_x), w + pad_x * 2),
-            min(self._reference_pixmap.height() - max(0, y - pad_y), h + pad_y * 2),
-        )
-        if crop.isNull():
-            label.setText("Brak podglądu")
-            return
-        label.setPixmap(crop.scaled(label.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
-
-
-class ImageCropLabel(QLabel):
-    crop_changed = Signal(object)
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setAlignment(Qt.AlignCenter)
-        self.setMinimumSize(860, 220)
-        self.setStyleSheet("border: 1px solid #3a4250; background: #0f1319;")
-        self._source_pixmap: QPixmap | None = None
-        self._scaled_pixmap: QPixmap | None = None
-        self._draw_offset_x = 0
-        self._draw_offset_y = 0
-        self._draw_width = 0
-        self._draw_height = 0
-        self._selection_start: QPoint | None = None
-        self._selection_end: QPoint | None = None
-        self._crop_rect = QRect()
-        self._aspect_ratio: float | None = None
-        self._drag_mode: str | None = None
-        self._pan_offset = QPoint(0, 0)
-        self._panning = False
-
-    def set_source_pixmap(self, pixmap: QPixmap | None) -> None:
-        self._source_pixmap = pixmap
-        self._update_scaled()
-
-    def crop_box(self) -> tuple[float, float, float, float] | None:
-        if self._source_pixmap is None or self._crop_rect.isNull() or self._draw_width <= 0 or self._draw_height <= 0:
-            return None
-        rect = self._crop_rect.normalized()
-        left = max(0.0, min(1.0, (rect.left() - self._draw_offset_x) / self._draw_width))
-        top = max(0.0, min(1.0, (rect.top() - self._draw_offset_y) / self._draw_height))
-        right = max(0.0, min(1.0, (rect.right() - self._draw_offset_x) / self._draw_width))
-        bottom = max(0.0, min(1.0, (rect.bottom() - self._draw_offset_y) / self._draw_height))
-        if right - left < 0.01 or bottom - top < 0.01:
-            return None
-        return (left, top, right, bottom)
-
-    def clear_crop(self) -> None:
-        self._selection_start = None
-        self._selection_end = None
-        self._crop_rect = QRect()
-        self.crop_changed.emit(None)
-        self.update()
-
-    def wheelEvent(self, event) -> None:  # type: ignore[override]
-        if self._source_pixmap is None:
-            return
-        delta = event.angleDelta().y()
-        if delta == 0:
-            return
-        factor = 1.1 if delta > 0 else 0.9
-        if self._scaled_pixmap is not None:
-            new_w = max(120, int(self._scaled_pixmap.width() * factor))
-            new_h = max(80, int(self._scaled_pixmap.height() * factor))
-            self._scaled_pixmap = self._source_pixmap.scaled(new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.setPixmap(self._scaled_pixmap)
-            self._draw_width = self._scaled_pixmap.width()
-            self._draw_height = self._scaled_pixmap.height()
-            self.update()
-
-    def set_locked_aspect_ratio(self, width: int | None, height: int | None) -> None:
-        if width and height and width > 0 and height > 0:
-            self._aspect_ratio = float(width) / float(height)
-        else:
-            self._aspect_ratio = None
-
-    def resizeEvent(self, event) -> None:  # type: ignore[override]
-        super().resizeEvent(event)
-        self._update_scaled()
-
-    def mousePressEvent(self, event) -> None:  # type: ignore[override]
-        if self._source_pixmap is None:
-            return
-        pos = event.position().toPoint()
-        if event.button() == Qt.MiddleButton:
-            self._panning = True
-            self._selection_start = pos
-            return
-        handle = self._hit_handle(pos)
-        if handle is not None:
-            self._drag_mode = handle
-            self._selection_start = pos
-            self._selection_end = pos
-            return
-        self._drag_mode = "new"
-        self._selection_start = pos
-        self._selection_end = self._selection_start
-        self._crop_rect = QRect(self._selection_start, self._selection_end).normalized()
-        self.update()
-
-    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
-        if self._selection_start is None:
-            return
-        pos = event.position().toPoint()
-        if self._panning:
-            delta = pos - self._selection_start
-            self._pan_offset += delta
-            self._selection_start = pos
-            self.update()
-            return
-        if self._drag_mode == "new":
-            self._selection_end = pos
-            self._crop_rect = self._build_crop_rect(self._selection_start, self._selection_end)
-        else:
-            self._crop_rect = self._adjust_existing_crop(pos)
-        self.crop_changed.emit(self.crop_box())
-        self.update()
-
-    def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
-        if self._selection_start is None:
-            return
-        pos = event.position().toPoint()
-        if self._panning:
-            self._panning = False
-            self._selection_start = None
-            return
-        if self._drag_mode == "new":
-            self._selection_end = pos
-            self._crop_rect = self._build_crop_rect(self._selection_start, self._selection_end)
-        else:
-            self._crop_rect = self._adjust_existing_crop(pos)
-        self._drag_mode = None
-        self._selection_start = None
-        self._selection_end = None
-        self.crop_changed.emit(self.crop_box())
-        self.update()
-
-    def paintEvent(self, event) -> None:  # type: ignore[override]
-        super().paintEvent(event)
-        if self._crop_rect.isNull():
-            return
-        painter = QPainter(self)
-        try:
-            painter.setPen(QPen(QColor("#89ddff"), 2, Qt.DashLine))
-            painter.fillRect(self._crop_rect, QColor(94, 200, 255, 36))
-            painter.drawRect(self._crop_rect)
-            for handle in self._handle_rects().values():
-                painter.fillRect(handle, QColor("#89ddff"))
-        finally:
-            painter.end()
-
-    def _update_scaled(self) -> None:
-        if self._source_pixmap is None or self._source_pixmap.isNull():
-            self.clear()
-            self._scaled_pixmap = None
-            return
-        scaled = self._source_pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self._scaled_pixmap = scaled
-        self.setPixmap(scaled)
-        self._draw_width = scaled.width()
-        self._draw_height = scaled.height()
-        self._draw_offset_x = max(0, (self.width() - self._draw_width) // 2)
-        self._draw_offset_y = max(0, (self.height() - self._draw_height) // 2)
-        self._draw_offset_x += self._pan_offset.x()
-        self._draw_offset_y += self._pan_offset.y()
-        self.update()
-
-    def _build_crop_rect(self, start: QPoint, end: QPoint) -> QRect:
-        if self._aspect_ratio is None:
-            return QRect(start, end).normalized()
-        dx = end.x() - start.x()
-        dy = end.y() - start.y()
-        if dx == 0 and dy == 0:
-            return QRect(start, end).normalized()
-        sign_x = 1 if dx >= 0 else -1
-        sign_y = 1 if dy >= 0 else -1
-        abs_dx = abs(dx)
-        abs_dy = abs(dy)
-        target_h = int(round(abs_dx / self._aspect_ratio)) if self._aspect_ratio else abs_dy
-        target_w = int(round(abs_dy * self._aspect_ratio)) if self._aspect_ratio else abs_dx
-        if target_h <= abs_dy:
-            width = abs_dx
-            height = target_h
-        else:
-            width = target_w
-            height = abs_dy
-        adjusted = QPoint(start.x() + sign_x * width, start.y() + sign_y * height)
-        return QRect(start, adjusted).normalized()
-
-    def _handle_rects(self) -> dict[str, QRect]:
-        rect = self._crop_rect.normalized()
-        if rect.isNull():
-            return {}
-        size = 10
-        return {
-            "tl": QRect(rect.left() - size // 2, rect.top() - size // 2, size, size),
-            "tr": QRect(rect.right() - size // 2, rect.top() - size // 2, size, size),
-            "bl": QRect(rect.left() - size // 2, rect.bottom() - size // 2, size, size),
-            "br": QRect(rect.right() - size // 2, rect.bottom() - size // 2, size, size),
-        }
-
-    def _hit_handle(self, pos: QPoint) -> str | None:
-        for name, rect in self._handle_rects().items():
-            if rect.contains(pos):
-                return name
-        return None
-
-    def _adjust_existing_crop(self, pos: QPoint) -> QRect:
-        rect = self._crop_rect.normalized()
-        if rect.isNull() or self._drag_mode is None:
-            return rect
-        if self._drag_mode == "tl":
-            start = rect.bottomRight()
-        elif self._drag_mode == "tr":
-            start = rect.bottomLeft()
-        elif self._drag_mode == "bl":
-            start = rect.topRight()
-        else:
-            start = rect.topLeft()
-        return self._build_crop_rect(start, pos)
-
-
-class ImagePrepDialog(QDialog):
-    PRESETS = {
-        "Wallpaper": {"fit": "cover", "rotate": 0, "blur": False},
-        "Banner": {"fit": "stretch", "rotate": 0, "blur": False},
-        "Photo Left": {"fit": "contain", "rotate": 0, "blur": True},
-        "Full Background": {"fit": "cover", "rotate": 0, "blur": False},
-    }
-
-    def __init__(
-        self,
-        parent: QWidget | None,
-        source_path: Path,
-        *,
-        suggested_output_path: Path | None = None,
-        accept_button_text: str = "Zapisz jako...",
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Import obrazu do motywu")
-        self.resize(1040, 720)
-        self.setMinimumSize(920, 640)
-        self.source_path = source_path
-        self.output_path: Path | None = None
-        self.suggested_output_path = suggested_output_path
-        self._user_presets = self._load_user_presets()
-        self._crop_box: tuple[float, float, float, float] | None = None
-
-        root = QVBoxLayout(self)
-        root.setContentsMargins(14, 14, 14, 14)
-        root.setSpacing(12)
-
-        info = QLabel(
-            f"Źródło: {source_path}\n"
-            "Przygotuj obraz pod LCD 1920x462 i sprawdź wynik przed zapisaniem."
-        )
-        info.setWordWrap(True)
-        root.addWidget(info)
-
-        controls = QHBoxLayout()
-        self.preset_combo = QComboBox()
-        self._rebuild_preset_combo()
-        self.save_preset_btn = QPushButton("Zapisz preset")
-        self.delete_preset_btn = QPushButton("Usuń preset")
-        self.fit_combo = QComboBox()
-        self.fit_combo.addItems(["cover", "contain", "stretch"])
-        self.rotate_spin = QSpinBox()
-        self.rotate_spin.setRange(0, 359)
-        self.rotate_spin.setSingleStep(90)
-        self.blur_chk = QCheckBox("Blur background dla contain")
-        self.lock_ratio_chk = QCheckBox("Zachowaj proporcję 1920:462")
-        self.lock_ratio_chk.setChecked(True)
-        self.quality_spin = QSpinBox()
-        self.quality_spin.setRange(50, 100)
-        self.quality_spin.setValue(95)
-        controls.addWidget(QLabel("Preset:"))
-        controls.addWidget(self.preset_combo)
-        controls.addWidget(self.save_preset_btn)
-        controls.addWidget(self.delete_preset_btn)
-        controls.addWidget(QLabel("Fit:"))
-        controls.addWidget(self.fit_combo)
-        controls.addWidget(QLabel("Rotate:"))
-        controls.addWidget(self.rotate_spin)
-        controls.addWidget(self.blur_chk)
-        controls.addWidget(self.lock_ratio_chk)
-        controls.addWidget(QLabel("JPEG quality:"))
-        controls.addWidget(self.quality_spin)
-        controls.addStretch(1)
-        root.addLayout(controls)
-
-        root.addWidget(QLabel("Kadr źródłowy"))
-        self.crop_label = ImageCropLabel()
-        self.crop_label.crop_changed.connect(self.on_crop_changed)
-        root.addWidget(self.crop_label, 1)
-
-        root.addWidget(QLabel("Podgląd wynikowy"))
-        self.preview_label = QLabel("Preview")
-        self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setMinimumSize(860, 220)
-        self.preview_label.setStyleSheet("border: 1px solid #3a4250; background: #0f1319;")
-        root.addWidget(self.preview_label, 1)
-
-        actions = QHBoxLayout()
-        self.clear_crop_btn = QPushButton("Wyczyść kadr")
-        self.save_as_btn = QPushButton(accept_button_text)
-        self.cancel_btn = QPushButton("Anuluj")
-        actions.addStretch(1)
-        actions.addWidget(self.clear_crop_btn)
-        actions.addWidget(self.save_as_btn)
-        actions.addWidget(self.cancel_btn)
-        root.addLayout(actions)
-
-        self.preset_combo.currentTextChanged.connect(self.apply_preset)
-        self.save_preset_btn.clicked.connect(self.save_user_preset)
-        self.delete_preset_btn.clicked.connect(self.delete_user_preset)
-        self.fit_combo.currentTextChanged.connect(self.refresh_preview)
-        self.rotate_spin.valueChanged.connect(self.refresh_preview)
-        self.blur_chk.toggled.connect(self.refresh_preview)
-        self.lock_ratio_chk.toggled.connect(self.on_lock_ratio_toggled)
-        self.clear_crop_btn.clicked.connect(self.clear_crop)
-        self.save_as_btn.clicked.connect(self.save_as)
-        self.cancel_btn.clicked.connect(self.reject)
-
-        self.apply_preset(self.preset_combo.currentText())
-        self._load_source_preview()
-        self.on_lock_ratio_toggled(self.lock_ratio_chk.isChecked())
-
-    def _rebuild_preset_combo(self) -> None:
-        current = getattr(self, "preset_combo", None)
-        current_text = current.currentText() if current is not None else ""
-        if current is None:
-            return
-        current.blockSignals(True)
-        current.clear()
-        for name in self.PRESETS:
-            current.addItem(name)
-        for name in sorted(self._user_presets):
-            current.addItem(f"User: {name}")
-        if current_text:
-            current.setCurrentText(current_text)
-        current.blockSignals(False)
-
-    def _load_user_presets(self) -> dict[str, dict[str, Any]]:
-        try:
-            data = json.loads(IMAGE_PRESETS_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return {str(k): dict(v) for k, v in data.items() if isinstance(v, dict)}
-        except Exception:
-            pass
-        return {}
-
-    def _save_user_presets(self) -> None:
-        IMAGE_PRESETS_PATH.write_text(
-            json.dumps(self._user_presets, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
-    def apply_preset(self, preset_name: str) -> None:
-        preset = self.PRESETS.get(preset_name)
-        if preset is None and preset_name.startswith("User: "):
-            preset = self._user_presets.get(preset_name.replace("User: ", "", 1))
-        if not preset:
-            return
-        self.fit_combo.setCurrentText(str(preset["fit"]))
-        self.rotate_spin.setValue(int(preset["rotate"]))
-        self.blur_chk.setChecked(bool(preset["blur"]))
-        if "quality" in preset:
-            self.quality_spin.setValue(int(preset["quality"]))
-        self.refresh_preview()
-
-    def save_user_preset(self) -> None:
-        preset_name, ok = QInputDialog.getText(
-            self,
-            "Nazwa presetu",
-            "Podaj nazwę własnego presetu importu:",
-        )
-        if not ok:
-            return
-        preset_name = preset_name.strip()
-        if not preset_name:
-            return
-        self._user_presets[preset_name] = {
-            "fit": self.fit_combo.currentText(),
-            "rotate": int(self.rotate_spin.value()),
-            "blur": bool(self.blur_chk.isChecked()),
-            "quality": int(self.quality_spin.value()),
-        }
-        self._save_user_presets()
-        self._rebuild_preset_combo()
-        self.preset_combo.setCurrentText(f"User: {preset_name}")
-
-    def delete_user_preset(self) -> None:
-        current = self.preset_combo.currentText()
-        if not current.startswith("User: "):
-            QMessageBox.information(self, "Preset", "Możesz usunąć tylko własny preset.")
-            return
-        name = current.replace("User: ", "", 1)
-        self._user_presets.pop(name, None)
-        self._save_user_presets()
-        self._rebuild_preset_combo()
-        self.preset_combo.setCurrentText(next(iter(self.PRESETS.keys())))
-
-    def _render_preview_pixmap(self) -> QPixmap | None:
-        if render_prepared_image is None:
-            return None
-        try:
-            image = render_prepared_image(
-                self.source_path,
-                width=1920,
-                height=462,
-                fit=self.fit_combo.currentText(),
-                rotate=int(self.rotate_spin.value()),
-                blur_background=bool(self.blur_chk.isChecked()),
-                crop_box=self._crop_box,
-            )
-            preview = image.copy()
-            preview.thumbnail((920, 240))
-            buffer = io.BytesIO()
-            preview.save(buffer, format="PNG")
-            pixmap = QPixmap()
-            if pixmap.loadFromData(buffer.getvalue(), "PNG"):
-                return pixmap
-        except Exception:
-            return None
-        return None
-
-    def _load_source_preview(self) -> None:
-        pixmap = QPixmap(str(self.source_path))
-        if pixmap.isNull():
-            self.crop_label.setText("Nie udało się wczytać obrazu źródłowego.")
-            return
-        self.crop_label.set_source_pixmap(pixmap)
-
-    def on_crop_changed(self, crop_box: object) -> None:
-        self._crop_box = crop_box if isinstance(crop_box, tuple) else None
-        self.refresh_preview()
-
-    def on_lock_ratio_toggled(self, checked: bool) -> None:
-        self.crop_label.set_locked_aspect_ratio(1920, 462) if checked else self.crop_label.set_locked_aspect_ratio(None, None)
-
-    def clear_crop(self) -> None:
-        self._crop_box = None
-        self.crop_label.clear_crop()
-        self.refresh_preview()
-
-    def refresh_preview(self) -> None:
-        pixmap = self._render_preview_pixmap()
-        if pixmap is None or pixmap.isNull():
-            self.preview_label.setText("Nie udało się wygenerować preview.")
-            self.preview_label.setPixmap(QPixmap())
-            return
-        self.preview_label.setText("")
-        self.preview_label.setPixmap(pixmap)
-
-    def save_as(self) -> None:
-        if self.suggested_output_path is not None:
-            out_path = str(self.suggested_output_path)
-        else:
-            suggested = self.source_path.with_name(f"{self.source_path.stem}_trofeo.jpg")
-            out_path, _ = QFileDialog.getSaveFileName(
-                self,
-                "Zapisz przygotowany obraz",
-                str(suggested),
-                "JPEG (*.jpg *.jpeg);;PNG (*.png)",
-            )
-            if not out_path:
-                return
-        try:
-            out = prepare_image_for_canvas(
-                self.source_path,
-                out_path,
-                width=1920,
-                height=462,
-                fit=self.fit_combo.currentText(),
-                rotate=int(self.rotate_spin.value()),
-                blur_background=bool(self.blur_chk.isChecked()),
-                quality=int(self.quality_spin.value()),
-                crop_box=self._crop_box,
-            )
-        except Exception as exc:
-            QMessageBox.warning(self, "Błąd obrazu", str(exc))
-            return
-        self.output_path = out
-        self.accept()
-
-
-class ThemePreviewDialog(QDialog):
-    def __init__(self, theme_name: str, pixmap: QPixmap, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(f"Podgląd motywu - {theme_name}")
-        self.resize(1320, 620)
-        self.setMinimumSize(980, 420)
-
-        root = QVBoxLayout(self)
-        root.setContentsMargins(14, 14, 14, 14)
-        root.setSpacing(12)
-
-        title = QLabel(theme_name)
-        title.setObjectName("libraryCardTitle")
-        root.addWidget(title)
-
-        hint = QLabel("Powiększony podgląd motywu. Jeśli obraz jest szerszy, możesz przewinąć obszar.")
-        hint.setObjectName("libraryCardMeta")
-        hint.setWordWrap(True)
-        root.addWidget(hint)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setAlignment(Qt.AlignCenter)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setMinimumHeight(360)
-        preview = QLabel()
-        preview.setAlignment(Qt.AlignCenter)
-        preview.setMinimumSize(max(920, pixmap.width()), max(260, pixmap.height()))
-        preview.setPixmap(pixmap)
-        scroll.setWidget(preview)
-        root.addWidget(scroll, 1)
-
-        actions = QHBoxLayout()
-        actions.addStretch(1)
-        close_btn = QPushButton("Zamknij")
-        close_btn.clicked.connect(self.accept)
-        actions.addWidget(close_btn)
-        root.addLayout(actions)
-
-
-class BackendClient:
-    def __init__(self, base_url: str):
-        self.base_url = base_url.rstrip("/")
-
-    def set_base_url(self, base_url: str) -> None:
-        self.base_url = base_url.rstrip("/")
-
-    def _url(self, path: str) -> str:
-        if not path.startswith("/"):
-            path = "/" + path
-        return self.base_url + path
-
-    def request(self, method: str, path: str, payload: dict[str, Any] | None = None, timeout: float = 10.0) -> dict[str, Any]:
-        data = None
-        headers = {"Content-Type": "application/json; charset=utf-8"}
-        if payload is not None:
-            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-
-        req = urllib.request.Request(self._url(path), data=data, method=method.upper(), headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
-                return json.loads(raw) if raw else {}
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            err_text = body
-            try:
-                decoded = json.loads(body) if body else {}
-                if isinstance(decoded, dict) and "error" in decoded:
-                    err_text = str(decoded["error"])
-            except Exception:
-                pass
-            raise RuntimeError(f"HTTP {exc.code}: {err_text}") from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"Połączenie nieudane: {exc}") from exc
-        except socket.timeout as exc:
-            raise RuntimeError("Request timeout") from exc
-
-
 class TrofeoGui(QMainWindow):
     api_result = Signal(str, bool, object)
+    weather_city_search_finished = Signal(list, str)
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, *, start_background_tasks: bool = True):
         super().__init__()
         self._ui_language = "en"
-        self.setWindowTitle("Open Trofeo LCD")
+        self.setWindowTitle("Open Trofeo LCD[*]")
         self.resize(1680, 1040)
-        self.setMinimumSize(1480, 920)
+        self.setMinimumSize(1024, 640)
         self._status_in_flight = False
         self.theme_items: dict[str, dict[str, Any]] = {}
         self.theme_doc_model: dict[str, Any] | None = None
+        self._theme_doc_dirty = False
+        self._theme_doc_editor_syncing = False
+        self._theme_doc_model_newer_than_editor = False
         self.theme_stat_sources = sorted(KNOWN_STAT_SOURCES)
         self._designer_updating = False
         self.layout_presets: dict[str, Any] = {}
@@ -1861,67 +510,142 @@ class TrofeoGui(QMainWindow):
         self._tray_icon: QSystemTrayIcon | None = None
         self._close_to_tray_enabled = True
         self._tray_message_shown = False
+        try:
+            self._show_request_mtime_ns = SHOW_REQUEST_PATH.stat().st_mtime_ns
+        except OSError:
+            self._show_request_mtime_ns = 0
         self._template_cards: list[dict[str, Any]] = []
         self._template_thumb_map: dict[str, QLabel] = {}
         self._log_entries: list[str] = []
         self._max_log_entries = 1500
         self._log_refresh_pending = False
+        self._backend_recovery_lock = threading.Lock()
         self._startup_theme_name = ""
         self._startup_theme_applied = False
+        self._gaming_auto_theme_enabled = False
+        self._gaming_auto_theme_name = ""
+        self._gaming_auto_theme_previous_name = ""
+        self._gaming_auto_theme_restore_pending = False
+        self._gaming_auto_theme_restore_on_fps_loss = False
+        self._gaming_auto_theme_fps_loss_delay_s = 12
+        self._gaming_auto_theme_fps_missing_since = 0.0
+        self._gaming_auto_theme_restored_for_fps_loss = False
+        self._gaming_auto_theme_last_active = False
+        self._gaming_auto_theme_last_applied_at = 0.0
+        self._vrr_action_in_flight = False
+        self._theme_list_refresh_at = 0.0
         self._history_undo: list[dict[str, Any]] = []
         self._history_redo: list[dict[str, Any]] = []
         self._history_suspended = False
         self._designer_drag_active = False
+        self._designer_drag_target: tuple[str, int] | None = None
+        self._designer_selection_refresh_pending = False
+        self._designer_layout_update_depth = 0
+        self._designer_splitter_clamp_after_layout_update = False
+        self._designer_splitter_clamp_after_drag = False
+        self._designer_splitter_clamp_pending = False
         self._animation_syncing_from_timeline = False
         self._animation_studio_built = False
         self._animation_studio_shortcuts: list[QShortcut] = []
+        self._preview_stats_provider = PreviewStatsProvider()
         self._animation_export_in_flight = False
         self._animation_import_in_flight = False
         self._animation_duplicate_in_flight = False
         self._animation_stabilize_in_flight = False
+        self._animation_export_cancel_event: threading.Event | None = None
+        self._animation_import_cancel_event: threading.Event | None = None
         self._animation_worker_states: dict[str, str] = {}
         self._animation_thumbnail_generation = 0
+        self._animation_thumbnail_in_flight = False
+        self._animation_thumbnail_pending_jobs: dict[tuple[str, int], dict[str, Any]] = {}
         self._image_thumbnail_cache: dict[tuple[str, int], QPixmap] = {}
+        self.app_version_text = detect_app_version()
         self._preview_request_in_flight = False
         self._preview_request_queued = False
         self._preview_request_seq = 0
         self._preview_request_active_seq = 0
+        self._runtime_theme_cards_dirty = True
+        self.theme_gallery_preview = ThemeGalleryPreviewRenderer(
+            stats_provider=self._preview_stats_provider,
+            resolve_path=self._resolve_theme_asset_path,
+        )
+        self.theme_gallery_refresh: ThemeGalleryRefreshCoordinator | None = None
+        self.theme_gallery_actions = ThemeGalleryActionController(self)
+        self._asset_gallery_dirty = True
+        self._initial_theme_data_loaded = False
         self.preview_debounce = QTimer(self)
         self.preview_debounce.setSingleShot(True)
         self.preview_debounce.timeout.connect(self.preview_theme_doc)
         self.autosave_debounce = QTimer(self)
         self.autosave_debounce.setSingleShot(True)
         self.autosave_debounce.timeout.connect(self._write_theme_autosave)
+        self.theme_doc_editor_sync_debounce = QTimer(self)
+        self.theme_doc_editor_sync_debounce.setSingleShot(True)
+        self.theme_doc_editor_sync_debounce.timeout.connect(self._flush_theme_doc_editor_sync)
+        self.designer_splitter_clamp_timer = QTimer(self)
+        self.designer_splitter_clamp_timer.setSingleShot(True)
+        self.designer_splitter_clamp_timer.timeout.connect(self._run_pending_designer_splitter_clamp)
+        self.designer_selection_refresh_timer = QTimer(self)
+        self.designer_selection_refresh_timer.setSingleShot(True)
+        self.designer_selection_refresh_timer.timeout.connect(self._run_pending_designer_selection_refresh)
+        self.responsive_update_timer = QTimer(self)
+        self.responsive_update_timer.setSingleShot(True)
+        self.responsive_update_timer.timeout.connect(self._run_responsive_update)
+        self._responsive_update_key: tuple[int, int, int] | None = None
         self.animation_preview_timer = QTimer(self)
         self.animation_preview_timer.timeout.connect(self._advance_animation_preview)
         self._animation_preview_active = False
+        self._weather_search_target = "config"
+        self._weather_config_restored_to_backend = False
+        self._lcd_config_restored_to_backend = False
 
         self.client = BackendClient(base_url=base_url)
+        self.config_preferences = ConfigPreferencesController(
+            self,
+            ui_state_path=UI_STATE_PATH,
+            theme_autosave_path=THEME_AUTOSAVE_PATH,
+        )
         self._build_ui(base_url)
+        self._update_theme_doc_save_state()
         self._restore_ui_state()
         self._setup_shortcuts()
         self._setup_tray()
         self.apply_ui_chrome()
         self.api_result.connect(self._on_api_result)
+        self.weather_city_search_finished.connect(self._finish_weather_city_search)
+        if start_background_tasks:
+            QTimer.singleShot(750, self._apply_restored_weather_config_to_backend)
+            QTimer.singleShot(900, self._apply_restored_lcd_config_to_backend)
+            QTimer.singleShot(1100, self.refresh_vrr_status)
 
-        self.status_timer = QTimer(self)
-        self.status_timer.timeout.connect(self.refresh_status)
-        self.status_timer.start(1500)
+            self.status_timer = QTimer(self)
+            self.status_timer.timeout.connect(self.refresh_status)
+            self.status_timer.start(1500)
 
-        self.refresh_status()
-        self.refresh_themes()
-        self.refresh_playlist()
-        self.refresh_theme_schema()
-        self._load_layout_presets()
-        self._refresh_template_cards()
-        self._rebuild_theme_asset_gallery()
-        self.suggest_new_theme_path_from_template()
-        restored_autosave = self._restore_theme_autosave()
-        if not restored_autosave and Path(self.theme_doc_path_edit.text().strip()).exists():
-            self.load_theme_doc()
+            self.show_request_timer = QTimer(self)
+            self.show_request_timer.timeout.connect(self._poll_show_request)
+            self.show_request_timer.start(700)
+
+            self.refresh_status()
+            QTimer.singleShot(150, self.refresh_themes)
+            QTimer.singleShot(300, self.refresh_playlist)
+            QTimer.singleShot(450, self.refresh_theme_schema)
+            self._load_layout_presets()
+            QTimer.singleShot(650, self._refresh_template_cards)
+            self.suggest_new_theme_path_from_template()
+            restored_autosave = self._restore_theme_autosave()
+            if not restored_autosave and Path(self.theme_doc_path_edit.text().strip()).exists():
+                QTimer.singleShot(850, self.load_theme_doc)
+        else:
+            self.status_timer = QTimer(self)
+            self.status_timer.setSingleShot(True)
+            self.show_request_timer = QTimer(self)
+            self.show_request_timer.setSingleShot(True)
+            self._load_layout_presets()
         # Always start on dashboard/system view.
         self._go_system()
-        self._show_onboarding_once()
+        if start_background_tasks:
+            self._show_onboarding_once()
 
     def _create_stat_pill(self, label: str, initial_value: str = "-") -> tuple[QWidget, QLabel]:
         frame = QFrame()
@@ -1981,10 +705,43 @@ class TrofeoGui(QMainWindow):
             "net_ul_kbps": "Network Upload (kbps)",
             "volume_percent": "Audio Volume (%)",
             "volume_state": "Audio Volume State",
+            "audio_eq_bars": "Audio EQ Bars",
+            "audio_eq_raw_bars": "Audio EQ Raw Bars",
+            "audio_eq_source": "Audio EQ Source",
+            "audio_eq_status": "Audio EQ Status",
+            "audio_eq_age_ms": "Audio EQ Age (ms)",
+            "game_active": "Game: Active",
+            "game_name": "Game: Name",
+            "game_process": "Game: Process",
+            "game_launcher": "Game: Launcher",
+            "game_fps": "Game: FPS",
+            "game_fps_avg": "Game: Avg FPS",
+            "game_fps_min": "Game: Min FPS",
+            "game_fps_max": "Game: Max FPS",
+            "game_fps_1pct_low": "Game: 1% Low FPS",
+            "game_fps_0_1pct_low": "Game: 0.1% Low FPS",
+            "game_frametime_ms": "Game: Frametime",
+            "game_frametime_avg_ms": "Game: Avg Frametime",
+            "game_frametime_max_ms": "Game: Max Frametime",
+            "game_stutter_count": "Game: Stutters",
+            "game_session_frames": "Game: Session Frames",
+            "game_session_time": "Game: Session Time",
+            "game_fps_source": "Game: FPS Source",
+            "game_overlay": "Game: Overlay",
             "media_title": "Now Playing: Title",
             "media_artist": "Now Playing: Artist",
             "media_app": "Now Playing: App",
             "media_state": "Now Playing: State",
+            "weather_location": "Weather: Location",
+            "weather_temp_c": "Weather: Temperature (C)",
+            "weather_feels_like_c": "Weather: Feels Like (C)",
+            "weather_humidity_percent": "Weather: Humidity (%)",
+            "weather_wind_kph": "Weather: Wind (km/h)",
+            "weather_precip_mm": "Weather: Precipitation (mm)",
+            "weather_cloud_percent": "Weather: Cloud Cover (%)",
+            "weather_condition": "Weather: Condition",
+            "weather_icon": "Weather: Icon Name",
+            "weather_is_day": "Weather: Day/Night",
         }
         if source in custom:
             return custom[source]
@@ -1992,6 +749,9 @@ class TrofeoGui(QMainWindow):
 
     def _is_music_stat_source(self, source: str) -> bool:
         return str(source).strip().lower() in MUSIC_AUDIO_STAT_SOURCES
+
+    def _is_weather_stat_source(self, source: str) -> bool:
+        return str(source).strip().lower().startswith("weather_")
 
     def _designer_domain_mode(self) -> str:
         combo = getattr(self, "designer_domain_combo", None)
@@ -2004,20 +764,54 @@ class TrofeoGui(QMainWindow):
         music_groups = [
             ("Music / Now Playing", ["media_title", "media_artist", "media_app", "media_state"]),
             ("Audio / Volume", ["volume_percent", "volume_state"]),
+            ("Audio / EQ", ["audio_eq_status", "audio_eq_source", "audio_eq_age_ms"]),
         ]
         system_groups = [
             ("System", ["hostname", "ip_local", "time_hms", "date_ymd", "uptime_human"]),
             ("CPU", ["cpu_usage_percent", "cpu_core_avg_percent", "cpu_core_max_percent", "cpu_freq_ghz", "cpu_temp_c", "load_average"]),
             ("GPU", ["gpu_name", "gpu_temp", "gpu_load", "vram_percent", "vram_used_mb", "vram_total_mb"]),
+            (
+                "Gaming",
+                [
+                    "game_active", "game_name", "game_launcher", "game_fps", "game_fps_avg",
+                    "game_fps_min", "game_fps_max", "game_fps_1pct_low", "game_fps_0_1pct_low",
+                    "game_frametime_ms", "game_frametime_avg_ms", "game_frametime_max_ms",
+                    "game_stutter_count", "game_session_frames", "game_session_time", "game_overlay",
+                ],
+            ),
             ("Memory", ["mem_percent", "mem_used_mb", "mem_total_mb"]),
             ("Disk", ["disk_percent", "disk_used_gb", "disk_total_gb"]),
             ("Network", ["net_dl_kbps", "net_ul_kbps"]),
+        ]
+        weather_groups = [
+            (
+                "Weather",
+                [
+                    "weather_location", "weather_temp_c", "weather_feels_like_c",
+                    "weather_humidity_percent", "weather_wind_kph", "weather_precip_mm",
+                    "weather_cloud_percent", "weather_condition", "weather_icon",
+                ],
+            ),
+            (
+                "Weather / 7-day forecast",
+                [
+                    "weather_day_0_label", "weather_day_0_temp_max_c", "weather_day_0_temp_min_c", "weather_day_0_condition",
+                    "weather_day_1_label", "weather_day_1_temp_max_c", "weather_day_1_temp_min_c", "weather_day_1_condition",
+                    "weather_day_2_label", "weather_day_2_temp_max_c", "weather_day_2_temp_min_c", "weather_day_2_condition",
+                    "weather_day_3_label", "weather_day_3_temp_max_c", "weather_day_3_temp_min_c", "weather_day_3_condition",
+                    "weather_day_4_label", "weather_day_4_temp_max_c", "weather_day_4_temp_min_c", "weather_day_4_condition",
+                    "weather_day_5_label", "weather_day_5_temp_max_c", "weather_day_5_temp_min_c", "weather_day_5_condition",
+                    "weather_day_6_label", "weather_day_6_temp_max_c", "weather_day_6_temp_min_c", "weather_day_6_condition",
+                ],
+            ),
         ]
         if domain_key == "music":
             return music_groups
         if domain_key == "system":
             return system_groups
-        return music_groups + system_groups
+        if domain_key == "weather":
+            return weather_groups
+        return music_groups + system_groups + weather_groups
 
     def _populate_designer_source_combo(self, selected_source: str = "") -> None:
         if not hasattr(self, "designer_source_combo"):
@@ -2055,6 +849,43 @@ class TrofeoGui(QMainWindow):
                     self.designer_source_combo.setCurrentIndex(idx)
                     break
         self.designer_source_combo.blockSignals(False)
+
+    def _populate_weather_source_combo(self, selected_source: str = "") -> None:
+        combo = getattr(self, "weather_source_combo", None)
+        if combo is None:
+            return
+        combo.blockSignals(True)
+        combo.clear()
+        for group_name, sources in self._designer_source_groups("weather"):
+            combo.addItem(f"── {group_name} ──", f"__header__:{group_name}")
+            header_idx = combo.count() - 1
+            try:
+                combo.model().item(header_idx).setEnabled(False)
+            except Exception:
+                pass
+            for source in sources:
+                combo.addItem(self._humanize_stat_source(source), source)
+        idx = combo.findData(selected_source)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _on_weather_source_changed(self, _idx: int) -> None:
+        if self._designer_updating:
+            return
+        source = str(self.weather_source_combo.currentData() or "").strip()
+        if not source or source.startswith("__header__:"):
+            return
+        idx = self.designer_source_combo.findData(source)
+        if idx >= 0:
+            self.designer_source_combo.setCurrentIndex(idx)
+        self.apply_designer_changes()
+
+    def _on_weather_format_changed(self, _idx: int) -> None:
+        if self._designer_updating:
+            return
+        fmt = str(self.weather_format_combo.currentData() or "{value}").strip() or "{value}"
+        self.designer_format_edit.setText(fmt)
+        self.apply_designer_changes()
 
     def _build_designer_content_row(self, label: str, edit: QLineEdit, has_picker: bool = True) -> QWidget:
         row = QWidget()
@@ -2188,103 +1019,571 @@ class TrofeoGui(QMainWindow):
                 continue
         return "N/A", "-"
 
-    def _sync_config_ui_controls_from_header(self) -> None:
-        if not hasattr(self, "cfg_ui_theme_combo"):
-            return
-        if getattr(self, "cfg_ui_theme_combo", None) is getattr(self, "ui_theme_combo", None):
-            return
-        pairs = [
-            (self.cfg_ui_theme_combo, getattr(self, "ui_theme_combo", None), "currentText"),
-            (self.cfg_ui_mode_combo, getattr(self, "ui_mode_combo", None), "currentText"),
-        ]
-        for target, source, accessor in pairs:
-            if source is None:
-                continue
-            target.blockSignals(True)
-            target.setCurrentText(getattr(source, accessor)())
-            target.blockSignals(False)
-        if hasattr(self, "cfg_ui_scale_combo") and hasattr(self, "ui_scale_combo"):
-            self.cfg_ui_scale_combo.blockSignals(True)
-            self.cfg_ui_scale_combo.setCurrentIndex(self.ui_scale_combo.currentIndex())
-            self.cfg_ui_scale_combo.blockSignals(False)
+    def _lcd_config_payload(self) -> dict[str, object]:
+        return {}
 
-    def _apply_configuration_preferences(self) -> None:
-        if hasattr(self, "cfg_ui_theme_combo"):
-            self.ui_theme_combo.setCurrentText(self.cfg_ui_theme_combo.currentText())
-        if hasattr(self, "cfg_ui_mode_combo"):
-            self.ui_mode_combo.setCurrentText(self.cfg_ui_mode_combo.currentText())
-        if hasattr(self, "cfg_ui_scale_combo"):
-            self.ui_scale_combo.setCurrentIndex(self.cfg_ui_scale_combo.currentIndex())
-        self.apply_ui_chrome()
+    def _update_lcd_brightness_label(self, value: int | None = None) -> None:
+        return None
+
+    def apply_lcd_config(self) -> None:
+        self.append_log("[lcd] Brightness control is disabled until hardware backlight protocol is decoded.")
+
+    def _apply_restored_lcd_config_to_backend(self) -> None:
+        self._lcd_config_restored_to_backend = True
+
+    def _weather_config_payload(self) -> dict[str, object]:
+        return {
+            "weather_lat": self.cfg_weather_lat_edit.text().strip() if hasattr(self, "cfg_weather_lat_edit") else "",
+            "weather_lon": self.cfg_weather_lon_edit.text().strip() if hasattr(self, "cfg_weather_lon_edit") else "",
+            "weather_location": self.cfg_weather_location_edit.text().strip() if hasattr(self, "cfg_weather_location_edit") else "",
+            "weather_refresh_s": int(self.cfg_weather_refresh_spin.value()) if hasattr(self, "cfg_weather_refresh_spin") else 900,
+        }
+
+    def apply_weather_config(self) -> None:
+        if not hasattr(self, "cfg_weather_lat_edit"):
+            return
+        payload = self._weather_config_payload()
+        self.api_call("config", "POST", "/v1/config", payload)
+        self._weather_config_restored_to_backend = True
         self._save_ui_state()
-        self.append_log("[config] Zastosowano ustawienia interfejsu.")
+        self.append_log("[weather] Applied weather configuration.")
 
-    def _reset_configuration_defaults(self) -> None:
-        if hasattr(self, "cfg_ui_theme_combo"):
-            self.cfg_ui_theme_combo.setCurrentText("Plasma Blue")
-        if hasattr(self, "cfg_ui_mode_combo"):
-            self.cfg_ui_mode_combo.setCurrentText("Dark")
-        if hasattr(self, "cfg_ui_scale_combo"):
-            self.cfg_ui_scale_combo.setCurrentText("100%")
-        if hasattr(self, "cfg_brightness_slider"):
-            self.cfg_brightness_slider.setValue(82)
-        if hasattr(self, "cfg_preview_fps_combo"):
-            self.cfg_preview_fps_combo.setCurrentText("30")
-        if hasattr(self, "cfg_refresh_combo"):
-            self.cfg_refresh_combo.setCurrentText("1.5 s")
-        self._apply_configuration_preferences()
-
-    def _export_configuration_file(self) -> None:
-        selected, _ = QFileDialog.getSaveFileName(
-            self,
-            "Eksportuj konfigurację",
-            str(Path.cwd() / "trofeo-ui-config.json"),
-            "JSON (*.json);;All files (*)",
-        )
-        if not selected:
+    def _apply_restored_weather_config_to_backend(self) -> None:
+        if self._weather_config_restored_to_backend or not hasattr(self, "cfg_weather_lat_edit"):
             return
-        payload = self._load_ui_state_payload()
-        payload["theme_json"] = self.theme_doc_path_edit.text().strip() if hasattr(self, "theme_doc_path_edit") else ""
-        Path(selected).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        self.append_log(f"[config] Eksport ustawień: {selected}")
-
-    def _import_configuration_file(self) -> None:
-        selected, _ = QFileDialog.getOpenFileName(
-            self,
-            "Importuj konfigurację",
-            str(Path.cwd()),
-            "JSON (*.json);;All files (*)",
-        )
-        if not selected:
+        payload = self._weather_config_payload()
+        if not str(payload.get("weather_lat", "")).strip() or not str(payload.get("weather_lon", "")).strip():
             return
-        payload = json.loads(Path(selected).read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("Nieprawidłowy plik konfiguracji.")
-        UI_STATE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        self._restore_ui_state()
-        self._sync_config_ui_controls_from_header()
-        self.apply_ui_chrome()
-        self.append_log(f"[config] Import ustawień: {selected}")
+        self._weather_config_restored_to_backend = True
+        self.api_call("config", "POST", "/v1/config", payload)
+        self.append_log("[weather] Restored saved weather configuration.")
 
-    def _clear_cached_state(self) -> None:
-        for path in (THEME_AUTOSAVE_PATH, UI_STATE_PATH):
+    def refresh_weather_now(self) -> None:
+        if not hasattr(self, "cfg_weather_lat_edit"):
+            return
+        payload = self._weather_config_payload()
+        payload["weather_refresh_now"] = True
+        self.api_call("config", "POST", "/v1/config", payload)
+        self.append_log("[weather] Forced weather refresh.")
+
+    def _audio_eq_config_payload(self) -> dict[str, object]:
+        input_combo = getattr(self, "cfg_audio_eq_input_combo", None)
+        profile_combo = getattr(self, "cfg_audio_eq_profile_combo", None)
+        sensitivity_spin = getattr(self, "cfg_audio_eq_sensitivity_spin", None)
+        method = str(input_combo.currentData() if input_combo is not None else "auto").strip() or "auto"
+        profile = str(profile_combo.currentData() if profile_combo is not None else "responsive").strip() or "responsive"
+        sensitivity = float(sensitivity_spin.value()) / 100.0 if sensitivity_spin is not None else 1.0
+        return {"audio_eq_input": method, "audio_eq_profile": profile, "audio_eq_sensitivity": sensitivity}
+
+    def apply_audio_eq_config(self) -> None:
+        if not hasattr(self, "cfg_audio_eq_input_combo"):
+            return
+        self.api_call("config", "POST", "/v1/config", self._audio_eq_config_payload())
+        self._audio_eq_config_dirty = False
+        self._save_ui_state()
+        self.append_log("[audio-eq] Applied CAVA input configuration.")
+
+    def _start_weather_city_search(self, query: str, target: str) -> None:
+        self._weather_search_target = target
+        search_btn = self.weather_designer_search_btn if target == "designer" and hasattr(self, "weather_designer_search_btn") else getattr(self, "cfg_weather_search_btn", None)
+        if search_btn is not None:
+            search_btn.setEnabled(False)
+            search_btn.setText(self._tr("Searching...", "Szukam..."))
+
+        def worker() -> None:
+            results: list[dict[str, object]] = []
+            error = ""
             try:
-                if path.exists():
-                    path.unlink()
+                params = urlencode({"name": query, "count": "8", "language": "en", "format": "json"})
+                url = f"https://geocoding-api.open-meteo.com/v1/search?{params}"
+                req = urllib.request.Request(url, headers={"User-Agent": "OpenTrofeoLCD/1.0"})
+                with urllib.request.urlopen(req, timeout=6.0) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                raw_results = data.get("results", []) if isinstance(data, dict) else []
+                if isinstance(raw_results, list):
+                    for item in raw_results:
+                        if isinstance(item, dict) and item.get("latitude") is not None and item.get("longitude") is not None:
+                            results.append(item)
             except Exception as exc:
-                self.append_log(f"[config] cache-skip {path}: {exc}")
-        self.append_log("[config] Wyczyszczono cache aplikacji.")
+                error = str(exc)
+            self.weather_city_search_finished.emit(results, error)
 
-    def _restart_application(self) -> None:
+        threading.Thread(target=worker, daemon=True).start()
+
+    def search_weather_city(self) -> None:
+        if not hasattr(self, "cfg_weather_city_search_edit"):
+            return
+        query = self.cfg_weather_city_search_edit.text().strip()
+        if len(query) < 2:
+            QMessageBox.information(
+                self,
+                self._tr("Weather", "Pogoda"),
+                self._tr("Type at least two characters.", "Wpisz co najmniej dwa znaki."),
+            )
+            return
+        self._start_weather_city_search(query, "config")
+
+    def search_designer_weather_city(self) -> None:
+        if not hasattr(self, "weather_designer_city_search_edit"):
+            return
+        query = self.weather_designer_city_search_edit.text().strip()
+        if len(query) < 2:
+            QMessageBox.information(
+                self,
+                self._tr("Weather", "Pogoda"),
+                self._tr("Type at least two characters.", "Wpisz co najmniej dwa znaki."),
+            )
+            return
+        if hasattr(self, "cfg_weather_city_search_edit"):
+            self.cfg_weather_city_search_edit.setText(query)
+        self._start_weather_city_search(query, "designer")
+
+    def _finish_weather_city_search(self, results: list[dict[str, object]], error: str = "") -> None:
+        target = getattr(self, "_weather_search_target", "config")
+        results_combo = self.weather_designer_results_combo if target == "designer" and hasattr(self, "weather_designer_results_combo") else getattr(self, "cfg_weather_results_combo", None)
+        search_btn = self.weather_designer_search_btn if target == "designer" and hasattr(self, "weather_designer_search_btn") else getattr(self, "cfg_weather_search_btn", None)
+        if results_combo is None or search_btn is None:
+            return
+        search_btn.setEnabled(True)
+        search_btn.setText(self._tr("Search", "Szukaj"))
+        if target == "designer" and hasattr(self, "cfg_weather_search_btn"):
+            self.cfg_weather_search_btn.setEnabled(True)
+            self.cfg_weather_search_btn.setText(self._tr("Search", "Szukaj"))
+        results_combo.blockSignals(True)
+        results_combo.clear()
+        if error:
+            results_combo.addItem(self._tr("Search failed", "Wyszukiwanie nieudane"), None)
+            self.append_log(f"[weather] geocoding error: {error}")
+        elif not results:
+            results_combo.addItem(self._tr("No results", "Brak wyników"), None)
+        else:
+            for item in results:
+                name = str(item.get("name", "")).strip()
+                admin = str(item.get("admin1", "")).strip()
+                country = str(item.get("country", "")).strip()
+                lat = item.get("latitude")
+                lon = item.get("longitude")
+                label = ", ".join(part for part in (name, admin, country) if part)
+                if not label:
+                    label = f"{lat}, {lon}"
+                results_combo.addItem(label, item)
+        results_combo.blockSignals(False)
+        if results:
+            results_combo.setCurrentIndex(0)
+            if target == "designer":
+                self._apply_selected_designer_weather_city(0)
+            else:
+                self._apply_selected_weather_city(0)
+
+    def _apply_selected_weather_city(self, index: int) -> None:
+        if not hasattr(self, "cfg_weather_results_combo"):
+            return
+        item = self.cfg_weather_results_combo.itemData(index)
+        if not isinstance(item, dict):
+            return
+        lat = item.get("latitude")
+        lon = item.get("longitude")
+        name = str(item.get("name", "")).strip()
+        admin = str(item.get("admin1", "")).strip()
+        country = str(item.get("country", "")).strip()
+        label = ", ".join(part for part in (name, admin, country) if part)
+        self.cfg_weather_lat_edit.setText("" if lat is None else str(lat))
+        self.cfg_weather_lon_edit.setText("" if lon is None else str(lon))
+        self.cfg_weather_location_edit.setText(label)
+
+    def _apply_selected_designer_weather_city(self, index: int) -> None:
+        if not hasattr(self, "weather_designer_results_combo"):
+            return
+        item = self.weather_designer_results_combo.itemData(index)
+        if not isinstance(item, dict):
+            return
+        if hasattr(self, "cfg_weather_results_combo"):
+            self.cfg_weather_results_combo.blockSignals(True)
+            self.cfg_weather_results_combo.clear()
+            self.cfg_weather_results_combo.addItem(self.weather_designer_results_combo.currentText(), item)
+            self.cfg_weather_results_combo.setCurrentIndex(0)
+            self.cfg_weather_results_combo.blockSignals(False)
+            self._apply_selected_weather_city(0)
+
+    def apply_designer_weather_config(self) -> None:
+        self._apply_selected_designer_weather_city(self.weather_designer_results_combo.currentIndex())
+        self.apply_weather_config()
+
+    def refresh_designer_weather_now(self) -> None:
+        self._apply_selected_designer_weather_city(self.weather_designer_results_combo.currentIndex())
+        self.refresh_weather_now()
+
+    def _fps_setup_script_path(self) -> Path:
+        return Path(__file__).resolve().parent / "scripts" / "install_fps_layer_user.sh"
+
+    def _vrr_control_script_path(self) -> Path:
+        return Path(__file__).resolve().parent / "scripts" / "trofeo_vrr.sh"
+
+    def _steam_fps_launch_options(self) -> str:
+        return 'OPEN_TROFEO_FPS_LAYER=1 OPEN_TROFEO_GAME_NAME="Game Name" OPEN_TROFEO_GAME_LAUNCHER=Steam %command%'
+
+    def copy_steam_fps_launch_options(self) -> None:
+        QApplication.clipboard().setText(self._steam_fps_launch_options())
+        self.append_log("[gaming-fps] Copied Steam launch options.")
+
+    def _steam_flatpak_installed(self) -> bool:
+        if shutil.which("flatpak") is None:
+            return False
         try:
-            launcher_path = Path(__file__).resolve().with_name("main.py")
-            if not launcher_path.exists():
-                raise FileNotFoundError(f"Launcher not found: {launcher_path}")
-            subprocess.Popen([sys.executable, str(launcher_path), "--replace-existing-backend"])
-            self._close_to_tray_enabled = False
-            QApplication.quit()
+            result = subprocess.run(
+                ["flatpak", "info", "com.valvesoftware.Steam"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                check=False,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    def _steam_flatpak_has_fps_socket_override(self) -> bool:
+        if shutil.which("flatpak") is None:
+            return False
+        try:
+            result = subprocess.run(
+                ["flatpak", "override", "--user", "--show", "com.valvesoftware.Steam"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            return result.returncode == 0 and "xdg-run/open-trofeo-lcd" in result.stdout
+        except Exception:
+            return False
+
+    def refresh_fps_layer_status(self) -> None:
+        if not hasattr(self, "cfg_fps_layer_status_label"):
+            return
+        user_manifest = Path.home() / ".local/share/vulkan/implicit_layer.d/VkLayer_OPEN_TROFEO_fps.json"
+        steam_flatpak_home = Path.home() / ".var/app/com.valvesoftware.Steam"
+        steam_manifest = steam_flatpak_home / ".local/share/vulkan/implicit_layer.d/VkLayer_OPEN_TROFEO_fps.json"
+        steam_flatpak = self._steam_flatpak_installed() or steam_flatpak_home.exists()
+        socket_override = self._steam_flatpak_has_fps_socket_override() if steam_flatpak else False
+        lines = [
+            f"Vulkan layer: {'installed' if user_manifest.exists() else 'missing'}",
+            f"Steam Flatpak: {'detected' if steam_flatpak else 'not detected'}",
+        ]
+        if steam_flatpak:
+            lines.append(f"Steam Flatpak layer: {'installed' if steam_manifest.exists() else 'missing'}")
+            lines.append(f"Socket access: {'ready' if socket_override else 'missing xdg-run/open-trofeo-lcd'}")
+        else:
+            lines.append("Steam DEB/native: no Flatpak override required")
+        self.cfg_fps_layer_status_label.setText("\n".join(lines))
+        self._refresh_gaming_auto_theme_status()
+
+    def _set_vrr_controls_enabled(self, enabled: bool) -> None:
+        for name in (
+            "cfg_vrr_refresh_btn",
+            "cfg_vrr_automatic_btn",
+            "cfg_vrr_always_btn",
+            "cfg_vrr_off_btn",
+        ):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.setEnabled(enabled)
+
+    def _run_vrr_control(self, policy: str) -> None:
+        normalized = str(policy).strip().lower()
+        if normalized not in {"status", "automatic", "always", "never"}:
+            return
+        if self._vrr_action_in_flight:
+            return
+        script_path = self._vrr_control_script_path()
+        if not script_path.exists():
+            self._finish_vrr_control(False, f"VRR control script not found: {script_path}")
+            return
+        self._vrr_action_in_flight = True
+        self._set_vrr_controls_enabled(False)
+        label = getattr(self, "cfg_vrr_status_label", None)
+        if label is not None:
+            label.setText("VRR: checking..." if normalized == "status" else f"VRR: applying {normalized}...")
+
+        def worker() -> None:
+            try:
+                result = subprocess.run(
+                    [str(script_path), normalized],
+                    cwd=str(Path(__file__).resolve().parent),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=12.0,
+                    check=False,
+                )
+                output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+                if result.returncode != 0:
+                    raise RuntimeError(output or f"VRR command failed with code {result.returncode}")
+                self.api_result.emit(f"vrr-control::{normalized}", True, output or "VRR status unavailable")
+            except Exception as exc:
+                self.api_result.emit(f"vrr-control::{normalized}", False, str(exc))
+
+        threading.Thread(target=worker, name="trofeo-vrr-control", daemon=True).start()
+
+    def refresh_vrr_status(self) -> None:
+        self._run_vrr_control("status")
+
+    def set_vrr_policy(self, policy: str) -> None:
+        self._run_vrr_control(policy)
+
+    def _finish_vrr_control(self, ok: bool, payload: object) -> None:
+        self._vrr_action_in_flight = False
+        self._set_vrr_controls_enabled(True)
+        message = str(payload).strip()
+        label = getattr(self, "cfg_vrr_status_label", None)
+        if label is not None:
+            if ok:
+                label.setText(
+                    f"VRR · {message}\nAutomatic keeps VRR for suitable full-screen games without forcing it on the KDE desktop."
+                )
+            else:
+                label.setText(f"VRR unavailable: {message}")
+        self.append_log(f"[vrr] {'OK' if ok else 'ERROR'}: {message.replace(chr(10), ' | ')}")
+
+    def _update_gaming_fps_metrics(self, game: dict[str, Any], probe: dict[str, Any]) -> None:
+        label = getattr(self, "cfg_fps_metrics_label", None)
+        path_edit = getattr(self, "cfg_fps_log_path_edit", None)
+        if label is None and path_edit is None:
+            return
+        probe_session = probe.get("session", {}) if isinstance(probe, dict) else {}
+        if not isinstance(probe_session, dict):
+            probe_session = {}
+        current_fps = str(game.get("game_fps") or "N/A")
+        current_frametime = str(game.get("game_frametime_ms") or "N/A")
+        live = current_fps != "N/A" or current_frametime != "N/A"
+        summary = game if live else probe_session
+        has_summary = any(
+            str(summary.get(key) or "N/A") != "N/A"
+            for key in ("game_fps_avg", "game_fps_min", "game_fps_max", "game_session_time")
+        )
+        if label is not None:
+            if has_summary:
+                game_name = str(summary.get("game_name") or game.get("game_name") or "Game")
+                state = self._tr("LIVE", "NA ŻYWO") if live else self._tr("LAST SESSION", "OSTATNIA SESJA")
+                current = current_fps if live else "-"
+                current_ft = current_frametime if live else "-"
+                lines = [
+                    f"{state} · {game_name} · FPS {current} · {current_ft}",
+                    (
+                        f"AVG {summary.get('game_fps_avg', 'N/A')} · "
+                        f"MIN {summary.get('game_fps_min', 'N/A')} · "
+                        f"MAX {summary.get('game_fps_max', 'N/A')} · "
+                        f"{summary.get('game_session_time', 'N/A')}"
+                    ),
+                    (
+                        f"1% LOW {summary.get('game_fps_1pct_low', 'N/A')} · "
+                        f"0.1% LOW {summary.get('game_fps_0_1pct_low', 'N/A')} · "
+                        f"STUTTERS {summary.get('game_stutter_count', 'N/A')}"
+                    ),
+                ]
+            else:
+                lines = [self._tr("No FPS session data yet", "Brak danych sesji FPS")]
+            log_error = str(probe.get("log_error") or "").strip()
+            dropped = int(probe.get("log_dropped_samples") or 0)
+            if log_error:
+                lines.append(f"CSV error: {log_error}")
+            elif dropped:
+                lines.append(f"CSV dropped samples: {dropped}")
+            label.setText("\n".join(lines))
+        if path_edit is not None:
+            log_path = str(probe.get("log_path") or "")
+            if path_edit.text() != log_path:
+                path_edit.setText(log_path)
+                path_edit.setCursorPosition(0)
+
+    def _sync_gaming_auto_theme_combo(self) -> None:
+        combo = getattr(self, "cfg_game_auto_theme_combo", None)
+        if combo is None:
+            return
+        current = str(getattr(self, "_gaming_auto_theme_name", "")).strip()
+        names = sorted(str(name) for name in getattr(self, "theme_items", {}).keys())
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItem("(select theme)", "")
+            for name in names:
+                combo.addItem(name, name)
+            if current:
+                idx = combo.findData(current)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+        finally:
+            combo.blockSignals(False)
+        self._refresh_gaming_auto_theme_status()
+
+    def update_gaming_auto_theme_config(self) -> None:
+        checkbox = getattr(self, "cfg_game_auto_theme_chk", None)
+        combo = getattr(self, "cfg_game_auto_theme_combo", None)
+        restore_checkbox = getattr(self, "cfg_game_auto_theme_restore_on_fps_loss_chk", None)
+        delay_spin = getattr(self, "cfg_game_auto_theme_fps_loss_delay_spin", None)
+        if checkbox is not None:
+            self._gaming_auto_theme_enabled = bool(checkbox.isChecked())
+        if combo is not None:
+            self._gaming_auto_theme_name = str(combo.currentData() or combo.currentText() or "").strip()
+            if self._gaming_auto_theme_name == "(select theme)":
+                self._gaming_auto_theme_name = ""
+        if restore_checkbox is not None:
+            self._gaming_auto_theme_restore_on_fps_loss = bool(restore_checkbox.isChecked())
+        if delay_spin is not None:
+            self._gaming_auto_theme_fps_loss_delay_s = int(delay_spin.value())
+        if not self._gaming_auto_theme_enabled:
+            self._gaming_auto_theme_previous_name = ""
+            self._gaming_auto_theme_restore_pending = False
+            self._gaming_auto_theme_last_active = False
+            self._gaming_auto_theme_fps_missing_since = 0.0
+            self._gaming_auto_theme_restored_for_fps_loss = False
+        self._save_ui_state()
+        self._refresh_gaming_auto_theme_status()
+
+    def _refresh_gaming_auto_theme_status(self, game_name: str = "") -> None:
+        label = getattr(self, "cfg_game_auto_theme_status_label", None)
+        if label is None:
+            return
+        enabled = bool(getattr(self, "_gaming_auto_theme_enabled", False))
+        theme_name = str(getattr(self, "_gaming_auto_theme_name", "")).strip()
+        if not enabled:
+            label.setText("Game auto-theme: disabled")
+        elif not theme_name:
+            label.setText("Game auto-theme: enabled, select a theme")
+        elif theme_name not in getattr(self, "theme_items", {}):
+            label.setText(f"Game auto-theme: missing theme '{theme_name}'")
+        elif game_name:
+            previous = str(getattr(self, "_gaming_auto_theme_previous_name", "")).strip()
+            restore = f" | restore: {previous}" if previous else ""
+            fps_loss = " | FPS-loss restore: test" if bool(getattr(self, "_gaming_auto_theme_restore_on_fps_loss", False)) else ""
+            label.setText(f"Game auto-theme: {theme_name} for {game_name}{restore}{fps_loss}")
+        else:
+            fps_loss = " | FPS-loss restore: test" if bool(getattr(self, "_gaming_auto_theme_restore_on_fps_loss", False)) else ""
+            label.setText(f"Game auto-theme: waiting for game -> {theme_name}{fps_loss}")
+
+    @staticmethod
+    def _game_snapshot_has_fps_metrics(game: dict[str, Any]) -> bool:
+        missing = {"", "n/a", "na", "none", "null", "-"}
+        for key in ("game_fps", "game_frametime_ms"):
+            value = str(game.get(key, "") or "").strip().lower()
+            if value and value not in missing:
+                return True
+        return False
+
+    def _restore_previous_gaming_auto_theme(self) -> None:
+        previous = str(getattr(self, "_gaming_auto_theme_previous_name", "")).strip()
+        self._gaming_auto_theme_restore_pending = False
+        self._gaming_auto_theme_previous_name = ""
+        if not previous or previous not in getattr(self, "theme_items", {}):
+            self._refresh_gaming_auto_theme_status()
+            return
+        current = self.theme_combo.currentText().strip() if hasattr(self, "theme_combo") else ""
+        if current == previous:
+            self._refresh_gaming_auto_theme_status()
+            return
+        self.append_log(f"[gaming-auto-theme] Game stopped, restoring previous theme: {previous}")
+        self._apply_runtime_theme_card(previous)
+        self._refresh_gaming_auto_theme_status()
+
+    def _maybe_apply_gaming_auto_theme(self, status: dict[str, Any]) -> None:
+        config = status.get("config", {})
+        game = status.get("game", config.get("game", {}) if isinstance(config, dict) else {})
+        if not isinstance(game, dict):
+            return
+        active = str(game.get("game_active", "")).strip().lower() in {"yes", "true", "1", "active"}
+        game_name = str(game.get("game_name") or game.get("game_process") or "").strip()
+        now = time.monotonic()
+        self._refresh_gaming_auto_theme_status(game_name if active else "")
+        if not active:
+            if self._gaming_auto_theme_last_active and self._gaming_auto_theme_restore_pending:
+                self._restore_previous_gaming_auto_theme()
+            self._gaming_auto_theme_last_active = False
+            self._gaming_auto_theme_fps_missing_since = 0.0
+            self._gaming_auto_theme_restored_for_fps_loss = False
+            return
+        if not bool(getattr(self, "_gaming_auto_theme_enabled", False)):
+            return
+        theme_name = str(getattr(self, "_gaming_auto_theme_name", "")).strip()
+        if not theme_name or theme_name not in getattr(self, "theme_items", {}):
+            return
+        current = self.theme_combo.currentText().strip() if hasattr(self, "theme_combo") else ""
+        if bool(getattr(self, "_gaming_auto_theme_restore_on_fps_loss", False)):
+            has_fps = self._game_snapshot_has_fps_metrics(game)
+            if not has_fps:
+                if self._gaming_auto_theme_fps_missing_since <= 0.0:
+                    self._gaming_auto_theme_fps_missing_since = now
+                delay_s = max(5, int(getattr(self, "_gaming_auto_theme_fps_loss_delay_s", 12) or 12))
+                missing_for_s = now - float(self._gaming_auto_theme_fps_missing_since)
+                if (
+                    self._gaming_auto_theme_last_active
+                    and self._gaming_auto_theme_restore_pending
+                    and not self._gaming_auto_theme_restored_for_fps_loss
+                    and current == theme_name
+                    and missing_for_s >= delay_s
+                ):
+                    self.append_log(
+                        f"[gaming-auto-theme] FPS lost for {delay_s}s ({game_name or 'unknown'}), restoring previous theme"
+                    )
+                    self._restore_previous_gaming_auto_theme()
+                    self._gaming_auto_theme_last_active = False
+                    self._gaming_auto_theme_last_applied_at = 0.0
+                    self._gaming_auto_theme_restored_for_fps_loss = True
+                return
+            self._gaming_auto_theme_fps_missing_since = 0.0
+            if self._gaming_auto_theme_restored_for_fps_loss:
+                self._gaming_auto_theme_last_active = False
+                self._gaming_auto_theme_restored_for_fps_loss = False
+        if not self._gaming_auto_theme_last_active:
+            self._gaming_auto_theme_previous_name = current if current and current != theme_name else ""
+            self._gaming_auto_theme_restore_pending = bool(self._gaming_auto_theme_previous_name)
+        if current == theme_name:
+            self._gaming_auto_theme_last_active = True
+            self._refresh_gaming_auto_theme_status(game_name if active else "")
+            return
+        if now - float(getattr(self, "_gaming_auto_theme_last_applied_at", 0.0)) < 20.0:
+            return
+        self._gaming_auto_theme_last_active = True
+        self._gaming_auto_theme_last_applied_at = now
+        self.append_log(f"[gaming-auto-theme] Game detected ({game_name or 'unknown'}), applying theme: {theme_name}")
+        self._apply_runtime_theme_card(theme_name)
+
+    def configure_fps_layer_user(self) -> None:
+        script_path = self._fps_setup_script_path()
+        if not script_path.exists():
+            QMessageBox.warning(self, "Gaming FPS", f"Setup script not found:\n{script_path}")
+            return
+        if hasattr(self, "cfg_fps_setup_btn"):
+            self.cfg_fps_setup_btn.setEnabled(False)
+            self.cfg_fps_setup_btn.setText("Configuring...")
+        if hasattr(self, "cfg_fps_layer_status_label"):
+            self.cfg_fps_layer_status_label.setText(f"Running:\n{script_path}")
+        QApplication.processEvents()
+        try:
+            result = subprocess.run(
+                [str(script_path)],
+                cwd=str(Path(__file__).resolve().parent),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+            output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+            if result.returncode == 0:
+                message = output or "FPS layer configured."
+                ok = True
+            else:
+                message = output or f"FPS layer setup failed with code {result.returncode}."
+                ok = False
         except Exception as exc:
-            QMessageBox.warning(self, "Restart", str(exc))
+            message = str(exc)
+            ok = False
+        if hasattr(self, "cfg_fps_setup_btn"):
+            self.cfg_fps_setup_btn.setEnabled(True)
+            self.cfg_fps_setup_btn.setText("Configure FPS layer")
+        self.refresh_fps_layer_status()
+        self.append_log(f"[gaming-fps] {message.replace(chr(10), ' | ')}")
+        if not ok:
+            QMessageBox.warning(self, "Gaming FPS", message)
 
     def _push_system_event(self, level: str, source: str, message: str) -> None:
         if not hasattr(self, "system_events_list"):
@@ -2295,1265 +1594,191 @@ class TrofeoGui(QMainWindow):
             self.system_events_list.takeItem(self.system_events_list.count() - 1)
 
     def _build_ui(self, base_url: str) -> None:
-        root = QWidget(self)
-        self.setCentralWidget(root)
-        shell_layout = QHBoxLayout(root)
-        shell_layout.setContentsMargins(16, 16, 16, 16)
-        shell_layout.setSpacing(16)
-
-        sidebar = QFrame()
-        sidebar.setObjectName("shellSidebar")
-        sidebar.setFixedWidth(236)
-        sidebar_layout = QVBoxLayout(sidebar)
-        self.sidebar_layout = sidebar_layout
-        sidebar_layout.setContentsMargins(18, 18, 18, 18)
-        sidebar_layout.setSpacing(14)
-
-        brand_row = QHBoxLayout()
-        brand_icon = QLabel("⟡")
-        brand_icon.setObjectName("shellBrandIcon")
-        self.brand_label = QLabel("THERMALRIGHT")
-        self.brand_label.setObjectName("shellBrandLabel")
-        self.brand_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.brand_label.setMinimumWidth(118)
-        self.brand_sub = QLabel("TROFEO LCD")
-        self.brand_sub.setObjectName("shellBrandSubLabel")
-        self.sidebar_toggle_btn = QPushButton("⟨")
-        self.sidebar_toggle_btn.setObjectName("secondaryAccentButton")
-        self.sidebar_toggle_btn.setMinimumSize(30, 30)
-        self.sidebar_toggle_btn.setMaximumWidth(30)
-        brand_row.addWidget(brand_icon)
-        brand_row.addWidget(self.brand_label)
-        brand_row.addStretch(1)
-        brand_row.addWidget(self.sidebar_toggle_btn)
-        sidebar_layout.addLayout(brand_row)
-        sidebar_layout.addWidget(self.brand_sub)
-
-        self.nav_library_btn = QPushButton("🗂  Theme\nGallery")
-        self.nav_designer_btn = QPushButton("✎  Theme\nDesigner")
-        self.nav_animation_studio_btn = QPushButton("🎞  Animation\nStudio")
-        self.nav_system_btn = QPushButton("◉  System")
-        self.nav_logs_btn = QPushButton("☰  Logs")
-        self.nav_config_btn = QPushButton("⚙  Configuration")
-        self._nav_button_meta = {
-            self.nav_library_btn: ("🗂", "Theme Gallery"),
-            self.nav_designer_btn: ("✎", "Theme Designer"),
-            self.nav_animation_studio_btn: ("🎞", "Animation Studio"),
-            self.nav_system_btn: ("◉", "System"),
-            self.nav_logs_btn: ("☰", "Logs"),
-            self.nav_config_btn: ("⚙", "Configuration"),
-        }
-        self._shell_nav_buttons = [
-            self.nav_library_btn,
-            self.nav_designer_btn,
-            self.nav_animation_studio_btn,
-            self.nav_system_btn,
-            self.nav_logs_btn,
-            self.nav_config_btn,
-        ]
-        for btn in self._shell_nav_buttons:
-            btn.setCheckable(True)
-            btn.setObjectName("shellNavButton")
-            btn.setMinimumHeight(88)
-            sidebar_layout.addWidget(btn)
-        sidebar_layout.addStretch(1)
-        self.sidebar_footer = QFrame()
-        self.sidebar_footer.setObjectName("sidebarFooterCard")
-        sidebar_footer_layout = QVBoxLayout(self.sidebar_footer)
-        sidebar_footer_layout.setContentsMargins(14, 14, 14, 14)
-        sidebar_footer_layout.setSpacing(4)
-        self.sidebar_version_label = QLabel("v1.0.0")
-        self.sidebar_version_label.setObjectName("sidebarFooterTitle")
-        self.sidebar_footer_note = QLabel("Open Trofeo LCD\nLinux Open Driver")
-        self.sidebar_footer_note.setObjectName("sidebarFooterMeta")
-        sidebar_footer_layout.addWidget(self.sidebar_version_label)
-        sidebar_footer_layout.addWidget(self.sidebar_footer_note)
-        sidebar_layout.addWidget(self.sidebar_footer)
-        self.sidebar_frame = sidebar
-        self.sidebar_collapsed = False
-        shell_layout.addWidget(sidebar)
-
-        content = QWidget()
-        outer = QVBoxLayout(content)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(12)
-        shell_layout.addWidget(content, 1)
-
-        chrome_box = QGroupBox("Control")
-        self.chrome_box = chrome_box
-        chrome_box.setObjectName("shellHeader")
-        chrome_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        chrome_layout = QHBoxLayout(chrome_box)
-        chrome_layout.setContentsMargins(16, 8, 16, 8)
-        chrome_layout.setSpacing(9)
-
-        title_label = QLabel("Open Trofeo LCD")
-        title_label.setObjectName("shellTitleLabel")
-        title_sub = QLabel("LCD control and themes.")
-        title_sub.setObjectName("shellTitleMeta")
-        self.shell_title_sub = title_sub
-        title_stack = QVBoxLayout()
-        title_stack.setContentsMargins(0, 0, 0, 0)
-        title_stack.setSpacing(1)
-        title_stack.addWidget(title_label)
-        title_stack.addWidget(title_sub)
-        self.ui_mode_combo = QComboBox()
-        self.ui_mode_combo.addItems(["Dark", "Light"])
-        self.ui_theme_combo = QComboBox()
-        self.ui_theme_combo.addItems(list(UI_THEMES.keys()))
-        self.ui_theme_combo.hide()
-        self.ui_scale_combo = QComboBox()
-        for value in (70, 80, 90, 100, 110, 125, 140):
-            self.ui_scale_combo.addItem(f"{value}%", value)
-        self.ui_scale_combo.setCurrentText("100%")
-        for combo in (self.ui_mode_combo, self.ui_scale_combo):
-            combo.setMinimumHeight(34)
-            combo.setMaxVisibleItems(8)
-
-        self.header_connection_label = QLabel("● Disconnected")
-        self.header_connection_label.setObjectName("headerStatusBadge")
-        self.header_device_combo = QComboBox()
-        self.header_device_combo.addItem("Trofeo LCD")
-        self.header_device_combo.setMinimumHeight(34)
-        self.header_ready_label = QLabel("Ready")
-        self.header_ready_label.setObjectName("headerReadyBadge")
-        self.header_language_combo = QComboBox()
-        for label, code in UI_LANGUAGES.items():
-            self.header_language_combo.addItem(label, code)
-        self.header_language_combo.setMinimumHeight(34)
-        self.header_donate_btn = QPushButton("Donate")
-        self.header_donate_btn.setObjectName("primaryButton")
-        self.header_donate_btn.setMinimumHeight(34)
-        self.header_donate_btn.clicked.connect(lambda: self._open_external_link(PROJECT_SPONSOR_URL, "strony wsparcia"))
-        self.header_donate_btn.setToolTip("Open GitHub Sponsors for Open Trofeo LCD")
-
-        chrome_layout.addLayout(title_stack, 1)
-        mode_label = QLabel("Mode")
-        mode_label.setObjectName("headerFieldLabel")
-        self.header_mode_label = mode_label
-        scale_label = QLabel("Scale")
-        scale_label.setObjectName("headerFieldLabel")
-        self.header_scale_label = scale_label
-        conn_label = QLabel("Connection")
-        conn_label.setObjectName("headerFieldLabel")
-        self.header_conn_label = conn_label
-        device_label = QLabel("Device")
-        device_label.setObjectName("headerFieldLabel")
-        self.header_device_label = device_label
-        language_label = QLabel("Language")
-        language_label.setObjectName("headerFieldLabel")
-        self.header_language_label = language_label
-        chrome_layout.addWidget(mode_label)
-        chrome_layout.addWidget(self.ui_mode_combo)
-        chrome_layout.addWidget(scale_label)
-        chrome_layout.addWidget(self.ui_scale_combo)
-        chrome_layout.addSpacing(6)
-        chrome_layout.addWidget(conn_label)
-        chrome_layout.addWidget(self.header_connection_label)
-        chrome_layout.addWidget(device_label)
-        chrome_layout.addWidget(self.header_device_combo)
-        chrome_layout.addWidget(language_label)
-        chrome_layout.addWidget(self.header_language_combo)
-        chrome_layout.addWidget(self.header_ready_label)
-        chrome_layout.addSpacing(8)
-        chrome_layout.addWidget(self.header_donate_btn)
-        outer.addWidget(chrome_box)
-
-        tabs = QTabWidget()
-        tabs.setObjectName("mainSectionTabs")
-        tabs.setDocumentMode(True)
-        self.main_tabs = tabs
-        outer.addWidget(tabs, 1)
-
-        def make_scroll_tab() -> tuple[QWidget, QVBoxLayout]:
-            container = QWidget()
-            container_layout = QVBoxLayout(container)
-            container_layout.setContentsMargins(12, 12, 12, 12)
-            container_layout.setSpacing(20)
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setFrameShape(QScrollArea.NoFrame)
-            scroll.setWidget(container)
-            return scroll, container_layout
-
-        runtime_tab, runtime_layout = make_scroll_tab()
-        studio_tab, studio_layout = make_scroll_tab()
-        automation_tab, automation_layout = make_scroll_tab()
-        logs_tab = QWidget()
-        logs_layout = QVBoxLayout(logs_tab)
-        logs_layout.setContentsMargins(0, 0, 0, 0)
-
-        tabs.addTab(runtime_tab, "System")
-        tabs.addTab(studio_tab, "Theme Designer")
-        tabs.addTab(automation_tab, "Configuration")
-        tabs.addTab(logs_tab, "Logs")
-        tabs.tabBar().hide()
-        self.ui_mode_combo.currentTextChanged.connect(self.apply_ui_chrome)
-        self.ui_scale_combo.currentIndexChanged.connect(self.apply_ui_chrome)
-        self.header_language_combo.currentTextChanged.connect(self._apply_language_selection)
-        tabs.currentChanged.connect(lambda _idx: (self._animate_widget_fade(tabs.currentWidget()), self._sync_shell_navigation()))
-        self.nav_system_btn.clicked.connect(lambda: self._go_system())
-        self.nav_logs_btn.clicked.connect(lambda: self._go_logs())
-        self.nav_config_btn.clicked.connect(lambda: self._go_config())
-
-        endpoint_box = QGroupBox("Backend")
-        self.endpoint_box = endpoint_box
-        endpoint_layout = QHBoxLayout(endpoint_box)
-        self.url_edit = QLineEdit(base_url)
-        self.apply_url_btn = QPushButton("Set URL")
-        self.apply_url_btn.clicked.connect(self.apply_url)
-        self.refresh_btn = QPushButton("Refresh status")
-        self.refresh_btn.clicked.connect(self.refresh_status)
-        endpoint_layout.addWidget(QLabel("URL:"))
-        endpoint_layout.addWidget(self.url_edit, 1)
-        endpoint_layout.addWidget(self.apply_url_btn)
-        endpoint_layout.addWidget(self.refresh_btn)
-        runtime_layout.addWidget(endpoint_box)
-
-        control_box = QGroupBox("Device control")
-        self.control_box = control_box
-        control_layout = QHBoxLayout(control_box)
-        control_layout.setContentsMargins(16, 20, 16, 16)
-        control_layout.setSpacing(12)
-        
-        self.start_btn = QPushButton("▶ Start")
-        self.start_btn.setObjectName("primaryButton")
-        self.stop_btn = QPushButton("⏹ Stop")
-        self.restart_btn = QPushButton("🔄 Restart")
-        self.scan_btn = QPushButton("🔍 Scan")
-        self.hide_to_tray_btn = QPushButton("📥 Minimize to tray")
-        
-        self.start_btn.setMinimumHeight(44)
-        self.stop_btn.setMinimumHeight(44)
-        self.restart_btn.setMinimumHeight(44)
-        
-        self.start_btn.clicked.connect(lambda: self.api_call("start", "POST", "/v1/start", {}))
-        self.stop_btn.clicked.connect(lambda: self.api_call("stop", "POST", "/v1/stop", {}))
-        self.restart_btn.clicked.connect(lambda: self.api_call("restart", "POST", "/v1/restart", {}))
-        self.scan_btn.clicked.connect(lambda: self.api_call("scan", "POST", "/v1/scan", {}))
-        self.hide_to_tray_btn.clicked.connect(self.hide_to_tray)
-        
-        control_layout.addWidget(self.start_btn, 1)
-        control_layout.addWidget(self.stop_btn, 1)
-        control_layout.addWidget(self.restart_btn, 1)
-        control_layout.addWidget(self.scan_btn, 1)
-        control_layout.addWidget(self.hide_to_tray_btn, 1)
-        runtime_layout.addWidget(control_box)
-
-        runtime_hero = AnimatedCardFrame("runtimeHeroCard")
-        runtime_hero_layout = QHBoxLayout(runtime_hero)
-        runtime_hero_layout.setContentsMargins(18, 16, 18, 16)
-        runtime_hero_text = QLabel(
-            "Control the panel like a native Plasma app: start the runtime, push single frames "
-            "and manage themes from clear cards instead of raw fields."
+        shell_controls = build_shell(
+            app_version_text=self.app_version_text,
+            ui_theme_names=list(UI_THEMES.keys()),
+            ui_languages=UI_LANGUAGES,
+            callbacks=ShellCallbacks(
+                apply_ui_chrome=self.apply_ui_chrome,
+                apply_language_selection=self._apply_language_selection,
+                open_donate=lambda: self._open_external_link(PROJECT_SPONSOR_URL, "strony wsparcia"),
+                main_tab_changed=lambda widget: (self._animate_widget_fade(widget), self._sync_shell_navigation()),
+                go_system=self._go_system,
+                go_logs=self._go_logs,
+                go_config=self._go_config,
+            ),
         )
-        self.runtime_hero_text_label = runtime_hero_text
-        runtime_hero_text.setObjectName("studioHeroText")
-        runtime_hero_text.setWordWrap(True)
-        runtime_hero_layout.addWidget(runtime_hero_text, 1)
-        runtime_layout.addWidget(runtime_hero)
+        self.setCentralWidget(shell_controls.root)
+        bind_shell_controls(self, shell_controls)
+        runtime_layout = shell_controls.runtime_layout
+        studio_layout = shell_controls.studio_layout
+        automation_layout = shell_controls.automation_layout
+        logs_layout = shell_controls.logs_layout
 
-        runtime_sections_tabs = QTabWidget()
-        self.runtime_sections_tabs = runtime_sections_tabs
-        runtime_sections_tabs.setDocumentMode(True)
-        runtime_layout.addWidget(runtime_sections_tabs, 1)
-        runtime_sections_tabs.currentChanged.connect(lambda _idx: self._animate_widget_fade(runtime_sections_tabs.currentWidget()))
-
-        runtime_device_tab = QWidget()
-        runtime_device_layout = QVBoxLayout(runtime_device_tab)
-        runtime_device_layout.setContentsMargins(0, 0, 0, 0)
-        runtime_device_layout.setSpacing(10)
-        runtime_sections_tabs.addTab(runtime_device_tab, "Device")
-
-        runtime_image_tab = QWidget()
-        runtime_image_layout = QVBoxLayout(runtime_image_tab)
-        runtime_image_layout.setContentsMargins(0, 0, 0, 0)
-        runtime_image_layout.setSpacing(10)
-        runtime_sections_tabs.addTab(runtime_image_tab, "Image")
-
-        runtime_theme_tab = QWidget()
-        runtime_theme_layout = QVBoxLayout(runtime_theme_tab)
-        runtime_theme_layout.setContentsMargins(0, 0, 0, 0)
-        runtime_theme_layout.setSpacing(10)
-        runtime_sections_tabs.addTab(runtime_theme_tab, "Themes")
-
-        work_box = QGroupBox("Single image")
-        self.work_box = work_box
-        work_layout = QVBoxLayout(work_box)
-        work_layout.setSpacing(8)
-        self.frame_spin = QSpinBox()
-        self.frame_spin.setRange(0, 1_000_000)
-        self.set_frame_btn = QPushButton("Set frame")
-        self.set_frame_btn.clicked.connect(self.set_frame)
-        frame_row = QHBoxLayout()
-        frame_row.addWidget(QLabel("Frame index:"))
-        frame_row.addWidget(self.frame_spin)
-        frame_row.addWidget(self.set_frame_btn)
-        frame_row.addStretch(1)
-        work_layout.addLayout(frame_row)
-
-        self.image_edit = QLineEdit(str(Path("reference_frame_trcc.jpg")))
-        self.browse_btn = QPushButton("Browse image")
-        self.prepare_image_btn = QPushButton("Prepare image")
-        self.send_image_btn = QPushButton("Send image")
-        self.raw_passthrough_chk = QCheckBox("Raw JPEG passthrough")
-        self.raw_passthrough_chk.setChecked(False)
-        self.stop_before_send_chk = QCheckBox("Stop runtime before sending")
-        self.stop_before_send_chk.setChecked(True)
-        self.resume_loop_chk = QCheckBox("Resume loop after send")
-        self.resume_loop_chk.setChecked(False)
-        self.browse_btn.clicked.connect(self.browse_image)
-        self.prepare_image_btn.clicked.connect(lambda: self.prepare_image_asset(self.image_edit))
-        self.send_image_btn.clicked.connect(self.send_image)
-        file_row = QHBoxLayout()
-        file_row.addWidget(QLabel("Image file:"))
-        file_row.addWidget(self.image_edit, 1)
-        file_row.addWidget(self.browse_btn)
-        file_row.addWidget(self.prepare_image_btn)
-        file_row.addWidget(self.send_image_btn)
-        work_layout.addLayout(file_row)
-        options_row = QHBoxLayout()
-        options_row.addWidget(self.raw_passthrough_chk)
-        options_row.addWidget(self.stop_before_send_chk)
-        options_row.addWidget(self.resume_loop_chk)
-        options_row.addStretch(1)
-        work_layout.addLayout(options_row)
-        runtime_image_layout.addWidget(work_box)
-
-        cfg_status_row = QHBoxLayout()
-
-        cfg_box = QGroupBox("Playback settings")
-        self.cfg_box = cfg_box
-        cfg_form = QFormLayout(cfg_box)
-        self.pcap_edit = QLineEdit("dzis.pcapng")
-        self.ack_timeout_spin = QSpinBox()
-        self.ack_timeout_spin.setRange(1, 60000)
-        self.ack_timeout_spin.setValue(500)
-        self.inter_delay_spin = QDoubleSpinBox()
-        self.inter_delay_spin.setRange(0.0, 5.0)
-        self.inter_delay_spin.setSingleStep(0.005)
-        self.inter_delay_spin.setValue(0.01)
-        self.frame_delay_spin = QDoubleSpinBox()
-        self.frame_delay_spin.setRange(0.0, 5.0)
-        self.frame_delay_spin.setSingleStep(0.005)
-        self.frame_delay_spin.setValue(0.02)
-        self.apply_cfg_btn = QPushButton("Apply config")
-        self.apply_cfg_btn.clicked.connect(self.apply_config)
-        cfg_form.addRow("PCAP file:", self.pcap_edit)
-        cfg_form.addRow("ACK timeout (ms):", self.ack_timeout_spin)
-        cfg_form.addRow("Inter packet delay (s):", self.inter_delay_spin)
-        cfg_form.addRow("Frame delay (s):", self.frame_delay_spin)
-        cfg_form.addRow("", self.apply_cfg_btn)
-        cfg_status_row.addWidget(cfg_box, 1)
-
-        status_box = QGroupBox("System monitor")
-        self.status_box = status_box
-        status_grid = QGridLayout(status_box)
-        status_grid.setContentsMargins(16, 24, 16, 16)
-        status_grid.setSpacing(12)
-        status_grid.setVerticalSpacing(16)
-        
-        self.lbl_mode = QLabel("-")
-        self.lbl_running = QLabel("-")
-        self.lbl_pid = QLabel("-")
-        self.lbl_uptime = QLabel("-")
-        self.lbl_frame_count = QLabel("-")
-        self.lbl_playlist = QLabel("-")
-        self.lbl_playlist_uptime = QLabel("-")
-        self.lbl_last_error = QLabel("-")
-        self.lbl_pcap = QLabel("-")
-
-        def make_status_label(text: str) -> QLabel:
-            label = QLabel(text)
-            label.setStyleSheet("color: #94a3b8; font-weight: 600;")
-            return label
-
-        def make_value_label(label: QLabel) -> None:
-            label.setStyleSheet("color: #f1f5f9; font-weight: 700; background: #1a202c; border-radius: 6px; padding: 4px 8px;")
-
-        for lbl in [self.lbl_mode, self.lbl_running, self.lbl_pid, self.lbl_uptime, self.lbl_frame_count, self.lbl_playlist, self.lbl_playlist_uptime, self.lbl_pcap]:
-            make_value_label(lbl)
-            
-        self.lbl_last_error.setStyleSheet("color: #f87171; font-family: monospace; font-size: 11px;")
-
-        status_grid.addWidget(make_status_label("📟 Mode:"), 0, 0)
-        status_grid.addWidget(self.lbl_mode, 0, 1)
-        status_grid.addWidget(make_status_label("🚦 Status:"), 0, 2)
-        status_grid.addWidget(self.lbl_running, 0, 3)
-        status_grid.addWidget(make_status_label("🆔 PID:"), 1, 0)
-        status_grid.addWidget(self.lbl_pid, 1, 1)
-        status_grid.addWidget(make_status_label("⏱ Uptime:"), 1, 2)
-        status_grid.addWidget(self.lbl_uptime, 1, 3)
-        status_grid.addWidget(make_status_label("🖼 Frames:"), 2, 0)
-        status_grid.addWidget(self.lbl_frame_count, 2, 1)
-        status_grid.addWidget(make_status_label("📂 PCAP:"), 2, 2)
-        status_grid.addWidget(self.lbl_pcap, 2, 3)
-        status_grid.addWidget(make_status_label("🎵 Playlist:"), 3, 0)
-        status_grid.addWidget(self.lbl_playlist, 3, 1)
-        status_grid.addWidget(make_status_label("⏳ PL time:"), 3, 2)
-        status_grid.addWidget(self.lbl_playlist_uptime, 3, 3)
-        status_grid.addWidget(make_status_label("⚠️ Error:"), 4, 0)
-        status_grid.addWidget(self.lbl_last_error, 4, 1, 1, 3)
-        cfg_status_row.addWidget(status_box, 1)
-        runtime_device_layout.addLayout(cfg_status_row)
-        runtime_device_layout.addStretch(1)
-
-        theme_box = QGroupBox("Theme library")
-        self.runtime_legacy_theme_box = theme_box
-        theme_layout = QVBoxLayout(theme_box)
-        theme_layout.setSpacing(8)
-        self.theme_combo = QComboBox()
-        self.theme_refresh_btn = QPushButton("Refresh list")
-        self.theme_apply_btn = QPushButton("Apply theme")
-        self.theme_remove_btn = QPushButton("Remove theme")
-        self.theme_refresh_btn.clicked.connect(self.refresh_themes)
-        self.theme_apply_btn.clicked.connect(self.apply_theme)
-        self.theme_remove_btn.clicked.connect(self.remove_theme)
-        theme_row_1 = QHBoxLayout()
-        theme_row_1.addWidget(QLabel("Theme:"))
-        theme_row_1.addWidget(self.theme_combo, 1)
-        theme_row_1.addWidget(self.theme_refresh_btn)
-        theme_row_1.addWidget(self.theme_apply_btn)
-        theme_row_1.addWidget(self.theme_remove_btn)
-        theme_layout.addLayout(theme_row_1)
-        self.theme_name_edit = QLineEdit()
-        self.theme_path_edit = QLineEdit(str(Path("reference_frame_trcc.jpg")))
-        self.theme_browse_btn = QPushButton("Browse file")
-        self.theme_prepare_btn = QPushButton("Prepare image")
-        self.theme_add_btn = QPushButton("Add / update theme")
-        self.theme_raw_chk = QCheckBox("Raw JPEG passthrough (theme)")
-        self.theme_stop_before_apply_chk = QCheckBox("Stop runtime before apply")
-        self.theme_stop_before_apply_chk.setChecked(True)
-        self.theme_resume_chk = QCheckBox("Resume loop after apply")
-        self.theme_raw_chk.setChecked(False)
-        self.theme_resume_chk.setChecked(False)
-        self.theme_browse_btn.clicked.connect(self.browse_theme_path)
-        self.theme_prepare_btn.clicked.connect(lambda: self.prepare_image_asset(self.theme_path_edit))
-        self.theme_add_btn.clicked.connect(self.add_or_update_theme)
-        theme_row_2 = QHBoxLayout()
-        theme_row_2.addWidget(QLabel("Name:"))
-        theme_row_2.addWidget(self.theme_name_edit, 1)
-        theme_layout.addLayout(theme_row_2)
-        theme_row_3 = QHBoxLayout()
-        theme_row_3.addWidget(QLabel("File:"))
-        theme_row_3.addWidget(self.theme_path_edit, 1)
-        theme_row_3.addWidget(self.theme_browse_btn)
-        theme_row_3.addWidget(self.theme_prepare_btn)
-        theme_row_3.addWidget(self.theme_add_btn)
-        theme_layout.addLayout(theme_row_3)
-        theme_row_4 = QHBoxLayout()
-        theme_row_4.addWidget(self.theme_raw_chk)
-        theme_row_4.addWidget(self.theme_stop_before_apply_chk)
-        theme_row_4.addWidget(self.theme_resume_chk)
-        theme_row_4.addStretch(1)
-        theme_layout.addLayout(theme_row_4)
-        runtime_theme_layout.addWidget(theme_box)
-        runtime_theme_cards_box = QGroupBox("Theme cards")
-        self.runtime_theme_cards_box = runtime_theme_cards_box
-        runtime_theme_cards_layout = QVBoxLayout(runtime_theme_cards_box)
-        runtime_theme_cards_scroll = QScrollArea()
-        runtime_theme_cards_scroll.setWidgetResizable(True)
-        runtime_theme_cards_scroll.setFrameShape(QScrollArea.NoFrame)
-        self.runtime_theme_cards_container = QWidget()
-        self.runtime_theme_cards_layout = QVBoxLayout(self.runtime_theme_cards_container)
-        self.runtime_theme_cards_layout.setContentsMargins(0, 0, 0, 0)
-        self.runtime_theme_cards_layout.setSpacing(12)
-        runtime_theme_cards_scroll.setWidget(self.runtime_theme_cards_container)
-        runtime_theme_cards_layout.addWidget(runtime_theme_cards_scroll)
-        runtime_theme_layout.addWidget(runtime_theme_cards_box, 1)
-        runtime_theme_layout.addStretch(1)
-
-        for legacy_widget in (endpoint_box, control_box, runtime_hero, runtime_sections_tabs):
-            legacy_widget.hide()
-
-        system_intro = AnimatedCardFrame("runtimeHeroCard")
-        system_intro_layout = QHBoxLayout(system_intro)
-        system_intro_layout.setContentsMargins(18, 16, 18, 16)
-        system_intro_text = QLabel(
-            "This tab shows backend status, device state and basic host metrics. "
-            "Quick actions use the same live API endpoints as before."
+        runtime_panel_controls = build_legacy_runtime_panel(
+            base_url=base_url,
+            intro_card_factory=AnimatedCardFrame,
+            callbacks=LegacyRuntimeCallbacks(
+                apply_url=self.apply_url,
+                refresh_status=self.refresh_status,
+                start=lambda: self.api_call("start", "POST", "/v1/start", {}),
+                stop=lambda: self.api_call("stop", "POST", "/v1/stop", {}),
+                restart=lambda: self.api_call("restart", "POST", "/v1/restart", {}),
+                scan=lambda: self.api_call("scan", "POST", "/v1/scan", {}),
+                hide_to_tray=self.hide_to_tray,
+                animate_widget=self._animate_widget_fade,
+                set_frame=self.set_frame,
+                browse_image=self.browse_image,
+                prepare_image=self.prepare_image_asset,
+                send_image=self.send_image,
+                apply_config=self.apply_config,
+                run_usb_recovery=self.run_usb_recovery,
+                refresh_themes=self.refresh_themes,
+                apply_theme=self.apply_theme,
+                remove_theme=self.remove_theme,
+                browse_theme_path=self.browse_theme_path,
+                add_or_update_theme=self.add_or_update_theme,
+            ),
         )
-        self.system_intro_text_label = system_intro_text
-        system_intro_text.setObjectName("studioHeroText")
-        system_intro_text.setWordWrap(True)
-        system_intro_layout.addWidget(system_intro_text)
-        runtime_layout.addWidget(system_intro)
+        bind_legacy_runtime_controls(self, runtime_panel_controls)
+        runtime_panel_controls.panel.hide()
+        runtime_layout.addWidget(runtime_panel_controls.panel)
 
-        system_top_row = QHBoxLayout()
-        system_top_row.setSpacing(14)
-
-        backend_status_box = QGroupBox("Backend status")
-        self.backend_status_box = backend_status_box
-        backend_status_box.setObjectName("dashboardCardBox")
-        backend_status_layout = QVBoxLayout(backend_status_box)
-        backend_status_layout.setSpacing(10)
-        self.system_api_status_row, self.system_api_status_title, self.system_api_status_value = self._create_dashboard_status_row(
-            "API Server", "Offline"
+        system_panel_controls = build_system_panel(
+            app_version_text=self.app_version_text,
+            intro_card_factory=AnimatedCardFrame,
+            status_row_factory=self._create_dashboard_status_row,
+            metric_card_factory=self._create_system_metric_card,
+            callbacks=SystemPanelCallbacks(
+                restart_backend=lambda: self.api_call("restart", "POST", "/v1/restart", {}),
+                restart_service=lambda: self.api_call("stop", "POST", "/v1/stop", {}),
+                refresh_status=self.refresh_status,
+                export_logs=self.copy_filtered_logs,
+                diagnostics=lambda: self.api_call("scan", "POST", "/v1/scan", {}),
+            ),
         )
-        self.system_ws_status_row, self.system_ws_status_title, self.system_ws_status_value = self._create_dashboard_status_row(
-            "WebSocket", "Offline"
+        bind_system_panel_controls(self, system_panel_controls)
+        runtime_layout.addWidget(system_panel_controls.panel)
+
+        self.configuration_panel = ConfigurationPanel(
+            theme_names=list(UI_THEMES.keys()),
+            steam_launch_options=self._steam_fps_launch_options(),
+            app_path=str(Path(__file__).resolve().parent),
+            theme_path=str((Path.cwd() / "themes").resolve()),
+            state_path=str(APP_STATE_DIR),
+            fps_socket_path=f"/run/user/{os.getuid()}/open-trofeo-lcd/fps.sock",
+            intro_card_factory=AnimatedCardFrame,
+            callbacks=build_config_panel_callbacks(self),
         )
-        self.system_lcd_status_row, self.system_lcd_status_title, self.system_lcd_status_value = self._create_dashboard_status_row(
-            "LCD Daemon", "Idle"
+        self.config_intro_text_label = self.configuration_panel.intro_label
+        bind_config_panel_controls(self, self.configuration_panel.controls)
+        automation_layout.addWidget(self.configuration_panel)
+
+        self.config_preferences.sync_ui_controls_from_header()
+        QTimer.singleShot(600, self.refresh_fps_layer_status)
+
+        studio_panel_controls = build_studio_panel(
+            studio_layout,
+            callbacks=StudioCallbacks(
+                animate_widget=self._animate_widget_fade,
+                sync_shell_navigation=self._sync_shell_navigation,
+                load_theme_doc=self.load_theme_doc,
+                save_theme=self.save_current_theme_to_library,
+                preview_theme=self.preview_theme_doc,
+                apply_theme=self.apply_current_theme_to_lcd,
+                reload_designer_from_json=self.reload_designer_from_json,
+                write_designer_to_json=self.write_designer_to_json,
+                apply_builtin_layout_preset=self.apply_builtin_layout_preset,
+            ),
         )
-        self.system_queue_status_row, self.system_queue_status_title, self.system_queue_status_value = self._create_dashboard_status_row(
-            "Queue Worker", "Idle"
-        )
-        self.system_theme_engine_row, self.system_theme_engine_title, self.system_theme_engine_value = self._create_dashboard_status_row(
-            "Theme Engine", "Ready"
-        )
-        self.system_backup_row, self.system_backup_title, self.system_backup_value = self._create_dashboard_status_row("Auto Backup", "Idle")
-        for row in (
-            self.system_api_status_row,
-            self.system_ws_status_row,
-            self.system_lcd_status_row,
-            self.system_queue_status_row,
-            self.system_theme_engine_row,
-            self.system_backup_row,
-        ):
-            backend_status_layout.addWidget(row)
-        backend_status_layout.addStretch(1)
-        system_top_row.addWidget(backend_status_box, 1)
-
-        system_info_box = QGroupBox("System information")
-        self.system_info_box = system_info_box
-        system_info_box.setObjectName("dashboardCardBox")
-        system_info_grid = QGridLayout(system_info_box)
-        system_info_grid.setColumnStretch(1, 1)
-        self.system_os_value = QLabel(platform.system())
-        self.system_framework_value = QLabel("Qt 6 / PySide6")
-        self.system_app_version_value = QLabel("v1.0.0")
-        self.system_uptime_value = QLabel("-")
-        self.system_hostname_value = QLabel(socket.gethostname())
-        self.system_restart_value = QLabel("-")
-        info_rows = [
-            ("Operating system:", self.system_os_value),
-            ("Framework:", self.system_framework_value),
-            ("App version:", self.system_app_version_value),
-            ("Uptime:", self.system_uptime_value),
-            ("Hostname:", self.system_hostname_value),
-            ("Last restart:", self.system_restart_value),
-        ]
-        for idx, (label_text, value_lbl) in enumerate(info_rows):
-            system_info_grid.addWidget(QLabel(label_text), idx, 0)
-            system_info_grid.addWidget(value_lbl, idx, 1)
-        system_top_row.addWidget(system_info_box, 1)
-
-        resources_box = QGroupBox("System resources")
-        self.resources_box = resources_box
-        resources_box.setObjectName("dashboardCardBox")
-        resources_layout = QHBoxLayout(resources_box)
-        resources_layout.setSpacing(10)
-        cpu_card, self.system_cpu_title, self.system_cpu_value, self.system_cpu_detail = self._create_system_metric_card("CPU")
-        mem_card, self.system_mem_title, self.system_mem_value, self.system_mem_detail = self._create_system_metric_card("RAM")
-        disk_card, self.system_disk_title, self.system_disk_value, self.system_disk_detail = self._create_system_metric_card("DISK")
-        temp_card, self.system_temp_title, self.system_temp_value, self.system_temp_detail = self._create_system_metric_card("TEMP")
-        for card in (cpu_card, mem_card, disk_card, temp_card):
-            resources_layout.addWidget(card, 1)
-        system_top_row.addWidget(resources_box, 1)
-        runtime_layout.addLayout(system_top_row)
-
-        system_bottom_row = QHBoxLayout()
-        system_bottom_row.setSpacing(14)
-
-        device_box = QGroupBox("Network & device")
-        self.runtime_dashboard_device_box = device_box
-        device_box.setObjectName("dashboardCardBox")
-        device_grid = QGridLayout(device_box)
-        device_grid.setColumnStretch(1, 1)
-        self.system_connection_value = QLabel("-")
-        self.system_device_value = QLabel("Trofeo LCD")
-        self.system_firmware_value = QLabel("-")
-        self.system_resolution_value = QLabel("1920 x 462")
-        self.system_ip_value = QLabel("127.0.0.1")
-        self.system_port_value = QLabel("18777")
-        self.system_serial_value = QLabel("-")
-        device_rows = [
-            ("Connection:", self.system_connection_value),
-            ("Device:", self.system_device_value),
-            ("Firmware:", self.system_firmware_value),
-            ("Resolution:", self.system_resolution_value),
-            ("IP address:", self.system_ip_value),
-            ("API port:", self.system_port_value),
-            ("USB/Serial:", self.system_serial_value),
-        ]
-        for idx, (label_text, value_lbl) in enumerate(device_rows):
-            device_grid.addWidget(QLabel(label_text), idx, 0)
-            device_grid.addWidget(value_lbl, idx, 1)
-        system_bottom_row.addWidget(device_box, 1)
-
-        events_box = QGroupBox("System events")
-        self.system_events_box = events_box
-        events_box.setObjectName("dashboardCardBox")
-        events_layout = QVBoxLayout(events_box)
-        events_header = QHBoxLayout()
-        self.system_events_header_labels = []
-        for title, stretch in (("Time", 1), ("Level", 1), ("Source", 2), ("Message", 4)):
-            lbl = QLabel(title)
-            lbl.setObjectName("eventHeaderLabel")
-            self.system_events_header_labels.append(lbl)
-            events_header.addWidget(lbl, stretch)
-        events_layout.addLayout(events_header)
-        self.system_events_list = QListWidget()
-        self.system_events_list.setMinimumHeight(260)
-        self.system_events_list.setObjectName("systemEventsList")
-        events_layout.addWidget(self.system_events_list)
-        system_bottom_row.addWidget(events_box, 2)
-
-        quick_actions_box = QGroupBox("Quick actions")
-        self.system_quick_actions_box = quick_actions_box
-        quick_actions_box.setObjectName("dashboardCardBox")
-        quick_actions_layout = QVBoxLayout(quick_actions_box)
-        self.system_restart_backend_btn = QPushButton("Restart backend")
-        self.system_restart_service_btn = QPushButton("Restart service")
-        self.system_refresh_status_btn = QPushButton("Refresh status")
-        self.system_export_logs_btn = QPushButton("Export logs")
-        self.system_diagnostic_btn = QPushButton("Diagnostics")
-        self.system_restart_backend_btn.clicked.connect(lambda: self.api_call("restart", "POST", "/v1/restart", {}))
-        self.system_restart_service_btn.clicked.connect(lambda: self.api_call("stop", "POST", "/v1/stop", {}))
-        self.system_refresh_status_btn.clicked.connect(self.refresh_status)
-        self.system_export_logs_btn.clicked.connect(self.copy_filtered_logs)
-        self.system_diagnostic_btn.clicked.connect(lambda: self.api_call("scan", "POST", "/v1/scan", {}))
-        for button in (
-            self.system_restart_backend_btn,
-            self.system_restart_service_btn,
-            self.system_refresh_status_btn,
-            self.system_export_logs_btn,
-            self.system_diagnostic_btn,
-        ):
-            button.setMinimumHeight(44)
-            button.setObjectName("quickActionButton")
-            quick_actions_layout.addWidget(button)
-        quick_actions_layout.addStretch(1)
-        system_bottom_row.addWidget(quick_actions_box, 1)
-        runtime_layout.addLayout(system_bottom_row)
-        runtime_layout.addStretch(1)
-
-        config_intro = AnimatedCardFrame("runtimeHeroCard")
-        config_intro_layout = QHBoxLayout(config_intro)
-        config_intro_layout.setContentsMargins(18, 16, 18, 16)
-        config_intro_text = QLabel(
-            "Configuration centralizes interface settings, LCD preferences and integrations in one place. "
-            "App theme management now lives here instead of the top control bar."
-        )
-        self.config_intro_text_label = config_intro_text
-        config_intro_text.setObjectName("studioHeroText")
-        config_intro_text.setWordWrap(True)
-        config_intro_layout.addWidget(config_intro_text)
-        automation_layout.addWidget(config_intro)
-
-        config_grid = QGridLayout()
-        config_grid.setHorizontalSpacing(14)
-        config_grid.setVerticalSpacing(14)
-
-        autostart_box = QGroupBox("Startup")
-        autostart_box.setObjectName("configCardBox")
-        autostart_layout = QVBoxLayout(autostart_box)
-        self.cfg_start_with_system_chk = QCheckBox("Launch with system")
-        self.cfg_minimize_to_tray_chk = QCheckBox("Minimize to tray on startup")
-        self.cfg_auto_connect_chk = QCheckBox("Auto-connect to device")
-        self.cfg_restore_project_chk = QCheckBox("Restore last project on startup")
-        self.cfg_check_updates_chk = QCheckBox("Check for updates on startup")
-        self.cfg_start_with_system_chk.setChecked(True)
-        self.cfg_minimize_to_tray_chk.setChecked(True)
-        self.cfg_auto_connect_chk.setChecked(True)
-        self.cfg_check_updates_chk.setChecked(True)
-        for chk in (
-            self.cfg_start_with_system_chk,
-            self.cfg_minimize_to_tray_chk,
-            self.cfg_auto_connect_chk,
-            self.cfg_restore_project_chk,
-            self.cfg_check_updates_chk,
-        ):
-            autostart_layout.addWidget(chk)
-        autostart_layout.addStretch(1)
-        config_grid.addWidget(autostart_box, 0, 0)
-
-        appearance_box = QGroupBox("App Appearance")
-        self.appearance_box = appearance_box
-        appearance_box.setObjectName("configCardBox")
-        appearance_form = QFormLayout(appearance_box)
-        self.cfg_ui_theme_combo = QComboBox()
-        self.cfg_ui_theme_combo.addItems(list(UI_THEMES.keys()))
-        self.cfg_ui_mode_combo = QComboBox()
-        self.cfg_ui_mode_combo.addItems(["Dark", "Light"])
-        self.cfg_ui_scale_combo = QComboBox()
-        for value in (70, 80, 90, 100, 110, 125, 140):
-            self.cfg_ui_scale_combo.addItem(f"{value}%", value)
-        self.cfg_font_scale_slider = QSlider(Qt.Horizontal)
-        self.cfg_font_scale_slider.setRange(80, 140)
-        self.cfg_font_scale_slider.setValue(100)
-        self.cfg_animations_chk = QCheckBox("Animation effects")
-        self.cfg_animations_chk.setChecked(True)
-        self.cfg_compact_layout_chk = QCheckBox("Compact layout")
-        appearance_form.addRow("App theme:", self.cfg_ui_theme_combo)
-        appearance_form.addRow("Mode:", self.cfg_ui_mode_combo)
-        appearance_form.addRow("Interface scale:", self.cfg_ui_scale_combo)
-        appearance_form.addRow("Font size:", self.cfg_font_scale_slider)
-        appearance_form.addRow("Animation effects:", self.cfg_animations_chk)
-        appearance_form.addRow("Compact layout:", self.cfg_compact_layout_chk)
-        config_grid.addWidget(appearance_box, 0, 1)
-
-        lcd_box = QGroupBox("LCD Preferences")
-        lcd_box.setObjectName("configCardBox")
-        lcd_form = QFormLayout(lcd_box)
-        self.cfg_brightness_slider = QSlider(Qt.Horizontal)
-        self.cfg_brightness_slider.setRange(0, 100)
-        self.cfg_brightness_slider.setValue(82)
-        self.cfg_preview_fps_combo = QComboBox()
-        self.cfg_preview_fps_combo.addItems(["24", "30", "45", "60"])
-        self.cfg_preview_fps_combo.setCurrentText("30")
-        self.cfg_refresh_combo = QComboBox()
-        self.cfg_refresh_combo.addItems(["0.5 s", "1.0 s", "1.5 s", "2.0 s"])
-        self.cfg_refresh_combo.setCurrentText("1.5 s")
-        self.cfg_smoothing_chk = QCheckBox("Smooth charts")
-        self.cfg_smoothing_chk.setChecked(True)
-        self.cfg_start_layout_combo = QComboBox()
-        self.cfg_start_layout_combo.addItems(["Last used", "Dashboard", "Minimal", "Focus"])
-        lcd_form.addRow("Default brightness:", self.cfg_brightness_slider)
-        lcd_form.addRow("Default preview FPS:", self.cfg_preview_fps_combo)
-        lcd_form.addRow("Data refresh:", self.cfg_refresh_combo)
-        lcd_form.addRow("Smooth charts:", self.cfg_smoothing_chk)
-        lcd_form.addRow("Startup layout:", self.cfg_start_layout_combo)
-        config_grid.addWidget(lcd_box, 0, 2)
-
-        notifications_box = QGroupBox("Notifications and Logs")
-        notifications_box.setObjectName("configCardBox")
-        notifications_form = QFormLayout(notifications_box)
-        self.cfg_system_notifications_chk = QCheckBox("System notifications")
-        self.cfg_backend_alerts_chk = QCheckBox("Backend error alerts")
-        self.cfg_debug_log_chk = QCheckBox("Write debug logs")
-        self.cfg_log_rotation_chk = QCheckBox("Automatic log rotation")
-        self.cfg_system_notifications_chk.setChecked(True)
-        self.cfg_backend_alerts_chk.setChecked(True)
-        self.cfg_log_rotation_chk.setChecked(True)
-        self.cfg_log_size_combo = QComboBox()
-        self.cfg_log_size_combo.addItems(["25 MB", "50 MB", "100 MB", "250 MB"])
-        self.cfg_log_size_combo.setCurrentText("100 MB")
-        notifications_form.addRow("Notifications:", self.cfg_system_notifications_chk)
-        notifications_form.addRow("Backend alerts:", self.cfg_backend_alerts_chk)
-        notifications_form.addRow("Debug:", self.cfg_debug_log_chk)
-        notifications_form.addRow("Log rotation:", self.cfg_log_rotation_chk)
-        notifications_form.addRow("Maximum size:", self.cfg_log_size_combo)
-        config_grid.addWidget(notifications_box, 1, 0)
-
-        paths_box = QGroupBox("Paths and Integration")
-        self.paths_box = paths_box
-        paths_box.setObjectName("configCardBox")
-        paths_form = QFormLayout(paths_box)
-        self.cfg_theme_dir_edit = QLineEdit(str((Path.cwd() / "themes").resolve()))
-        self.cfg_backup_dir_edit = QLineEdit(str((Path.cwd() / "backups").resolve()))
-        self.cfg_api_port_spin = QSpinBox()
-        self.cfg_api_port_spin.setRange(1, 65535)
-        self.cfg_api_port_spin.setValue(18777)
-        self.cfg_start_device_combo = QComboBox()
-        self.cfg_start_device_combo.addItems(["Trofeo LCD"])
-        self.cfg_comm_mode_combo = QComboBox()
-        self.cfg_comm_mode_combo.addItems(["USB / Serial", "Backend API"])
-        paths_form.addRow("Themes directory:", self.cfg_theme_dir_edit)
-        paths_form.addRow("Backups directory:", self.cfg_backup_dir_edit)
-        paths_form.addRow("API port:", self.cfg_api_port_spin)
-        paths_form.addRow("Startup device:", self.cfg_start_device_combo)
-        paths_form.addRow("Communication mode:", self.cfg_comm_mode_combo)
-        config_grid.addWidget(paths_box, 1, 1, 1, 2)
-
-        quick_cfg_box = QGroupBox("Quick Actions")
-        self.quick_cfg_box = quick_cfg_box
-        quick_cfg_box.setObjectName("configCardBox")
-        quick_cfg_layout = QVBoxLayout(quick_cfg_box)
-        self.cfg_reset_btn = QPushButton("Restore Defaults")
-        self.cfg_export_btn = QPushButton("Export Configuration")
-        self.cfg_import_btn = QPushButton("Import Configuration")
-        self.cfg_clear_cache_btn = QPushButton("Clear Cache")
-        self.cfg_restart_app_btn = QPushButton("Restart Application")
-        self.cfg_reset_btn.clicked.connect(self._reset_configuration_defaults)
-        self.cfg_export_btn.clicked.connect(self._export_configuration_file)
-        self.cfg_import_btn.clicked.connect(self._import_configuration_file)
-        self.cfg_clear_cache_btn.clicked.connect(self._clear_cached_state)
-        self.cfg_restart_app_btn.clicked.connect(self._restart_application)
-        for button in (
-            self.cfg_reset_btn,
-            self.cfg_export_btn,
-            self.cfg_import_btn,
-            self.cfg_clear_cache_btn,
-            self.cfg_restart_app_btn,
-        ):
-            button.setMinimumHeight(44)
-            button.setObjectName("quickActionButton")
-            quick_cfg_layout.addWidget(button)
-        quick_cfg_layout.addStretch(1)
-        config_grid.addWidget(quick_cfg_box, 0, 3, 2, 1)
-        automation_layout.addLayout(config_grid)
-
-        self.playlist_list = QListWidget()
-        self.bundle_path_edit = QLineEdit(".trofeo-bundle.json")
-        automation_tools_box = QGroupBox("Automation and Bundles")
-        self.automation_tools_box = automation_tools_box
-        automation_tools_box.setObjectName("configCardBox")
-        automation_tools_layout = QGridLayout(automation_tools_box)
-        self.playlist_duration_spin = QDoubleSpinBox()
-        self.playlist_duration_spin.setRange(0.5, 3600.0)
-        self.playlist_duration_spin.setSingleStep(0.5)
-        self.playlist_duration_spin.setValue(15.0)
-        self.playlist_add_btn = QPushButton("Add selected theme to playlist")
-        self.playlist_remove_btn = QPushButton("Remove from playlist")
-        self.playlist_start_btn = QPushButton("Start playlist")
-        self.playlist_stop_btn = QPushButton("Stop playlist")
-        self.playlist_add_btn.clicked.connect(self.add_playlist_item)
-        self.playlist_remove_btn.clicked.connect(self.remove_playlist_item)
-        self.playlist_start_btn.clicked.connect(self.start_playlist)
-        self.playlist_stop_btn.clicked.connect(self.stop_playlist)
-        self.bundle_merge_chk = QCheckBox("Merge on import")
-        self.bundle_browse_btn = QPushButton("Choose bundle")
-        self.bundle_save_btn = QPushButton("Save bundle")
-        self.bundle_load_btn = QPushButton("Load bundle")
-        self.bundle_browse_btn.clicked.connect(self.browse_bundle_path)
-        self.bundle_save_btn.clicked.connect(self.save_bundle)
-        self.bundle_load_btn.clicked.connect(self.load_bundle)
-        automation_tools_layout.addWidget(QLabel("Playlist"), 0, 0)
-        automation_tools_layout.addWidget(self.playlist_list, 1, 0, 4, 2)
-        automation_tools_layout.addWidget(QLabel("Item duration (s)"), 0, 2)
-        automation_tools_layout.addWidget(self.playlist_duration_spin, 0, 3)
-        automation_tools_layout.addWidget(self.playlist_add_btn, 1, 2, 1, 2)
-        automation_tools_layout.addWidget(self.playlist_remove_btn, 2, 2, 1, 2)
-        automation_tools_layout.addWidget(self.playlist_start_btn, 3, 2, 1, 2)
-        automation_tools_layout.addWidget(self.playlist_stop_btn, 4, 2, 1, 2)
-        automation_tools_layout.addWidget(QLabel("Bundle"), 5, 0)
-        automation_tools_layout.addWidget(self.bundle_path_edit, 5, 1, 1, 2)
-        automation_tools_layout.addWidget(self.bundle_browse_btn, 5, 3)
-        automation_tools_layout.addWidget(self.bundle_merge_chk, 6, 1)
-        automation_tools_layout.addWidget(self.bundle_save_btn, 6, 2)
-        automation_tools_layout.addWidget(self.bundle_load_btn, 6, 3)
-        automation_layout.addWidget(automation_tools_box)
-        cfg_actions_row = QHBoxLayout()
-        cfg_actions_row.addStretch(1)
-        self.cfg_cancel_btn = QPushButton("Cancel")
-        self.cfg_apply_btn = QPushButton("Apply")
-        self.cfg_save_btn = QPushButton("Save Settings")
-        self.cfg_apply_btn.setObjectName("secondaryAccentButton")
-        self.cfg_save_btn.setObjectName("primaryButton")
-        self.cfg_cancel_btn.clicked.connect(self._sync_config_ui_controls_from_header)
-        self.cfg_apply_btn.clicked.connect(self._apply_configuration_preferences)
-        self.cfg_save_btn.clicked.connect(lambda: (self._apply_configuration_preferences(), self._save_ui_state(), self.append_log("[config] Zapisano ustawienia.")))
-        cfg_actions_row.addWidget(self.cfg_cancel_btn)
-        cfg_actions_row.addWidget(self.cfg_apply_btn)
-        cfg_actions_row.addWidget(self.cfg_save_btn)
-        automation_layout.addLayout(cfg_actions_row)
-        automation_layout.addStretch(1)
-
-        self._sync_config_ui_controls_from_header()
-
-        studio_sections_tabs = QTabWidget()
-        studio_sections_tabs.setObjectName("studioSectionTabs")
-        self.studio_sections_tabs = studio_sections_tabs
-        studio_sections_tabs.setDocumentMode(True)
-        studio_sections_tabs.tabBar().hide()
-        studio_layout.addWidget(studio_sections_tabs, 1)
-        studio_sections_tabs.currentChanged.connect(lambda _idx: (self._animate_widget_fade(studio_sections_tabs.currentWidget()), self._sync_shell_navigation()))
-        library_tab = QWidget()
-        library_layout = QVBoxLayout(library_tab)
-        library_layout.setContentsMargins(0, 0, 0, 0)
-        library_layout.setSpacing(10)
-        designer_workspace_tab = QWidget()
-        designer_workspace_layout = QVBoxLayout(designer_workspace_tab)
-        designer_workspace_layout.setContentsMargins(0, 0, 0, 0)
-        designer_workspace_layout.setSpacing(10)
-        studio_sections_tabs.addTab(library_tab, "Theme Gallery")
-        studio_sections_tabs.addTab(designer_workspace_tab, "Designer")
-        self.animation_studio_tab = QWidget()
-        self.animation_studio_layout = QVBoxLayout(self.animation_studio_tab)
-        self.animation_studio_layout.setContentsMargins(10, 10, 10, 10)
-        self.animation_studio_layout.setSpacing(10)
-        studio_sections_tabs.addTab(self.animation_studio_tab, "Animation Studio")
+        bind_studio_panel_controls(self, studio_panel_controls)
+        library_layout = studio_panel_controls.library_layout
+        designer_workspace_layout = studio_panel_controls.designer_workspace_layout
         self.nav_library_btn.clicked.connect(lambda: self._go_library())
         self.nav_designer_btn.clicked.connect(lambda: self._go_designer())
         self.nav_animation_studio_btn.clicked.connect(lambda: self._go_animation_studio())
         self.sidebar_toggle_btn.clicked.connect(self.toggle_sidebar_collapsed)
 
-        studio_toolbar_box = QGroupBox("")
-        studio_toolbar_box.setObjectName("designerToolbarBox")
-        studio_toolbar_box.setFlat(True)
-        studio_toolbar_layout = QHBoxLayout(studio_toolbar_box)
-        self.studio_toolbar_load_btn = QPushButton("📂 Load theme")
-        self.studio_toolbar_save_btn = QPushButton("💾 Save theme")
-        self.studio_toolbar_preview_btn = QPushButton("Preview")
-        self.studio_toolbar_apply_btn = QPushButton("▶ Apply theme")
-        self.studio_toolbar_reload_btn = QPushButton("↻ JSON → Designer")
-        self.studio_toolbar_export_btn = QPushButton("⇄ Designer → JSON")
-        for btn in (
-            self.studio_toolbar_load_btn,
-            self.studio_toolbar_save_btn,
-            self.studio_toolbar_preview_btn,
-            self.studio_toolbar_apply_btn,
-            self.studio_toolbar_reload_btn,
-            self.studio_toolbar_export_btn,
-        ):
-            btn.setMinimumHeight(34)
-            btn.setMaximumWidth(210)
-        self.studio_toolbar_preview_btn.setObjectName("secondaryAccentButton")
-        self.studio_toolbar_apply_btn.setObjectName("primaryButton")
-        self.studio_toolbar_load_btn.setText("Load theme")
-        self.studio_toolbar_save_btn.setText("Save theme")
-        self.studio_toolbar_apply_btn.setText("Apply theme")
-        self.studio_toolbar_preview_btn.setText("Preview")
-        self.studio_toolbar_load_btn.clicked.connect(self.load_theme_doc)
-        self.studio_toolbar_save_btn.clicked.connect(self.save_current_theme_to_library)
-        self.studio_toolbar_preview_btn.clicked.connect(self.preview_theme_doc)
-        self.studio_toolbar_apply_btn.clicked.connect(self.apply_current_theme_to_lcd)
-        self.studio_toolbar_reload_btn.clicked.connect(self.reload_designer_from_json)
-        self.studio_toolbar_export_btn.clicked.connect(self.write_designer_to_json)
-        studio_toolbar_layout.addStretch(1)
-        studio_toolbar_layout.addWidget(self.studio_toolbar_load_btn)
-        studio_toolbar_layout.addWidget(self.studio_toolbar_save_btn)
-        studio_toolbar_layout.addWidget(self.studio_toolbar_preview_btn)
-        studio_toolbar_layout.addWidget(self.studio_toolbar_apply_btn)
-        studio_toolbar_layout.addSpacing(6)
-        studio_toolbar_layout.addWidget(self.studio_toolbar_reload_btn)
-        studio_toolbar_layout.addWidget(self.studio_toolbar_export_btn)
-        self.studio_toolbar_reload_btn.hide()
-        self.studio_toolbar_export_btn.hide()
-        studio_toolbar_box.hide()
-        # designer_workspace_layout.addWidget(studio_toolbar_box)
-
-        self.quick_preset_dashboard_btn = QPushButton("Dashboard")
-        self.quick_preset_minimal_btn = QPushButton("Minimal")
-        self.quick_preset_focus_btn = QPushButton("Focus")
-        self.quick_preset_dashboard_btn.setObjectName("quickPresetButton")
-        self.quick_preset_minimal_btn.setObjectName("quickPresetButton")
-        self.quick_preset_focus_btn.setObjectName("quickPresetButton")
-        self.quick_preset_dashboard_btn.clicked.connect(lambda: self.apply_builtin_layout_preset("dashboard"))
-        self.quick_preset_minimal_btn.clicked.connect(lambda: self.apply_builtin_layout_preset("minimal"))
-        self.quick_preset_focus_btn.clicked.connect(lambda: self.apply_builtin_layout_preset("focus"))
-
-        self.new_theme_options_box = QFrame()
-        self.new_theme_options_box.setObjectName("libraryActionBar")
-        self.new_theme_options_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        new_theme_box_layout = QVBoxLayout(self.new_theme_options_box)
-        new_theme_box_layout.setContentsMargins(14, 12, 14, 12)
-        new_theme_box_layout.setSpacing(6)
-        self.library_summary_label = QLabel("Theme gallery quick actions")
-        self.library_summary_label.setObjectName("selectionSummaryLabel")
-        self.library_summary_label.setWordWrap(False)
-        new_theme_box_layout.addWidget(self.library_summary_label)
-        self.new_theme_name_edit = QLineEdit("New Theme")
-        self.new_theme_name_edit.setObjectName("newThemeNameEdit")
-        self.new_theme_name_edit.setPlaceholderText("e.g. My Dashboard")
-        self.new_theme_template_combo = QComboBox()
-        self.new_theme_template_combo.setObjectName("newThemeTemplateCombo")
-        for template in THEME_TEMPLATE_CATALOG:
-            self.new_theme_template_combo.addItem(template["title"], template["path"])
-        self.new_theme_create_btn = QPushButton("Create Theme")
-        self.new_theme_create_btn.setObjectName("newThemeCreateButton")
-        self.new_theme_advanced_btn = QPushButton("File Settings")
-        self.new_theme_advanced_btn.setCheckable(True)
-        self.library_refresh_btn = QPushButton("Refresh")
-        self.library_import_ttcr_btn = QPushButton("Import TTCR")
-        self.library_refresh_btn.clicked.connect(self.refresh_themes)
-        self.library_import_ttcr_btn.clicked.connect(self.import_ttcr_theme_bundle)
-        self.new_theme_path_edit = QLineEdit(str(Path("themes") / "nowy_motyw.json"))
-        self.new_theme_path_edit.setObjectName("newThemePathEdit")
-        self.new_theme_browse_btn = QPushButton("Choose File")
+        gallery_controls = build_theme_gallery_panel(
+            library_layout=library_layout,
+            template_catalog=THEME_TEMPLATE_CATALOG,
+            default_path=str(Path("themes") / "nowy_motyw.json"),
+            action_callbacks=ThemeGalleryActionCallbacks(
+                refresh_themes=self.refresh_themes,
+                import_ttcr=self.import_ttcr_theme_bundle,
+                browse_new_theme_path=self.browse_new_theme_path,
+                create_new_theme=self.create_new_theme_from_template,
+                suggest_new_theme_path=self.suggest_new_theme_path_from_template,
+                mark_new_theme_path_customized=self._mark_new_theme_path_customized,
+                toggle_new_theme_advanced=self._toggle_new_theme_advanced,
+            ),
+            browser_callbacks=LibraryThemeCardCallbacks(
+                show_menu=self.theme_gallery_actions.show_card_menu,
+                select_theme=self.theme_gallery_actions.select_theme,
+                preview_theme=self._open_theme_preview_dialog,
+                apply_theme=self._apply_runtime_theme_card,
+                duplicate_theme=self.theme_gallery_actions.duplicate_theme_card,
+                remove_theme=self._remove_runtime_theme_card,
+                set_startup_theme=self.theme_gallery_actions.set_startup_theme_preference,
+            ),
+            asset_callbacks=AssetGalleryCardCallbacks(
+                use_as_background=self.theme_gallery_actions.use_asset_as_background,
+                use_as_image=self.theme_gallery_actions.use_asset_as_image,
+            ),
+            translate=self._tr,
+            resolve_path=self._resolve_theme_asset_path,
+            pixmap_for_item=self._runtime_theme_card_pixmap,
+            card_factory=AnimatedCardFrame,
+            event_filter=self,
+        )
+        bind_theme_gallery_panel_controls(self, gallery_controls)
+        self.theme_gallery_refresh = ThemeGalleryRefreshCoordinator(
+            is_visible=self._library_theme_browser_is_visible,
+            browser_width=self._library_theme_browser_width,
+            rebuild=self._rebuild_library_theme_browser,
+        )
         self._new_theme_path_user_edited = False
-        new_theme_row = QHBoxLayout()
-        new_theme_row.setSpacing(8)
-        new_theme_row.addWidget(self.library_import_ttcr_btn)
-        new_theme_row.addWidget(self.library_refresh_btn)
-        new_theme_row.addWidget(QLabel("Name"))
-        new_theme_row.addWidget(self.new_theme_name_edit, 2)
-        new_theme_row.addWidget(QLabel("Style"))
-        new_theme_row.addWidget(self.new_theme_template_combo, 1)
-        new_theme_row.addWidget(self.new_theme_create_btn)
-        new_theme_row.addWidget(self.new_theme_advanced_btn)
-        new_theme_box_layout.addLayout(new_theme_row)
-        self.new_theme_path_row = QWidget()
-        new_theme_path_row_layout = QHBoxLayout(self.new_theme_path_row)
-        new_theme_path_row_layout.setContentsMargins(0, 0, 0, 0)
-        new_theme_path_row_layout.setSpacing(8)
-        new_theme_path_row_layout.addWidget(QLabel("File"))
-        new_theme_path_row_layout.addWidget(self.new_theme_path_edit, 1)
-        new_theme_path_row_layout.addWidget(self.new_theme_browse_btn)
-        new_theme_box_layout.addWidget(self.new_theme_path_row)
-        self.new_theme_path_row.hide()
-        self.new_theme_hint_label = QLabel("Enter a name and style. The theme file path will be suggested automatically.")
-        self.new_theme_hint_label.setObjectName("selectionSummaryLabel")
-        self.new_theme_hint_label.setWordWrap(False)
-        new_theme_box_layout.addWidget(self.new_theme_hint_label)
-        self.new_theme_browse_btn.clicked.connect(self.browse_new_theme_path)
-        self.new_theme_create_btn.clicked.connect(self.create_new_theme_from_template)
-        self.new_theme_template_combo.currentIndexChanged.connect(self.suggest_new_theme_path_from_template)
-        self.new_theme_name_edit.textChanged.connect(self.suggest_new_theme_path_from_template)
-        self.new_theme_path_edit.textEdited.connect(self._mark_new_theme_path_customized)
-        self.new_theme_advanced_btn.toggled.connect(self._toggle_new_theme_advanced)
-        library_layout.addWidget(self.new_theme_options_box)
-        theme_browser_box = QGroupBox("Themes")
-        self.theme_browser_box = theme_browser_box
-        theme_browser_box.setObjectName("librarySectionBox")
-        theme_browser_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        theme_browser_layout = QVBoxLayout(theme_browser_box)
-        theme_browser_controls = QHBoxLayout()
-        theme_browser_controls.setSpacing(6)
-        self.library_theme_filter_edit = QLineEdit()
-        self.library_theme_filter_edit.setPlaceholderText("Search by theme name...")
-        self.library_theme_type_combo = QComboBox()
-        self.library_theme_type_combo.addItems(["All", "Theme", "Image", "Local", "TTCR", "Animated"])
-        self.library_theme_sort_combo = QComboBox()
-        self.library_theme_sort_combo.addItems(["Name A-Z", "Name Z-A", "Newest", "Oldest"])
-        self.theme_browser_controls_search_label = QLabel("Search")
-        self.theme_browser_controls_type_label = QLabel("Type")
-        self.theme_browser_controls_sort_label = QLabel("Sort")
-        theme_browser_controls.addWidget(self.theme_browser_controls_search_label)
-        theme_browser_controls.addWidget(self.library_theme_filter_edit, 1)
-        theme_browser_controls.addWidget(self.theme_browser_controls_type_label)
-        theme_browser_controls.addWidget(self.library_theme_type_combo)
-        theme_browser_controls.addWidget(self.theme_browser_controls_sort_label)
-        theme_browser_controls.addWidget(self.library_theme_sort_combo)
-        theme_browser_layout.addLayout(theme_browser_controls)
-        self.library_current_theme_label = QLabel("No active theme.")
-        self.library_current_theme_label.setObjectName("selectionSummaryLabel")
-        self.library_current_theme_label.setWordWrap(True)
-        theme_browser_layout.addWidget(self.library_current_theme_label)
-        theme_browser_scroll = QScrollArea()
-        self.theme_browser_scroll = theme_browser_scroll
-        theme_browser_scroll.setWidgetResizable(True)
-        theme_browser_scroll.setFrameShape(QScrollArea.NoFrame)
-        theme_browser_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        theme_browser_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        theme_browser_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        self.library_theme_cards_container = QWidget()
-        self.library_theme_cards_layout = QGridLayout(self.library_theme_cards_container)
-        self.library_theme_cards_layout.setContentsMargins(0, 0, 0, 0)
-        self.library_theme_cards_layout.setHorizontalSpacing(12)
-        self.library_theme_cards_layout.setVerticalSpacing(12)
-        self.library_theme_cards_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        theme_browser_scroll.setWidget(self.library_theme_cards_container)
-        theme_browser_layout.addWidget(theme_browser_scroll)
-        library_layout.addWidget(theme_browser_box, 0)
         self.library_theme_filter_edit.textChanged.connect(self._rebuild_library_theme_browser)
         self.library_theme_type_combo.currentTextChanged.connect(self._rebuild_library_theme_browser)
         self.library_theme_sort_combo.currentTextChanged.connect(self._rebuild_library_theme_browser)
-        asset_gallery_box = QGroupBox("Theme Assets")
-        self.asset_gallery_box = asset_gallery_box
-        asset_gallery_box.setObjectName("librarySectionBox")
-        asset_gallery_layout = QVBoxLayout(asset_gallery_box)
-        asset_gallery_scroll = QScrollArea()
-        asset_gallery_scroll.setWidgetResizable(True)
-        asset_gallery_scroll.setFrameShape(QScrollArea.NoFrame)
-        self.asset_gallery_container = QWidget()
-        self.asset_gallery_layout = QGridLayout(self.asset_gallery_container)
-        self.asset_gallery_layout.setContentsMargins(0, 0, 0, 0)
-        self.asset_gallery_layout.setHorizontalSpacing(10)
-        self.asset_gallery_layout.setVerticalSpacing(10)
-        asset_gallery_scroll.setWidget(self.asset_gallery_container)
-        asset_gallery_layout.addWidget(asset_gallery_scroll)
-        asset_gallery_box.hide()
-        library_layout.addStretch(1)
 
-        studio_left_scroll = QScrollArea()
-        studio_left_scroll.setWidgetResizable(True)
-        studio_left_scroll.setFrameShape(QScrollArea.NoFrame)
-        studio_left_container = QWidget()
-        studio_left_layout = QVBoxLayout(studio_left_container)
-        studio_left_layout.setContentsMargins(0, 0, 0, 0)
-        studio_left_layout.setSpacing(10)
-        studio_left_scroll.setWidget(studio_left_container)
-        designer_workspace_layout.addWidget(studio_left_scroll, 1)
-        self.studio_splitter = None
-        self.studio_right_container = None
-        studio_left_scroll.setMinimumWidth(0)
-
-        studio_left_tabs = QTabWidget()
-        self.studio_left_tabs = studio_left_tabs
-        studio_left_tabs.setDocumentMode(True)
-        studio_left_tabs.tabBar().hide()
-        studio_left_tabs.setMinimumHeight(760)
-        studio_left_layout.addWidget(studio_left_tabs, 1)
-        studio_left_tabs.currentChanged.connect(lambda _idx: self._animate_widget_fade(studio_left_tabs.currentWidget()))
-        json_tab = QWidget()
-        json_tab_layout = QVBoxLayout(json_tab)
-        json_tab_layout.setContentsMargins(0, 0, 0, 0)
-        json_tab_layout.setSpacing(10)
-        designer_tab = QWidget()
-        designer_tab_layout = QVBoxLayout(designer_tab)
-        designer_tab_layout.setContentsMargins(0, 0, 0, 0)
-        designer_tab_layout.setSpacing(10)
-        studio_left_tabs.addTab(designer_tab, "Designer")
-        studio_left_tabs.addTab(json_tab, "JSON")
-
-        self.theme_doc_box = QGroupBox("Theme")
-        theme_doc_grid = QGridLayout(self.theme_doc_box)
-        theme_doc_grid.setColumnStretch(1, 1)
-        self.theme_doc_path_edit = QLineEdit(str(Path("themes/default_monitor.json")))
-        self.theme_doc_browse_btn = QPushButton("Browse theme…")
-        self.theme_doc_use_selected_btn = QPushButton("From active theme")
-        self.theme_doc_load_btn = QPushButton("Load")
-        self.theme_doc_save_btn = QPushButton("Save")
-        self.theme_doc_save_as_btn = QPushButton("Save As")
-        self.theme_doc_apply_btn = QPushButton("Apply")
-        self.theme_doc_apply_btn.setObjectName("primaryButton")
-        self.theme_doc_stop_before_apply_chk = QCheckBox("Stop runtime before apply")
-        self.theme_doc_stop_before_apply_chk.setChecked(True)
-        self.theme_doc_resume_chk = QCheckBox("Resume loop after apply")
-        self.theme_doc_resume_chk.setChecked(False)
-        self.theme_schema_label = QLabel("-")
-        self.theme_doc_editor = QTextEdit()
-        self.theme_doc_editor.setPlaceholderText("{\n  \"schema_version\": 1,\n  ...\n}")
-        self.theme_doc_editor.setMinimumHeight(460)
-        self.theme_doc_editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.theme_doc_browse_btn.clicked.connect(self.browse_theme_doc_path)
-        self.theme_doc_use_selected_btn.clicked.connect(self.use_selected_theme_doc)
-        self.theme_doc_load_btn.clicked.connect(self.load_theme_doc)
-        self.theme_doc_save_btn.clicked.connect(self.save_theme_doc)
-        self.theme_doc_save_as_btn.clicked.connect(lambda: self.save_theme_doc_as(from_animation_studio=False))
-        self.theme_doc_apply_btn.clicked.connect(self.apply_theme_doc)
-        self.theme_doc_open_external_btn = QPushButton("Open JSON file…")
-        self.theme_doc_open_external_btn.setObjectName("secondaryAccentButton")
-        self.theme_doc_insert_guide_btn = QPushButton("Insert field guide")
-        self.theme_doc_open_external_btn.clicked.connect(
-            lambda: self.open_current_theme_json_externally(from_animation_studio=False)
+        designer_workspace_controls = build_designer_workspace_shell(
+            designer_workspace_layout,
+            DesignerWorkspaceCallbacks(animate_widget=self._animate_widget_fade),
         )
-        self.theme_doc_insert_guide_btn.clicked.connect(self.insert_theme_json_field_guide_in_editor)
-        self.theme_doc_path_caption = QLabel("Theme file:")
-        theme_doc_grid.addWidget(self.theme_doc_path_caption, 0, 0)
-        theme_doc_grid.addWidget(self.theme_doc_path_edit, 0, 1, 1, 3)
-        theme_doc_grid.addWidget(self.theme_doc_browse_btn, 0, 4)
-        theme_doc_grid.addWidget(self.theme_doc_use_selected_btn, 0, 5)
-        theme_doc_grid.addWidget(self.theme_doc_stop_before_apply_chk, 1, 1, 1, 2)
-        theme_doc_grid.addWidget(self.theme_doc_resume_chk, 1, 3)
-        theme_doc_grid.addWidget(self.theme_doc_load_btn, 1, 4)
-        theme_doc_grid.addWidget(self.theme_doc_save_btn, 1, 5)
-        self.theme_doc_manual_json_label = QLabel("Manual JSON:")
-        theme_doc_grid.addWidget(self.theme_doc_manual_json_label, 2, 0)
-        theme_doc_grid.addWidget(self.theme_doc_open_external_btn, 2, 1, 1, 2)
-        theme_doc_grid.addWidget(self.theme_doc_insert_guide_btn, 2, 3)
-        theme_doc_grid.addWidget(self.theme_doc_save_as_btn, 2, 4)
-        theme_doc_grid.addWidget(self.theme_doc_apply_btn, 2, 5)
-        self.theme_doc_sources_caption = QLabel("Declared stats:")
-        theme_doc_grid.addWidget(self.theme_doc_sources_caption, 3, 0)
-        theme_doc_grid.addWidget(self.theme_schema_label, 3, 1, 1, 4)
-        theme_doc_grid.addWidget(self.theme_doc_editor, 4, 0, 1, 6)
-        json_tab_layout.addWidget(self.theme_doc_box, 1)
-        self.theme_doc_box.hide()
+        bind_designer_workspace_shell_controls(self, designer_workspace_controls)
+        designer_tab_layout = designer_workspace_controls.designer_tab_layout
+        json_tab_layout = designer_workspace_controls.json_tab_layout
+
+        theme_doc_controls = build_theme_doc_panel(
+            json_tab_layout=json_tab_layout,
+            callbacks=ThemeDocCallbacks(
+                editor_changed=self._handle_theme_doc_editor_changed,
+                browse_theme_path=self.browse_theme_doc_path,
+                use_selected_theme=self.use_selected_theme_doc,
+                load_theme=self.load_theme_doc,
+                save_theme=self.save_theme_doc,
+                save_theme_as=lambda: self.save_theme_doc_as(from_animation_studio=False),
+                apply_theme=self.apply_theme_doc,
+                open_external=lambda: self.open_current_theme_json_externally(from_animation_studio=False),
+                insert_field_guide=self.insert_theme_json_field_guide_in_editor,
+            ),
+        )
+        bind_theme_doc_panel_controls(self, theme_doc_controls)
 
         designer_box = QGroupBox("")
         designer_box.setObjectName("designerWorkspaceBox")
         designer_box.setFlat(True)
         designer_outer = QVBoxLayout(designer_box)
         designer_outer.setContentsMargins(0, 0, 0, 0)
-        designer_outer.setSpacing(10)
+        designer_outer.setSpacing(4)
 
-        # 1. INICJALIZACJA WSZYSTKICH WIDŻETÓW (BEZPIECZNIE NA POCZĄTKU)
-        self.preview_label = PreviewLabel(self)
-        self.designer_element_list = LayerListWidget()
-        self.designer_element_list.setObjectName("designerLayerList")
-        self.designer_kind_combo = QComboBox()
-        self.designer_kind_combo.addItem("Teksty", "texts"); self.designer_kind_combo.addItem("Statystyki", "stats")
-        self.designer_kind_combo.addItem("Obrazy", "images"); self.designer_kind_combo.addItem("Panele", "panels")
-        self.designer_selection_label = QLabel("Zaznacz element")
-        
-        self.designer_id_edit = QLineEdit()
-        self.designer_x_spin = QSpinBox(); self.designer_x_spin.setRange(-5000, 5000)
-        self.designer_y_spin = QSpinBox(); self.designer_y_spin.setRange(-5000, 5000)
-        self.designer_w_spin = QSpinBox(); self.designer_w_spin.setRange(1, 5000)
-        self.designer_h_spin = QSpinBox(); self.designer_h_spin.setRange(1, 5000)
-        self.designer_z_spin = QSpinBox(); self.designer_z_spin.setRange(-1000, 1000)
-        self.designer_rotation_spin = QSpinBox(); self.designer_rotation_spin.setRange(0, 360)
-        self.designer_opacity_spin = QDoubleSpinBox(); self.designer_opacity_spin.setRange(0.0, 1.0); self.designer_opacity_spin.setSingleStep(0.1)
-        self.designer_text_edit = QLineEdit(); self.designer_label_edit = QLineEdit(); self.designer_format_edit = QLineEdit()
-        self.designer_source_combo = QComboBox(); self._populate_designer_source_combo()
-        self.designer_stat_display_combo = QComboBox(); self.designer_stat_display_combo.addItems(
-            [mode for mode in ("text", "progress", "gauge", "sparkline", "equalizer") if mode in KNOWN_STAT_DISPLAY]
+        initialize_designer_control_widgets(
+            self,
+            font_families=available_font_families(),
+            known_stat_display=KNOWN_STAT_DISPLAY,
+            equalizer_color_presets=EQUALIZER_COLOR_PRESETS,
         )
-        self.designer_stat_min_spin = QDoubleSpinBox(); self.designer_stat_min_spin.setRange(-999999.0, 999999.0); self.designer_stat_min_spin.setDecimals(2)
-        self.designer_stat_max_spin = QDoubleSpinBox(); self.designer_stat_max_spin.setRange(-999999.0, 999999.0); self.designer_stat_max_spin.setDecimals(2); self.designer_stat_max_spin.setValue(100.0)
-        self.designer_stat_show_value_chk = QCheckBox("Pokaż wartość")
-        self.designer_color_edit = QLineEdit(); self.designer_label_color_edit = QLineEdit(); self.designer_value_color_edit = QLineEdit()
-        self.designer_track_color_edit = QLineEdit(); self.designer_fill_color_edit = QLineEdit()
-        self.designer_align_combo = QComboBox(); self.designer_align_combo.addItems(["left", "center", "right"])
-        self.designer_font_family_combo = QComboBox(); self.designer_font_family_combo.addItems(available_font_families())
-        self.designer_font_size_spin = QSpinBox(); self.designer_font_size_spin.setRange(6, 200)
-        self.designer_stat_stroke_width_spin = QSpinBox()
-        self.designer_stat_stroke_width_spin.setRange(0, 64)
-        self.designer_stat_stroke_width_spin.setSpecialValueText("auto")
-        self.designer_stat_stroke_width_spin.setValue(12)
-        self.designer_stat_gauge_preset_combo = QComboBox()
-        self._populate_designer_stat_gauge_preset_combo()
-        self.designer_gauge_low_edit = QLineEdit()
-        self.designer_gauge_mid_edit = QLineEdit()
-        self.designer_gauge_high_edit = QLineEdit()
-        self.designer_gauge_smooth_spin = QDoubleSpinBox()
-        self.designer_gauge_smooth_spin.setRange(0.05, 1.0)
-        self.designer_gauge_smooth_spin.setSingleStep(0.05)
-        self.designer_gauge_smooth_spin.setDecimals(2)
-        self.designer_gauge_smooth_spin.setValue(0.32)
-        self.designer_gauge_match_value_chk = QCheckBox("Kolor wartości jak łuk")
-        self.designer_gauge_match_value_chk.setChecked(True)
-        self.designer_gauge_inner_alpha_spin = QDoubleSpinBox()
-        self.designer_gauge_inner_alpha_spin.setRange(0.0, 1.0)
-        self.designer_gauge_inner_alpha_spin.setSingleStep(0.05)
-        self.designer_gauge_inner_alpha_spin.setDecimals(2)
-        self.designer_gauge_inner_alpha_spin.setValue(1.0)
-        self.designer_gauge_inner_alpha_spin.setToolTip(
-            "Przezroczystość wypełnienia środka gauge (nie wpływa na łuk ani tekst)."
-        )
-        self.designer_gauge_ring_spin = QSpinBox()
-        self.designer_gauge_ring_spin.setRange(40, 900)
-        self.designer_gauge_ring_spin.setSuffix(" px")
-        self.designer_gauge_ring_spin.setToolTip(
-            "Średnica pierścienia (okręgu) gauge. Pole ramki (Szer./Wys. w Pozycja) powinno być większe "
-            "— przy układzie „Pod gauge” lub „Z boku” zwiększ wysokość lub szerokość."
-        )
-        self.designer_gauge_value_layout_combo = QComboBox()
-        self.designer_gauge_value_layout_combo.addItem("W środku pierścienia", "center")
-        self.designer_gauge_value_layout_combo.addItem("Pod spodem (wartość pod łukiem)", "below")
-        self.designer_gauge_value_layout_combo.addItem("Z boku (wartość po prawej)", "beside")
-        self.designer_sparkline_points_spin = QSpinBox()
-        self.designer_sparkline_points_spin.setRange(8, 240)
-        self.designer_sparkline_points_spin.setValue(42)
-        self.designer_sparkline_fill_opacity_spin = QDoubleSpinBox()
-        self.designer_sparkline_fill_opacity_spin.setRange(0.0, 1.0)
-        self.designer_sparkline_fill_opacity_spin.setSingleStep(0.05)
-        self.designer_sparkline_fill_opacity_spin.setDecimals(2)
-        self.designer_sparkline_fill_opacity_spin.setValue(0.18)
-        self.designer_sparkline_show_points_chk = QCheckBox("Pokaż punkt końcowy")
-        self.designer_sparkline_show_points_chk.setChecked(True)
-        self.designer_equalizer_bars_spin = QSpinBox()
-        self.designer_equalizer_bars_spin.setRange(6, 64)
-        self.designer_equalizer_bars_spin.setValue(18)
-        self.designer_equalizer_gap_spin = QSpinBox()
-        self.designer_equalizer_gap_spin.setRange(0, 16)
-        self.designer_equalizer_gap_spin.setValue(4)
-        self.designer_equalizer_mirror_chk = QCheckBox("Mirror from center")
-        self.designer_equalizer_mirror_chk.setChecked(False)
-        self.designer_theme_gauge_style_combo = QComboBox()
-        self._populate_designer_theme_gauge_style_combo()
-        self.designer_font_bold_chk = QCheckBox("B")
-        self.designer_font_italic_chk = QCheckBox("I")
-        self.designer_font_underline_chk = QCheckBox("U")
-
-        self.designer_path_edit = QLineEdit()
-        self.designer_fit_combo = QComboBox(); self.designer_fit_combo.addItems(["contain", "cover", "stretch"])
-        self.designer_visible_chk = QCheckBox("Visible"); self.designer_locked_chk = QCheckBox("Locked")
-
-        # Inicjalizacja brakujących widżetów paska narzędzi i opcji
-        self.designer_mode_combo = QComboBox(); self.designer_mode_combo.addItems(["Simple", "Advanced"])
-        self.designer_auto_preview_chk = QCheckBox("Auto-preview"); self.designer_auto_preview_chk.setChecked(True)
-        self.designer_snap_chk = QCheckBox("Snap"); self.designer_snap_chk.setChecked(True)
-        self.designer_snap_spin = QSpinBox(); self.designer_snap_spin.setRange(1, 128); self.designer_snap_spin.setValue(8)
-        self.designer_undo_btn = QPushButton("Undo")
-        self.designer_redo_btn = QPushButton("Redo")
-        self.designer_animation_mode_btn = QPushButton("Animation"); self.designer_animation_mode_btn.setCheckable(True)
-        self.designer_assets_toggle_btn = QPushButton("Media"); self.designer_assets_toggle_btn.setCheckable(True)
-        self.designer_details_toggle_btn = QPushButton("Show bottom"); self.designer_details_toggle_btn.setCheckable(True)
-
-        # Inicjalizacja widżetów animacji (ruchu)
-        self.motion_enabled_chk = QCheckBox("Animate element")
-        self.motion_start_spin = QSpinBox(); self.motion_start_spin.setRange(0, 99999)
-        self.motion_end_spin = QSpinBox(); self.motion_end_spin.setRange(0, 99999)
-        self.motion_target_x_spin = QSpinBox(); self.motion_target_x_spin.setRange(-5000, 5000)
-        self.motion_target_y_spin = QSpinBox(); self.motion_target_y_spin.setRange(-5000, 5000)
-        self.motion_target_opacity_spin = QDoubleSpinBox(); self.motion_target_opacity_spin.setRange(0.0, 1.0); self.motion_target_opacity_spin.setSingleStep(0.05)
-        self.motion_capture_current_btn = QPushButton("Set end from current")
-        self.motion_remove_btn = QPushButton("Remove motion")
 
         # Widżety Tła / Presetów / Logów
         self.bg_kind_combo = QComboBox(); self.bg_kind_combo.addItems(["generated", "image", "color"])
@@ -3615,6 +1840,7 @@ class TrofeoGui(QMainWindow):
         self.animation_loop_in_btn = QPushButton("Set In")
         self.animation_loop_out_btn = QPushButton("Set Out")
         self.animation_loop_clear_btn = QPushButton("Clear Loop")
+        self.animation_loop_close_seam_btn = QPushButton("Close Seam")
         self.animation_loop_label = QLabel("Loop: full")
         self.animation_onion_skin_chk = QCheckBox("Onion skin")
         self.animation_onion_opacity_spin = QDoubleSpinBox()
@@ -3650,6 +1876,10 @@ class TrofeoGui(QMainWindow):
         self.designer_toolbar_feedback_timer = QTimer(self)
         self.designer_toolbar_feedback_timer.setSingleShot(True)
         self.designer_toolbar_feedback_timer.timeout.connect(lambda: self._set_designer_toolbar_feedback("", auto_clear_ms=None))
+        self.designer_save_state_label = QLabel("")
+        self.designer_save_state_label.setObjectName("layerBadgeLabel")
+        self.designer_save_state_label.setMinimumWidth(86)
+        self.designer_save_state_label.setAlignment(Qt.AlignCenter)
 
         # 2. GŁÓWNY UKŁAD (Sidebar + Content) Z UŻYCIEM SPLITTERÓW
         self.designer_main_splitter = QSplitter(Qt.Horizontal)
@@ -3658,7 +1888,7 @@ class TrofeoGui(QMainWindow):
 
         # LEWY PANEL (Warstwy) - domyślnie szerszy
         self.designer_layers_container = QWidget()
-        self.designer_layers_container.setMinimumWidth(380)
+        self.designer_layers_container.setMinimumWidth(260)
         self._setup_designer_layers_panel(QVBoxLayout(self.designer_layers_container))
         self.designer_main_splitter.addWidget(self.designer_layers_container)
 
@@ -3666,7 +1896,7 @@ class TrofeoGui(QMainWindow):
         studio_right = QWidget()
         studio_layout = QVBoxLayout(studio_right)
         studio_layout.setContentsMargins(0, 0, 0, 0)
-        studio_layout.setSpacing(10)
+        studio_layout.setSpacing(4)
         self.designer_main_splitter.addWidget(studio_right)
 
         # Ustawienie domyślnych proporcji głównego splittera
@@ -3677,9 +1907,11 @@ class TrofeoGui(QMainWindow):
         # TOOLBAR (Przyciski akcji nad LCD)
         toolbar_frame = QFrame()
         toolbar_frame.setStyleSheet("background: rgba(30, 41, 59, 0.6); border-radius: 14px; border: 1px solid #334155;")
-        toolbar_layout = QHBoxLayout(toolbar_frame)
+        toolbar_layout = FlowLayout(toolbar_frame, h_spacing=6, v_spacing=6)
         toolbar_layout.setContentsMargins(10, 8, 10, 8)
-        toolbar_layout.setSpacing(8)
+        toolbar_policy = toolbar_frame.sizePolicy()
+        toolbar_policy.setHeightForWidth(True)
+        toolbar_frame.setSizePolicy(toolbar_policy)
 
         self.designer_reload_btn = AnimatedToolbarButton("Load theme")
         self.designer_reload_btn.setObjectName("secondaryAccentButton")
@@ -3725,6 +1957,8 @@ class TrofeoGui(QMainWindow):
         toolbar_layout.addWidget(self.designer_animation_mode_btn)
         toolbar_layout.addWidget(self.designer_assets_toggle_btn)
         toolbar_layout.addStretch(1)
+        toolbar_layout.addWidget(self.designer_save_state_label, 0, Qt.AlignVCenter)
+        toolbar_layout.addSpacing(6)
         toolbar_layout.addWidget(self.designer_toolbar_feedback_label, 0, Qt.AlignVCenter)
         toolbar_layout.addSpacing(8)
         toolbar_layout.addWidget(self.designer_preview_btn)
@@ -3733,8 +1967,8 @@ class TrofeoGui(QMainWindow):
 
         theme_gauge_bar = QWidget()
         theme_gauge_layout = QHBoxLayout(theme_gauge_bar)
-        theme_gauge_layout.setContentsMargins(0, 2, 0, 4)
-        theme_gauge_layout.setSpacing(8)
+        theme_gauge_layout.setContentsMargins(0, 0, 0, 2)
+        theme_gauge_layout.setSpacing(6)
         self.designer_theme_gauge_bar_label = QLabel("Default gauge preset (meta.gauge_style):")
         theme_gauge_layout.addWidget(self.designer_theme_gauge_bar_label)
         theme_gauge_layout.addWidget(self.designer_theme_gauge_style_combo, 1)
@@ -3743,21 +1977,32 @@ class TrofeoGui(QMainWindow):
         # PIONOWY SPLITTER DLA LCD I INSPECTORA
         self.designer_top_splitter = QSplitter(Qt.Vertical)
         self.designer_top_splitter.setChildrenCollapsible(False)
+        self.designer_top_splitter.splitterMoved.connect(lambda _pos, _idx: self._clamp_designer_splitter_later())
         studio_layout.addWidget(self.designer_top_splitter, 1)
 
         # LCD PREVIEW (Góra prawego panelu)
         self.designer_canvas_workbench = QFrame()
         self.designer_canvas_workbench.setObjectName("designerSectionBox")
+        self.designer_canvas_workbench.setMinimumHeight(300)
+        self.designer_canvas_workbench.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         canvas_vbox = QVBoxLayout(self.designer_canvas_workbench)
         canvas_vbox.setContentsMargins(0, 0, 0, 0) # Przejmujemy niewykorzystaną część
-        canvas_vbox.setSpacing(6)
+        canvas_vbox.setSpacing(2)
 
-        preview_tools_row = QHBoxLayout()
-        preview_tools_row.setContentsMargins(10, 10, 10, 0)
-        preview_tools_row.setSpacing(6)
+        preview_tools_row = FlowLayout(h_spacing=6, v_spacing=4)
+        preview_tools_row.setContentsMargins(10, 6, 10, 0)
         self.preview_tools_label = QLabel("Mouse:")
         self.preview_tools_label.setObjectName("selectionSummaryLabel")
         preview_tools_row.addWidget(self.preview_tools_label)
+        self.designer_active_tool_label = QLabel("Auto")
+        self.designer_active_tool_label.setObjectName("selectionSummaryLabel")
+        self.designer_active_tool_label.setMinimumWidth(78)
+        self.designer_active_tool_label.setAlignment(Qt.AlignCenter)
+        self.designer_active_tool_label.setStyleSheet(
+            "background: rgba(31, 111, 235, 0.18); border: 1px solid rgba(94, 200, 255, 0.35); "
+            "border-radius: 8px; padding: 3px 8px; font-weight: 700;"
+        )
+        preview_tools_row.addWidget(self.designer_active_tool_label)
         self.designer_tool_auto_btn = AnimatedToolbarButton("Auto")
         self.designer_tool_select_btn = AnimatedToolbarButton("Select")
         self.designer_tool_move_btn = AnimatedToolbarButton("Move")
@@ -3767,9 +2012,12 @@ class TrofeoGui(QMainWindow):
         self.designer_preview_undo_btn = AnimatedToolbarButton("↶")
         self.designer_preview_redo_btn = AnimatedToolbarButton("↷")
         self.designer_align_left_btn = AnimatedToolbarButton("⟸")
+        self.designer_align_top_btn = AnimatedToolbarButton("⇑")
         self.designer_align_center_h_btn = AnimatedToolbarButton("↔")
         self.designer_align_center_v_btn = AnimatedToolbarButton("↕")
+        self.designer_align_bottom_btn = AnimatedToolbarButton("⇓")
         self.designer_align_right_btn = AnimatedToolbarButton("⟹")
+        self.designer_auto_layout_btn = AnimatedToolbarButton("Arrange")
         self.designer_crop_reset_btn.setObjectName("secondaryAccentButton")
         for btn in (
             self.designer_tool_auto_btn,
@@ -3788,9 +2036,12 @@ class TrofeoGui(QMainWindow):
             self.designer_preview_undo_btn,
             self.designer_preview_redo_btn,
             self.designer_align_left_btn,
+            self.designer_align_top_btn,
             self.designer_align_center_h_btn,
             self.designer_align_center_v_btn,
+            self.designer_align_bottom_btn,
             self.designer_align_right_btn,
+            self.designer_auto_layout_btn,
         ):
             btn.setMinimumHeight(26)
             btn.setMaximumHeight(28)
@@ -3798,19 +2049,55 @@ class TrofeoGui(QMainWindow):
             self.designer_preview_undo_btn,
             self.designer_preview_redo_btn,
             self.designer_align_left_btn,
+            self.designer_align_top_btn,
             self.designer_align_center_h_btn,
             self.designer_align_center_v_btn,
+            self.designer_align_bottom_btn,
             self.designer_align_right_btn,
         ):
             btn.setMinimumWidth(30)
             btn.setMaximumWidth(34)
             btn.setObjectName("secondaryAccentButton")
+        self.designer_auto_layout_btn.setMinimumWidth(72)
+        self.designer_auto_layout_btn.setObjectName("secondaryAccentButton")
         self.designer_preview_undo_btn.setToolTip(self._tr("Undo designer change", "Cofnij zmianę w projektancie"))
         self.designer_preview_redo_btn.setToolTip(self._tr("Redo designer change", "Ponów zmianę w projektancie"))
         self.designer_align_left_btn.setToolTip(self._tr("Align selected element to the left edge", "Wyrównaj zaznaczenie do lewej krawędzi"))
+        self.designer_align_top_btn.setToolTip(self._tr("Align selected element to the top edge", "Wyrównaj zaznaczenie do górnej krawędzi"))
         self.designer_align_center_h_btn.setToolTip(self._tr("Center selected element horizontally", "Wycentruj zaznaczenie w poziomie"))
         self.designer_align_center_v_btn.setToolTip(self._tr("Center selected element vertically", "Wycentruj zaznaczenie w pionie"))
+        self.designer_align_bottom_btn.setToolTip(self._tr("Align selected element to the bottom edge", "Wyrównaj zaznaczenie do dolnej krawędzi"))
         self.designer_align_right_btn.setToolTip(self._tr("Align selected element to the right edge", "Wyrównaj zaznaczenie do prawej krawędzi"))
+        self.designer_auto_layout_btn.setToolTip(
+            self._tr(
+                "Auto-arrange selected layers, or all visible widgets and stats when nothing is selected.",
+                "Automatycznie rozmieść zaznaczenie albo wszystkie widoczne widgety i statystyki, gdy nic nie jest zaznaczone.",
+            )
+        )
+        self.designer_tool_auto_btn.setToolTip(
+            self._tr(
+                "Auto: click to select, drag selected bounds to move, drag handles to resize.",
+                "Auto: klik zaznacza, przeciąganie ramki przesuwa, uchwyty zmieniają rozmiar.",
+            )
+        )
+        self.designer_tool_select_btn.setToolTip(
+            self._tr(
+                "Select: click an element or drag a box to select multiple layers.",
+                "Zaznaczanie: kliknij element albo przeciągnij ramkę, aby wybrać kilka warstw.",
+            )
+        )
+        self.designer_tool_move_btn.setToolTip(
+            self._tr(
+                "Move: drag elements on the LCD preview without resizing them.",
+                "Przesuwanie: przeciągaj elementy na podglądzie LCD bez zmiany rozmiaru.",
+            )
+        )
+        self.designer_tool_scale_btn.setToolTip(
+            self._tr(
+                "Scale: drag an element edge or corner to resize it on the preview.",
+                "Skalowanie: przeciągnij bok albo narożnik elementu, aby zmienić rozmiar.",
+            )
+        )
         preview_tools_row.addWidget(self.designer_tool_auto_btn)
         preview_tools_row.addWidget(self.designer_tool_select_btn)
         preview_tools_row.addWidget(self.designer_tool_move_btn)
@@ -3824,42 +2111,60 @@ class TrofeoGui(QMainWindow):
         preview_tools_row.addWidget(self.designer_snap_spin)
         preview_tools_row.addSpacing(4)
         preview_tools_row.addWidget(self.designer_align_left_btn)
+        preview_tools_row.addWidget(self.designer_align_top_btn)
         preview_tools_row.addWidget(self.designer_align_center_h_btn)
         preview_tools_row.addWidget(self.designer_align_center_v_btn)
+        preview_tools_row.addWidget(self.designer_align_bottom_btn)
         preview_tools_row.addWidget(self.designer_align_right_btn)
+        preview_tools_row.addSpacing(6)
+        preview_tools_row.addWidget(self.designer_auto_layout_btn)
         preview_tools_row.addSpacing(6)
         preview_tools_row.addWidget(self.designer_crop_reset_btn)
         preview_tools_row.addStretch(1)
         canvas_vbox.addLayout(preview_tools_row)
         
-        preview_scroll = QScrollArea()
+        preview_scroll = LcdPreviewScrollArea()
+        self.designer_preview_scroll = preview_scroll
         preview_scroll.setWidgetResizable(True); preview_scroll.setAlignment(Qt.AlignCenter)
         preview_scroll.setFrameShape(QFrame.NoFrame); preview_scroll.setWidget(self.preview_label)
-        canvas_vbox.addWidget(preview_scroll, 1)
+        canvas_vbox.addWidget(preview_scroll, 0)
         
-        info_row = QHBoxLayout()
-        info_row.setContentsMargins(10, 0, 10, 10)
+        self.preview_status_bar = QFrame()
+        self.preview_status_bar.setObjectName("previewStatusBar")
+        self.preview_status_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.preview_status_bar.setMinimumHeight(28)
+        self.preview_status_bar.setMaximumHeight(30)
+        info_row = QHBoxLayout(self.preview_status_bar)
+        info_row.setContentsMargins(8, 0, 8, 0)
+        info_row.setSpacing(6)
         self.preview_info_label = QLabel("💡 Wskazówka: Możesz przesuwać elementy bezpośrednio na podglądzie.")
         self.preview_info_label.setObjectName("previewHintLabel")
         self.preview_info_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.preview_info_label.setMaximumHeight(24)
         self.preview_coords_label = QLabel("x: -, y: -")
         self.preview_coords_label.setObjectName("previewHintLabel")
+        self.preview_coords_label.setMaximumHeight(24)
         self.preview_delta_label = QLabel("Δx: 0, Δy: 0")
         self.preview_delta_label.setObjectName("previewHintLabel")
+        self.preview_delta_label.setMaximumHeight(24)
         self.preview_guides_chk = QCheckBox("Show layer bounds")
         self.preview_guides_chk.setChecked(True)
+        self.preview_guides_chk.setMaximumHeight(24)
         self.preview_guides_chk.toggled.connect(self._update_preview_canvas_overlay)
         
         info_row.addWidget(self.preview_info_label, 1)
         info_row.addWidget(self.preview_guides_chk)
         info_row.addWidget(self.preview_coords_label)
         info_row.addWidget(self.preview_delta_label)
-        canvas_vbox.addLayout(info_row)
+        canvas_vbox.addWidget(self.preview_status_bar, 0)
         
         self.designer_top_splitter.addWidget(self.designer_canvas_workbench)
 
         # INSPECTOR (Właściwości - Powiększony do góry)
         self.designer_inspector_container = QWidget()
+        self.designer_inspector_container.setMinimumHeight(designer_inspector_min_height(int(self.height() or 0)))
+        self.designer_inspector_container.setMaximumHeight(440)
+        self.designer_inspector_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._setup_inspector_tabs(QVBoxLayout(self.designer_inspector_container))
         self.designer_stat_display_combo.currentTextChanged.connect(
             lambda _t: self._update_gauge_stat_inspector_visibility()
@@ -3869,8 +2174,8 @@ class TrofeoGui(QMainWindow):
 
         # Ograniczamy wysokość Inspectora, dajemy więcej miejsca dla LCD
         self.designer_top_splitter.setStretchFactor(0, 5) # Canvas
-        self.designer_top_splitter.setStretchFactor(1, 1) # Inspector
-        self.designer_top_splitter.setSizes([900, 200])
+        self.designer_top_splitter.setStretchFactor(1, 0) # Inspector
+        self.designer_top_splitter.setSizes([430, 360])
 
         designer_tab_layout.addWidget(designer_box, 1)
 
@@ -3946,9 +2251,12 @@ class TrofeoGui(QMainWindow):
         self.designer_preview_undo_btn.clicked.connect(self.undo_designer_change)
         self.designer_preview_redo_btn.clicked.connect(self.redo_designer_change)
         self.designer_align_left_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("left"))
+        self.designer_align_top_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("top"))
         self.designer_align_center_h_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("center-h"))
         self.designer_align_center_v_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("center-v"))
+        self.designer_align_bottom_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("bottom"))
         self.designer_align_right_btn.clicked.connect(lambda: self._align_selected_elements_to_canvas("right"))
+        self.designer_auto_layout_btn.clicked.connect(self.auto_arrange_designer_elements)
         self.designer_snap_spin.valueChanged.connect(lambda value: self.preview_label.set_snap_threshold(int(value)))
         self.designer_snap_chk.toggled.connect(lambda _checked: self._update_preview_canvas_overlay())
 
@@ -3997,10 +2305,34 @@ class TrofeoGui(QMainWindow):
             (self.designer_equalizer_bars_spin, "valueChanged"),
             (self.designer_equalizer_gap_spin, "valueChanged"),
             (self.designer_equalizer_mirror_chk, "toggled"),
+            (self.designer_equalizer_transparent_bg_chk, "toggled"),
+            (self.designer_equalizer_threshold_spin, "valueChanged"),
+            (self.designer_equalizer_threshold_color_edit, "textChanged"),
+            (self.widget_title_font_spin, "valueChanged"),
+            (self.widget_body_font_spin, "valueChanged"),
+            (self.widget_detail_font_spin, "valueChanged"),
+            (self.widget_title_color_edit, "textChanged"),
+            (self.widget_body_color_edit, "textChanged"),
+            (self.widget_detail_color_edit, "textChanged"),
+            (self.widget_panel_color_edit, "textChanged"),
+            (self.widget_cover_enabled_chk, "toggled"),
+            (self.widget_backdrop_enabled_chk, "toggled"),
+            (self.widget_title_marquee_chk, "toggled"),
+            (self.widget_equalizer_enabled_chk, "toggled"),
+            (self.weather_widget_title_font_spin, "valueChanged"),
+            (self.weather_widget_body_font_spin, "valueChanged"),
+            (self.weather_widget_detail_font_spin, "valueChanged"),
+            (self.weather_widget_title_color_edit, "textChanged"),
+            (self.weather_widget_body_color_edit, "textChanged"),
+            (self.weather_widget_detail_color_edit, "textChanged"),
+            (self.weather_widget_panel_color_edit, "textChanged"),
+            (self.weather_widget_transparent_bg_chk, "toggled"),
+            (self.weather_widget_animate_icons_chk, "toggled"),
             (self.bg_kind_combo, "currentTextChanged"), (self.bg_path_edit, "textChanged")
         ]:
             try: getattr(widget, signal).connect(self.on_designer_field_changed)
             except: pass
+        self.designer_equalizer_preset_combo.currentIndexChanged.connect(self._on_equalizer_preset_changed)
         self.bg_animation_timeline.selection_changed.connect(self._on_animation_timeline_selection_changed)
         self.layout_preset_save_btn.clicked.connect(self.save_layout_preset)
         self.layout_preset_load_btn.clicked.connect(self.load_layout_preset)
@@ -4021,6 +2353,7 @@ class TrofeoGui(QMainWindow):
         self.animation_loop_in_btn.clicked.connect(self.set_animation_loop_in)
         self.animation_loop_out_btn.clicked.connect(self.set_animation_loop_out)
         self.animation_loop_clear_btn.clicked.connect(self.clear_animation_loop_range)
+        self.animation_loop_close_seam_btn.clicked.connect(self.close_animation_loop_seam)
         self.animation_onion_skin_chk.toggled.connect(lambda _checked: self._refresh_animation_studio_preview())
         self.animation_onion_opacity_spin.valueChanged.connect(lambda _value: self._refresh_animation_studio_preview())
         self.animation_select_range_btn.clicked.connect(self.select_animation_range_between_edges)
@@ -4189,7 +2522,7 @@ class TrofeoGui(QMainWindow):
     def _format_log_payload(self, action: str, data: dict[str, Any]) -> str:
         if action == "status":
             return f"[status] {self._summarize_status_payload(data)}"
-        if action == "theme-doc-preview":
+        if action.startswith("theme-doc-preview"):
             result = data.get("result", {})
             if isinstance(result, dict):
                 image_path = result.get("image_path", "-")
@@ -4206,6 +2539,8 @@ class TrofeoGui(QMainWindow):
                     stdout_tail = stdout_tail[:400] + "..."
                 return f"[theme-doc-apply] theme={theme_name} exit={exit_code} {stdout_tail}"
         compact = json.dumps(data, ensure_ascii=False)
+        if len(compact) > 4000:
+            compact = compact[:4000] + "...[truncated]"
         if len(compact) > 600:
             compact = compact[:600] + "..."
         return f"[{action}] {compact}"
@@ -4244,6 +2579,24 @@ class TrofeoGui(QMainWindow):
         self._tray_icon.activated.connect(self._on_tray_activated)
         self._tray_icon.show()
 
+    def _tray_available(self) -> bool:
+        return (
+            QSystemTrayIcon.isSystemTrayAvailable()
+            and self._tray_icon is not None
+            and self._tray_icon.isVisible()
+        )
+
+    def _poll_show_request(self) -> None:
+        try:
+            stat = SHOW_REQUEST_PATH.stat()
+        except OSError:
+            return
+        mtime_ns = stat.st_mtime_ns
+        if mtime_ns == self._show_request_mtime_ns:
+            return
+        self._show_request_mtime_ns = mtime_ns
+        self.show_from_tray()
+
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in {
             QSystemTrayIcon.ActivationReason.Trigger,
@@ -4255,11 +2608,14 @@ class TrofeoGui(QMainWindow):
                 self.show_from_tray()
 
     def hide_to_tray(self) -> None:
+        if not self._tray_available():
+            self.showMinimized()
+            return
         self.hide()
         if self._tray_icon is not None and not self._tray_message_shown:
             self._tray_icon.showMessage(
                 "Open Trofeo LCD",
-                "Aplikacja działa w trayu. Kliknij ikonę, aby przywrócić okno.",
+                "Aplikacja działa w trayu. Kliknij ikonę albo uruchom aplikację z menu ponownie, aby przywrócić okno.",
                 QSystemTrayIcon.Information,
                 3000,
             )
@@ -4277,9 +2633,12 @@ class TrofeoGui(QMainWindow):
         self.close()
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
-        if self._close_to_tray_enabled and self._tray_icon is not None and self._tray_icon.isVisible():
+        if self._close_to_tray_enabled and self._tray_available():
             event.ignore()
             self.hide_to_tray()
+            return
+        if not self._confirm_discard_unsaved_theme_changes(self._tr("close application", "zamknięcie aplikacji")):
+            event.ignore()
             return
         self._save_ui_state()
         super().closeEvent(event)
@@ -4331,6 +2690,105 @@ class TrofeoGui(QMainWindow):
             return
         self.autosave_debounce.start(500)
 
+    def _handle_theme_doc_editor_changed(self) -> None:
+        if getattr(self, "_theme_doc_editor_syncing", False):
+            return
+        self._theme_doc_model_newer_than_editor = False
+        if self.theme_doc_editor.toPlainText().strip():
+            self._mark_theme_doc_dirty("json-editor")
+
+    def _mark_theme_doc_dirty(self, reason: str = "") -> None:
+        if self.theme_doc_model is None and not self.theme_doc_editor.toPlainText().strip():
+            return
+        if not self._theme_doc_dirty:
+            self._theme_doc_dirty = True
+            if reason:
+                self.append_log(f"[theme-doc] unsaved changes: {reason}")
+        self._update_theme_doc_save_state()
+        self._schedule_theme_autosave()
+
+    def _mark_theme_doc_clean(self) -> None:
+        self._flush_theme_doc_editor_sync()
+        self._theme_doc_dirty = False
+        self._update_theme_doc_save_state()
+        try:
+            if THEME_AUTOSAVE_PATH.exists():
+                THEME_AUTOSAVE_PATH.unlink()
+        except Exception as exc:
+            self.append_log(f"[autosave] cleanup-skip: {exc}")
+
+    def _update_theme_doc_save_state(self) -> None:
+        dirty = bool(getattr(self, "_theme_doc_dirty", False))
+        self.setWindowModified(dirty)
+        if hasattr(self, "designer_save_state_label"):
+            label = self.designer_save_state_label
+            if dirty:
+                label.setText(self._tr("Unsaved", "Niezapisane"))
+                label.setToolTip(self._tr("Theme has unsaved changes.", "Motyw ma niezapisane zmiany."))
+            else:
+                label.setText(self._tr("Saved", "Zapisane"))
+                label.setToolTip(self._tr("Theme is saved.", "Motyw jest zapisany."))
+
+    def _save_theme_doc_to_current_path_sync(self) -> bool:
+        path = self.theme_doc_path_edit.text().strip()
+        if not path:
+            QMessageBox.information(self, "Info", "Podaj ścieżkę do pliku motywu.")
+            return False
+        document = self._current_theme_document()
+        if document is None:
+            return False
+        resolved = Path(path).expanduser()
+        if not resolved.is_absolute():
+            resolved = (Path.cwd() / resolved).resolve()
+        try:
+            normalized = normalize_theme_document(deepcopy(document))
+            save_theme_document(resolved, normalized, include_doc_header=True)
+            self.theme_doc_path_edit.setText(str(resolved))
+            self.theme_doc_model = deepcopy(normalized)
+            self._set_theme_doc_editor_document(normalized)
+            self._mark_theme_doc_clean()
+            self._set_designer_toolbar_feedback(
+                self._tr(f"Theme saved: {resolved.name}", f"Motyw zapisany: {resolved.name}")
+            )
+            return True
+        except Exception as exc:
+            QMessageBox.warning(self, self._tr("Theme error", "Błąd motywu"), str(exc))
+            return False
+
+    def _confirm_discard_unsaved_theme_changes(self, action_label: str) -> bool:
+        if not bool(getattr(self, "_theme_doc_dirty", False)):
+            return True
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(self._tr("Unsaved theme", "Niezapisany motyw"))
+        box.setText(
+            self._tr(
+                f"The current theme has unsaved changes before: {action_label}.",
+                f"Aktualny motyw ma niezapisane zmiany przed akcją: {action_label}.",
+            )
+        )
+        box.setInformativeText(
+            self._tr(
+                "Save the theme now, discard changes, or cancel.",
+                "Zapisz motyw teraz, odrzuć zmiany albo anuluj.",
+            )
+        )
+        save_btn = box.addButton(self._tr("Save", "Zapisz"), QMessageBox.AcceptRole)
+        discard_btn = box.addButton(self._tr("Discard", "Odrzuć"), QMessageBox.DestructiveRole)
+        cancel_btn = box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(save_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked == save_btn:
+            return self._save_theme_doc_to_current_path_sync()
+        if clicked == discard_btn:
+            self._theme_doc_dirty = False
+            self._update_theme_doc_save_state()
+            return True
+        if clicked == cancel_btn:
+            return False
+        return False
+
     def _image_tools_available(self) -> bool:
         return prepare_image_for_canvas is not None and render_prepared_image is not None
 
@@ -4378,6 +2836,7 @@ class TrofeoGui(QMainWindow):
             crop_reset_btn.setEnabled(bool(has_crop))
         crop_btn = getattr(self, "designer_tool_crop_btn", None)
         if crop_btn is not None:
+            crop_btn.setEnabled(bool(crop_available))
             crop_btn.setToolTip(
                 self._tr(
                     "Draw a crop area on the preview for the selected image.",
@@ -4389,6 +2848,8 @@ class TrofeoGui(QMainWindow):
                     "Wybierz dokładnie jedną warstwę obrazu, aby kadrować ją na podglądzie.",
                 )
             )
+        if not crop_available and self._designer_preview_tool_mode() == "crop":
+            self._set_designer_mouse_tool("auto")
 
     def _set_designer_mouse_tool(self, mode: str) -> None:
         normalized = str(mode).strip().lower() or "auto"
@@ -4433,6 +2894,15 @@ class TrofeoGui(QMainWindow):
         }
         if hasattr(self, "preview_info_label"):
             self.preview_info_label.setText(hint_map.get(normalized, hint_map["auto"]))
+        tool_label_map = {
+            "auto": self._tr("Tool: Auto", "Narzędzie: Auto"),
+            "select": self._tr("Tool: Select", "Narzędzie: Zaznacz"),
+            "move": self._tr("Tool: Move", "Narzędzie: Przesuń"),
+            "scale": self._tr("Tool: Scale", "Narzędzie: Skaluj"),
+            "crop": self._tr("Tool: Crop", "Narzędzie: Kadruj"),
+        }
+        if hasattr(self, "designer_active_tool_label"):
+            self.designer_active_tool_label.setText(tool_label_map.get(normalized, tool_label_map["auto"]))
         self._update_designer_mouse_tools_availability()
 
     def _designer_snap_threshold(self) -> int:
@@ -4447,47 +2917,17 @@ class TrofeoGui(QMainWindow):
         h: int,
         collection: str,
         index: int,
-    ) -> tuple[int, int, list[tuple[str, int]]]:
+    ) -> tuple[int, int, list[dict[str, Any]]]:
         if not getattr(self, "designer_snap_chk", None) or not self.designer_snap_chk.isChecked():
             return int(x), int(y), []
-        threshold = self._designer_snap_threshold()
-        candidates_x = [("left", x), ("center", x + w // 2), ("right", x + w)]
-        candidates_y = [("top", y), ("center", y + h // 2), ("bottom", y + h)]
-        targets_x = [
-            24,
-            max(0, self.preview_label._canvas_size.width() - 24),
-            self.preview_label._canvas_size.width() // 2,
-        ]
-        targets_y = [
-            18,
-            max(0, self.preview_label._canvas_size.height() - 18),
-            self.preview_label._canvas_size.height() // 2,
-        ]
-        for item in self._all_canvas_elements():
-            if item["collection"] == collection and int(item["index"]) == index:
-                continue
-            if not bool(item.get("visible", True)):
-                continue
-            rx, ry, rw, rh = item["rect"]
-            targets_x.extend([int(rx), int(rx + rw // 2), int(rx + rw)])
-            targets_y.extend([int(ry), int(ry + rh // 2), int(ry + rh)])
-
-        best_x: tuple[int, int] | None = None
-        best_y: tuple[int, int] | None = None
-        for _kind, candidate in candidates_x:
-            for target in targets_x:
-                delta = target - candidate
-                if abs(delta) <= threshold and (best_x is None or abs(delta) < abs(best_x[1])):
-                    best_x = (target, delta)
-        for _kind, candidate in candidates_y:
-            for target in targets_y:
-                delta = target - candidate
-                if abs(delta) <= threshold and (best_y is None or abs(delta) < abs(best_y[1])):
-                    best_y = (target, delta)
-        snapped_x = int(x + (best_x[1] if best_x is not None else 0))
-        snapped_y = int(y + (best_y[1] if best_y is not None else 0))
-        guides = self.preview_label._compute_snap_guides(snapped_x, snapped_y, w, h, collection, index)
-        return snapped_x, snapped_y, guides
+        return snap_rect_position(
+            (int(x), int(y), int(w), int(h)),
+            collection=collection,
+            index=index,
+            elements=self._all_canvas_elements(),
+            canvas_size=(self.preview_label._canvas_size.width(), self.preview_label._canvas_size.height()),
+            threshold=self._designer_snap_threshold(),
+        )
 
     def _align_selected_elements_to_canvas(self, mode: str) -> None:
         if self.theme_doc_model is None:
@@ -4517,7 +2957,7 @@ class TrofeoGui(QMainWindow):
                 next_y = 0
             elif mode == "bottom":
                 next_y = canvas_height - rect_h
-            if collection in {"images", "panels"}:
+            if collection in {"images", "panels", "widgets"}:
                 item["rect"] = [
                     self._snap_value(int(next_x)),
                     self._snap_value(int(next_y)),
@@ -4531,6 +2971,213 @@ class TrofeoGui(QMainWindow):
         self.refresh_designer_element_list()
         self._update_preview_canvas_overlay()
         self.schedule_preview_theme_doc()
+
+    def _auto_layout_kind(self, collection: str, item: dict[str, Any]) -> str:
+        return auto_layout_kind(collection, item)
+
+    def _auto_layout_target_entries(self) -> tuple[list[tuple[str, int, dict[str, Any]]], bool]:
+        selected = [
+            (collection, row, item)
+            for collection, row, item in self._selected_items_multi_any()
+            if isinstance(item, dict) and not bool(item.get("locked", False))
+        ]
+        if selected:
+            return selected, True
+        entries: list[tuple[str, int, dict[str, Any]]] = []
+        for collection in ("widgets", "stats"):
+            for row, item in enumerate(self._theme_items_for_collection(collection)):
+                if isinstance(item, dict) and bool(item.get("visible", True)) and not bool(item.get("locked", False)):
+                    entries.append((collection, row, item))
+        for row, item in enumerate(self._theme_items_for_collection("images")):
+            if not isinstance(item, dict) or not bool(item.get("visible", True)) or bool(item.get("locked", False)):
+                continue
+            if self._auto_layout_kind("images", item) in {"clock", "media_image"}:
+                entries.append(("images", row, item))
+        return entries, False
+
+    def _auto_layout_set_rect(
+        self,
+        collection: str,
+        item: dict[str, Any],
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        canvas_width: int,
+        canvas_height: int,
+        *,
+        align: str | None = None,
+    ) -> None:
+        apply_bounded_layout_rect(
+            item,
+            collection,
+            x,
+            y,
+            width,
+            height,
+            canvas_width,
+            canvas_height,
+            align=align,
+            snap=self._snap_value,
+        )
+
+    def auto_arrange_designer_elements(self) -> None:
+        if self.theme_doc_model is None:
+            self.reload_designer_from_json()
+        if self.theme_doc_model is None:
+            return
+        entries, selection_only = self._auto_layout_target_entries()
+        if not entries:
+            QMessageBox.information(
+                self,
+                self._tr("Auto arrange", "Automatyczny układ"),
+                self._tr(
+                    "Select layers to arrange, or add visible widgets/stats first.",
+                    "Zaznacz warstwy do rozmieszczenia albo dodaj najpierw widoczne widgety/statystyki.",
+                ),
+            )
+            return
+
+        canvas = self.theme_doc_model.get("canvas", {}) if isinstance(self.theme_doc_model, dict) else {}
+        canvas_width = int(canvas.get("width", 1920) or 1920)
+        canvas_height = int(canvas.get("height", 462) or 462)
+        metrics = auto_layout_metrics(canvas_width, canvas_height)
+
+        buckets = bucket_auto_layout_entries(entries)
+        layout_plan = auto_layout_plan(metrics, buckets)
+
+        self.push_designer_history()
+
+        # Left telemetry cluster: gauges get the most predictable space.
+        gauges = buckets.get("gauge", [])
+        if gauges:
+            for (collection, _row, item), (x, y, width, height) in zip(gauges, layout_plan["gauge"]):
+                self._auto_layout_set_rect(
+                    collection,
+                    item,
+                    x,
+                    y,
+                    width,
+                    height,
+                    canvas_width,
+                    canvas_height,
+                    align="center",
+                )
+
+        # Center: now playing first, then progress/sparkline rows.
+        media_items = buckets.get("media", [])
+        for (collection, _row, item), (x, y, width, height) in zip(
+            media_items,
+            layout_plan["media"],
+        ):
+            self._auto_layout_set_rect(
+                collection,
+                item,
+                x,
+                y,
+                width,
+                height,
+                canvas_width,
+                canvas_height,
+            )
+
+        flow_items = buckets.get("progress", []) + buckets.get("sparkline", []) + buckets.get("stat", []) + buckets.get("widget", [])
+        for (collection, _row, item), (x, y, width, height) in zip(
+            flow_items,
+            layout_plan["flow"],
+        ):
+            self._auto_layout_set_rect(
+                collection,
+                item,
+                x,
+                y,
+                width,
+                height,
+                canvas_width,
+                canvas_height,
+                align="left",
+            )
+
+        # Right: weather, forecast, clock and EQ keep consistent readable sizes.
+        weather_items = buckets.get("weather", [])
+        forecast_items = buckets.get("forecast", [])
+        clock_items = buckets.get("clock", [])
+        eq_items = buckets.get("eq", [])
+        for (collection, _row, item), (x, y, width, height) in zip(weather_items, layout_plan["weather"]):
+            self._auto_layout_set_rect(
+                collection,
+                item,
+                x,
+                y,
+                width,
+                height,
+                canvas_width,
+                canvas_height,
+        )
+        for (collection, _row, item), (x, y, width, height) in zip(
+            forecast_items,
+            layout_plan["forecast"],
+        ):
+            self._auto_layout_set_rect(
+                collection,
+                item,
+                x,
+                y,
+                width,
+                height,
+                canvas_width,
+                canvas_height,
+            )
+        for (collection, _row, item), (x, y, width, height) in zip(clock_items, layout_plan["clock"]):
+            self._auto_layout_set_rect(
+                collection,
+                item,
+                x,
+                y,
+                width,
+                height,
+                canvas_width,
+                canvas_height,
+            )
+        for (collection, _row, item), (x, y, width, height) in zip(eq_items, layout_plan["eq"]):
+            self._auto_layout_set_rect(
+                collection,
+                item,
+                x,
+                y,
+                width,
+                height,
+                canvas_width,
+                canvas_height,
+                align="left",
+            )
+
+        # If the user explicitly selected text/image layers, place leftovers in a tidy bottom row.
+        leftovers = buckets.get("text", []) + buckets.get("image", []) + buckets.get("media_image", [])
+        if leftovers:
+            for (collection, _row, item), (x, y, width, height) in zip(leftovers, layout_plan["bottom"]):
+                self._auto_layout_set_rect(
+                    collection,
+                    item,
+                    x,
+                    y,
+                    width,
+                    height,
+                    canvas_width,
+                    canvas_height,
+                    align="left",
+                )
+
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        self._update_preview_canvas_overlay()
+        self.schedule_preview_theme_doc()
+        self.preview_info_label.setText(
+            self._tr(
+                f"Auto-arranged {len(entries)} selected layer(s)." if selection_only else f"Auto-arranged {len(entries)} visible widget/stat layer(s).",
+                f"Automatycznie rozmieszczono {len(entries)} zaznaczonych warstw." if selection_only else f"Automatycznie rozmieszczono {len(entries)} widocznych widgetów/statystyk.",
+            )
+        )
 
     def _ensure_preview_selection_visible(self, entries: list[tuple[str, int]]) -> None:
         if not entries:
@@ -4567,14 +3214,7 @@ class TrofeoGui(QMainWindow):
             if combo_index >= 0 and combo_index != self.designer_kind_combo.currentIndex():
                 self.designer_kind_combo.setCurrentIndex(combo_index)
             target_rows = [row for collection, row in normalized if collection == target_collection]
-        self.designer_element_list.blockSignals(True)
-        self.designer_element_list.clearSelection()
-        for row in target_rows:
-            item = self.designer_element_list.item(row)
-            if item is not None and not item.isHidden():
-                item.setSelected(True)
-        self.designer_element_list.setCurrentRow(min(target_rows) if target_rows else -1)
-        self.designer_element_list.blockSignals(False)
+        self.designer_element_list.select_rows(target_rows)
         self._set_designer_selection_group(
             normalized,
             group_label=group_label or self._selection_group_label_for_entries(normalized),
@@ -4731,7 +3371,7 @@ class TrofeoGui(QMainWindow):
         self.designer_quick_add_toggle_btn = QPushButton("+")
         self.designer_quick_add_toggle_btn.setMinimumHeight(24)
         self.designer_quick_add_toggle_btn.setMaximumHeight(26)
-        self.designer_quick_add_toggle_btn.setMaximumWidth(28)
+        self.designer_quick_add_toggle_btn.setMaximumWidth(200)
         search_row.addWidget(self.designer_quick_add_toggle_btn)
         layout.addLayout(search_row)
         self.designer_selection_label.setObjectName("selectionSummaryLabel")
@@ -4744,124 +3384,7 @@ class TrofeoGui(QMainWindow):
         self.designer_kind_combo.currentIndexChanged.connect(self.refresh_designer_element_list)
         self.designer_domain_combo.currentIndexChanged.connect(self._on_designer_domain_changed)
         
-        # Szybkie dodawanie (grupy: podstawowe / muzyka / pozostałe widgety)
-        self.designer_quick_add_container = QWidget()
-        quick_container_layout = QVBoxLayout(self.designer_quick_add_container)
-        quick_container_layout.setContentsMargins(0, 0, 0, 0)
-        quick_container_layout.setSpacing(6)
-        self.designer_quick_add_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-
-        self.quick_add_group_basics = QGroupBox("Basics")
-        self.quick_add_group_basics.setFlat(True)
-        basics_grid = QGridLayout(self.quick_add_group_basics)
-        basics_grid.setHorizontalSpacing(3)
-        basics_grid.setVerticalSpacing(3)
-        self.quick_add_text_btn = QPushButton("Text")
-        self.quick_add_stat_btn = QPushButton("Stat")
-        self.quick_add_image_btn = QPushButton("Image")
-        self.quick_add_panel_btn = QPushButton("Panel")
-        for btn in (self.quick_add_text_btn, self.quick_add_stat_btn, self.quick_add_image_btn, self.quick_add_panel_btn):
-            btn.setObjectName("quickAddButton")
-            btn.setMinimumHeight(24)
-        basics_grid.addWidget(self.quick_add_text_btn, 0, 0)
-        basics_grid.addWidget(self.quick_add_stat_btn, 0, 1)
-        basics_grid.addWidget(self.quick_add_image_btn, 1, 0)
-        basics_grid.addWidget(self.quick_add_panel_btn, 1, 1)
-
-        self.quick_add_group_music = QGroupBox("Music & audio")
-        self.quick_add_group_music.setFlat(True)
-        music_grid = QGridLayout(self.quick_add_group_music)
-        music_grid.setHorizontalSpacing(3)
-        music_grid.setVerticalSpacing(3)
-        self.quick_add_now_playing_btn = QPushButton("Now Playing")
-        self.quick_add_now_playing_btn.setObjectName("quickAddButton")
-        self.quick_add_now_playing_btn.setMinimumHeight(24)
-        self.quick_add_now_playing_hero_btn = QPushButton("Now Playing Hero")
-        self.quick_add_now_playing_hero_btn.setObjectName("quickAddButton")
-        self.quick_add_now_playing_hero_btn.setMinimumHeight(24)
-        self.quick_add_now_playing_mini_btn = QPushButton("Now Playing Mini")
-        self.quick_add_now_playing_mini_btn.setObjectName("quickAddButton")
-        self.quick_add_now_playing_mini_btn.setMinimumHeight(24)
-        self.quick_add_volume_btn = QPushButton("Volume")
-        self.quick_add_volume_btn.setObjectName("quickAddButton")
-        self.quick_add_volume_btn.setMinimumHeight(24)
-        self.quick_add_equalizer_btn = QPushButton("Graphic EQ")
-        self.quick_add_equalizer_btn.setObjectName("quickAddButton")
-        self.quick_add_equalizer_btn.setMinimumHeight(24)
-        music_grid.addWidget(self.quick_add_now_playing_btn, 0, 0)
-        music_grid.addWidget(self.quick_add_now_playing_hero_btn, 0, 1)
-        music_grid.addWidget(self.quick_add_now_playing_mini_btn, 1, 0)
-        music_grid.addWidget(self.quick_add_volume_btn, 1, 1)
-        music_grid.addWidget(self.quick_add_equalizer_btn, 2, 0, 1, 2)
-
-        self.quick_add_group_widgets = QGroupBox("Widgets")
-        self.quick_add_group_widgets.setFlat(True)
-        widgets_grid = QGridLayout(self.quick_add_group_widgets)
-        widgets_grid.setHorizontalSpacing(3)
-        widgets_grid.setVerticalSpacing(3)
-        self.quick_add_analog_clock_btn = QPushButton("Analog Clock")
-        self.quick_add_analog_clock_btn.setObjectName("quickAddButton")
-        self.quick_add_analog_clock_btn.setMinimumHeight(24)
-        self.quick_add_gauge_set_btn = QPushButton("Gauge Set")
-        self.quick_add_gauge_set_btn.setObjectName("quickAddButton")
-        self.quick_add_gauge_set_btn.setMinimumHeight(24)
-        widgets_grid.addWidget(self.quick_add_analog_clock_btn, 0, 0)
-        widgets_grid.addWidget(self.quick_add_gauge_set_btn, 0, 1)
-
-        quick_container_layout.addWidget(self.quick_add_group_basics)
-        quick_container_layout.addWidget(self.quick_add_group_music)
-        quick_container_layout.addWidget(self.quick_add_group_widgets)
-        self.designer_quick_add_container.hide()
-        layout.addWidget(self.designer_quick_add_container)
-        self.quick_add_text_btn.clicked.connect(lambda: self.quick_add_designer_element("texts"))
-        self.quick_add_stat_btn.clicked.connect(lambda: self.quick_add_designer_element("stats"))
-        self.quick_add_image_btn.clicked.connect(lambda: self.quick_add_designer_element("images"))
-        self.quick_add_panel_btn.clicked.connect(lambda: self.quick_add_designer_element("panels"))
-        self.quick_add_now_playing_btn.clicked.connect(self.add_now_playing_widget)
-        self.quick_add_now_playing_hero_btn.clicked.connect(self.add_now_playing_widget_hero)
-        self.quick_add_now_playing_mini_btn.clicked.connect(self.add_now_playing_widget_mini)
-        self.quick_add_analog_clock_btn.clicked.connect(lambda: self.add_analog_clock_widget("classic"))
-        self.quick_add_gauge_set_btn.clicked.connect(lambda: self.add_gauge_ring_bundle("system"))
-        self.quick_add_volume_btn.clicked.connect(self.add_volume_widget)
-        self.quick_add_equalizer_btn.clicked.connect(self.add_graphic_equalizer_widget)
-        self.designer_quick_add_menu = QMenu(self.designer_quick_add_toggle_btn)
-        self.designer_quick_add_menu.setObjectName("designerQuickAddMenu")
-        self.designer_quick_add_menu.setStyleSheet(
-            """
-            QMenu#designerQuickAddMenu {
-                background: #0f141b;
-                border: 1px solid #3b82f6;
-                border-radius: 10px;
-                padding: 6px;
-                color: #f8fafc;
-            }
-            QMenu#designerQuickAddMenu::item {
-                padding: 7px 14px 7px 14px;
-                border-radius: 7px;
-                min-width: 190px;
-            }
-            QMenu#designerQuickAddMenu::item:selected {
-                background: #2563eb;
-                color: #ffffff;
-            }
-            QMenu#designerQuickAddMenu::item:pressed {
-                background: #1d4ed8;
-            }
-            QMenu#designerQuickAddMenu::separator {
-                height: 1px;
-                background: #263242;
-                margin: 6px 4px;
-            }
-            QMenu#designerQuickAddMenu::item:disabled {
-                color: #60a5fa;
-                background: transparent;
-                font-weight: 800;
-            }
-            """
-        )
-        self._populate_designer_quick_add_menu()
-        self._refresh_designer_quick_add_groups()
-        self.designer_quick_add_toggle_btn.setMenu(self.designer_quick_add_menu)
+        layout.addWidget(setup_quick_add_controls(self))
         
         self.designer_element_list.setMinimumHeight(140)
         self.designer_element_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -4870,87 +3393,16 @@ class TrofeoGui(QMainWindow):
         self.designer_element_list.setDragDropMode(QAbstractItemView.InternalMove)
         self.designer_element_list.setDefaultDropAction(Qt.MoveAction)
         self.designer_element_list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.designer_element_list.currentRowChanged.connect(lambda _row: (self.update_layer_row_visuals(), self.load_selected_designer_item(), self._update_preview_canvas_overlay()))
-        self.designer_element_list.itemSelectionChanged.connect(lambda: (self.update_layer_row_visuals(), self.load_selected_designer_item(), self._update_preview_canvas_overlay()))
+        self.designer_element_list.currentRowChanged.connect(
+            lambda _row: self._schedule_designer_selection_refresh()
+        )
+        self.designer_element_list.itemSelectionChanged.connect(self._schedule_designer_selection_refresh)
         self.designer_element_list.customContextMenuRequested.connect(self.show_designer_layer_menu)
         self.designer_element_list.rows_reordered.connect(self.on_designer_rows_reordered)
         self.designer_component_search.textChanged.connect(self.filter_designer_element_list)
         layout.addWidget(self.designer_element_list, 1)
         
-        move_box = QGroupBox("Nudge selection")
-        self.designer_move_box = move_box
-        move_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        move_layout = QVBoxLayout(move_box)
-        move_layout.setContentsMargins(4, 4, 4, 4)
-        move_layout.setSpacing(2)
-        move_step_row = QHBoxLayout()
-        move_step_row.setSpacing(5)
-        self.designer_nudge_step_label = QLabel("Step:")
-        move_step_row.addWidget(self.designer_nudge_step_label)
-        self.designer_nudge_step_combo = QComboBox()
-        for step in (1, 2, 3, 5, 8, 10, 16, 24, 32):
-            self.designer_nudge_step_combo.addItem(f"{step} px", step)
-        self.designer_nudge_step_combo.setCurrentIndex(3)  # 5 px
-        self.designer_nudge_step_combo.setMaximumWidth(120)
-        move_step_row.addWidget(self.designer_nudge_step_combo, 1)
-        move_layout.addLayout(move_step_row)
-        dpad = QGridLayout()
-        dpad.setHorizontalSpacing(5)
-        dpad.setVerticalSpacing(4)
-        _nudge_icon_sz = QSize(22, 22)
-        _sty = self.style()
-        self.designer_nudge_up_btn = QPushButton()
-        self.designer_nudge_up_btn.setIcon(_sty.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
-        self.designer_nudge_up_btn.setIconSize(_nudge_icon_sz)
-        self.designer_nudge_up_btn.setToolTip("Nudge up")
-        self.designer_nudge_left_btn = QPushButton()
-        self.designer_nudge_left_btn.setIcon(_sty.standardIcon(QStyle.StandardPixmap.SP_ArrowLeft))
-        self.designer_nudge_left_btn.setIconSize(_nudge_icon_sz)
-        self.designer_nudge_left_btn.setToolTip("Nudge left")
-        self.designer_nudge_right_btn = QPushButton()
-        self.designer_nudge_right_btn.setIcon(_sty.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
-        self.designer_nudge_right_btn.setIconSize(_nudge_icon_sz)
-        self.designer_nudge_right_btn.setToolTip("Nudge right")
-        self.designer_nudge_down_btn = QPushButton()
-        self.designer_nudge_down_btn.setIcon(_sty.standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
-        self.designer_nudge_down_btn.setIconSize(_nudge_icon_sz)
-        self.designer_nudge_down_btn.setToolTip("Nudge down")
-        for btn in (
-            self.designer_nudge_up_btn,
-            self.designer_nudge_left_btn,
-            self.designer_nudge_right_btn,
-            self.designer_nudge_down_btn,
-        ):
-            btn.setMinimumHeight(32)
-            btn.setMaximumHeight(36)
-            btn.setMinimumWidth(36)
-            btn.setMaximumWidth(44)
-        dpad.addWidget(self.designer_nudge_up_btn, 0, 1)
-        dpad.addWidget(self.designer_nudge_left_btn, 1, 0)
-        dpad.addWidget(self.designer_nudge_right_btn, 1, 2)
-        dpad.addWidget(self.designer_nudge_down_btn, 2, 1)
-        move_layout.addLayout(dpad)
-        self.designer_nudge_up_btn.clicked.connect(lambda: self.nudge_selected_elements(0, -1, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
-        self.designer_nudge_left_btn.clicked.connect(lambda: self.nudge_selected_elements(-1, 0, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
-        self.designer_nudge_right_btn.clicked.connect(lambda: self.nudge_selected_elements(1, 0, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
-        self.designer_nudge_down_btn.clicked.connect(lambda: self.nudge_selected_elements(0, 1, step_override=self._selected_nudge_step(), require_keyboard_focus=False))
-        move_actions_row = QHBoxLayout()
-        move_actions_row.setContentsMargins(0, 0, 0, 0)
-        move_actions_row.setSpacing(6)
-        move_actions_row.addStretch(1)
-        self.designer_remove_btn = QPushButton("🗑 Delete")
-        self.designer_remove_btn.setMinimumHeight(28)
-        self.designer_remove_btn.setMaximumWidth(112)
-        self.designer_remove_btn.setStyleSheet(
-            "QPushButton { background: #3a1f25; border: 1px solid #a33a48; color: #ffd7dc; }"
-            "QPushButton:hover { background: #512730; border: 1px solid #d05b6b; }"
-            "QPushButton:pressed { background: #2a1418; }"
-        )
-        self.designer_remove_btn.clicked.connect(self.remove_designer_element)
-        move_actions_row.addWidget(self.designer_remove_btn)
-        move_layout.addLayout(move_actions_row)
-        move_box.setMaximumHeight(178)
-        layout.addWidget(move_box)
+        layout.addWidget(setup_layer_action_controls(self))
         parent_layout.addWidget(box, 1)
 
     def _setup_inspector_tabs(self, container_layout: QVBoxLayout) -> None:
@@ -4966,440 +3418,64 @@ class TrofeoGui(QMainWindow):
         self.inspector_selection_summary.setWordWrap(True)
         layout.addWidget(self.inspector_selection_summary)
 
-        self.inspector_tabs = QTabWidget()
-        self.inspector_tabs.setDocumentMode(True)
-        self.inspector_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        def make_tab() -> tuple[QWidget, QFormLayout]:
-            tab = QWidget()
-            tab_layout = QFormLayout(tab)
-            tab_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
-            tab_layout.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            tab_layout.setFormAlignment(Qt.AlignTop)
-            tab_layout.setHorizontalSpacing(6)
-            tab_layout.setVerticalSpacing(4)
-            tab_layout.setContentsMargins(4, 4, 4, 4)
-            return tab, tab_layout
-
-        def make_label(text: str) -> QLabel:
-            label = QLabel(text)
-            label.setObjectName("headerFieldLabel")
-            return label
-
-        def wrap_row(*widgets: QWidget, stretch_first: bool = False) -> QWidget:
-            row = QWidget()
-            row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(6)
-            for idx, widget in enumerate(widgets):
-                row_layout.addWidget(widget, 1 if stretch_first and idx == 0 else 0)
-            if stretch_first:
-                row_layout.setStretch(0, 1)
-            return row
-
-        def add_color_row(target_edit: QLineEdit) -> tuple[QWidget, QPushButton]:
-            button = QPushButton("🎨")
-            button.setMinimumWidth(40)
-            button.clicked.connect(lambda _checked=False, edit=target_edit: self.pick_color_for_edit(edit))
-            row = wrap_row(target_edit, button, stretch_first=True)
-            return row, button
-
-        self.inspector_general, self.inspector_general_layout = make_tab()
-        self.inspector_content, self.inspector_content_layout = make_tab()
-        self.inspector_music, self.inspector_music_layout = make_tab()
-        self.inspector_appearance, self.inspector_appearance_layout = make_tab()
-        self.inspector_gauge, self.inspector_gauge_layout = make_tab()
-        self.inspector_geometry, self.inspector_geometry_layout = make_tab()
-        self.inspector_image, self.inspector_image_layout = make_tab()
-        self.inspector_media, self.inspector_media_layout = make_tab()
-        self.inspector_animation, self.inspector_animation_layout = make_tab()
-
-        self.inspector_music_spectrum_placeholder = QLabel(
-            "Animated spectrum / EQ visualizer: reserved for a future update."
+        make_tab = make_inspector_tab
+        make_scrolled_tab = make_scrolled_inspector_tab
+        make_label = make_field_label
+        wrap_row = wrap_inspector_row
+        add_color_row = lambda target_edit: make_color_row(target_edit, self.pick_color_for_edit)
+        add_compact_color_cell = lambda caption, target_edit: make_compact_color_cell(
+            caption,
+            target_edit,
+            self.pick_color_for_edit,
         )
-        self.inspector_music_spectrum_placeholder.setWordWrap(True)
-        self.inspector_music_spectrum_placeholder.setObjectName("selectionSummaryLabel")
-        self.inspector_music_tools_row = QWidget()
-        music_tools_layout = QHBoxLayout(self.inspector_music_tools_row)
-        music_tools_layout.setContentsMargins(0, 0, 0, 0)
-        music_tools_layout.setSpacing(6)
-        self.music_tool_now_playing_btn = QPushButton("Now Playing")
-        self.music_tool_hero_btn = QPushButton("Hero")
-        self.music_tool_mini_btn = QPushButton("Mini")
-        self.music_tool_volume_btn = QPushButton("Volume")
-        self.music_tool_eq_btn = QPushButton("Graphic EQ")
-        for btn in (
-            self.music_tool_now_playing_btn,
-            self.music_tool_hero_btn,
-            self.music_tool_mini_btn,
-            self.music_tool_volume_btn,
-            self.music_tool_eq_btn,
-        ):
-            btn.setObjectName("quickAddButton")
-            btn.setMinimumHeight(24)
-            music_tools_layout.addWidget(btn)
-        self.music_tool_now_playing_btn.clicked.connect(self.add_now_playing_widget)
-        self.music_tool_hero_btn.clicked.connect(self.add_now_playing_widget_hero)
-        self.music_tool_mini_btn.clicked.connect(self.add_now_playing_widget_mini)
-        self.music_tool_volume_btn.clicked.connect(self.add_volume_widget)
-        self.music_tool_eq_btn.clicked.connect(self.add_graphic_equalizer_widget)
-        self.row_music_tools = make_label("Music tools")
-        self.inspector_music_layout.addRow(self.row_music_tools, self.inspector_music_tools_row)
-        self.row_music_equalizer_bars = make_label("EQ bars")
-        self.row_music_equalizer_gap = make_label("Bar gap")
-        self.row_music_equalizer_mirror = make_label("Mirror mode")
-        self.inspector_music_layout.addRow(self.row_music_equalizer_bars, self.designer_equalizer_bars_spin)
-        self.inspector_music_layout.addRow(self.row_music_equalizer_gap, self.designer_equalizer_gap_spin)
-        self.inspector_music_layout.addRow(self.row_music_equalizer_mirror, self.designer_equalizer_mirror_chk)
-        self.inspector_music_hint = QLabel("")
-        self.inspector_music_hint.setWordWrap(True)
-        self.inspector_music_hint.setObjectName("selectionSummaryLabel")
-        self.inspector_music_layout.addRow(self.inspector_music_spectrum_placeholder)
-        self.inspector_music_layout.addRow(self.inspector_music_hint)
 
-        for l in [
+        create_inspector_tabs(
+            self,
+            make_tab,
+            make_scrolled_tab,
+            lambda _idx: self._clamp_designer_splitter_later(),
+        )
+
+        setup_music_inspector(self, make_label, wrap_row, add_color_row)
+        setup_weather_inspector(
+            self,
+            make_label,
+            wrap_row,
+            make_compact_labeled_row,
+            make_compact_color_grid,
+            add_compact_color_cell,
+        )
+
+        configure_inspector_form_layouts([
             self.inspector_general_layout,
             self.inspector_content_layout,
             self.inspector_music_layout,
+            self.inspector_weather_layout,
             self.inspector_appearance_layout,
             self.inspector_gauge_layout,
             self.inspector_geometry_layout,
             self.inspector_image_layout,
             self.inspector_media_layout,
             self.inspector_animation_layout,
-        ]:
-            l.setSpacing(4)
-            l.setContentsMargins(4, 4, 4, 4)
+        ])
 
-        self.row_general_id = make_label("ID elementu")
-        self.inspector_general_layout.addRow(self.row_general_id, self.designer_id_edit)
-        self.row_general_visible = make_label("Widoczność")
-        self.inspector_general_layout.addRow(self.row_general_visible, self.designer_visible_chk)
-        self.row_general_locked = make_label("Zablokowany")
-        self.inspector_general_layout.addRow(self.row_general_locked, self.designer_locked_chk)
-        self.row_general_z = make_label("Warstwa")
-        self.inspector_general_layout.addRow(self.row_general_z, self.designer_z_spin)
-
-        self.row_content_text = make_label("Tekst")
-        self.inspector_content_layout.addRow(self.row_content_text, self.designer_text_edit)
-        self.row_content_label = make_label("Etykieta")
-        self.inspector_content_layout.addRow(self.row_content_label, self.designer_label_edit)
-        self.row_content_source = make_label("Źródło")
-        self.inspector_content_layout.addRow(self.row_content_source, self.designer_source_combo)
-        self.row_content_format = make_label("Format wartości")
-        self.inspector_content_layout.addRow(self.row_content_format, self.designer_format_edit)
-        self.row_content_stat_display = make_label("Tryb wyświetlania")
-        self.inspector_content_layout.addRow(self.row_content_stat_display, self.designer_stat_display_combo)
-        self.row_content_stat_range = make_label("Zakres")
-        self.designer_stat_range_row = wrap_row(self.designer_stat_min_spin, self.designer_stat_max_spin)
-        self.inspector_content_layout.addRow(self.row_content_stat_range, self.designer_stat_range_row)
-        self.row_content_stat_show_value = make_label("Tekst wartości")
-        self.inspector_content_layout.addRow(self.row_content_stat_show_value, self.designer_stat_show_value_chk)
-        self._stat_binding_rows_layout = self.inspector_content_layout
-
-        self.designer_font_minus_btn = QPushButton("−")
-        self.designer_font_minus_btn.setMinimumWidth(36)
-        self.designer_font_plus_btn = QPushButton("+")
-        self.designer_font_plus_btn.setMinimumWidth(36)
-        self.designer_font_minus_btn.clicked.connect(
-            lambda: self.designer_font_size_spin.setValue(max(self.designer_font_size_spin.minimum(), self.designer_font_size_spin.value() - 1))
+        setup_core_inspector(self, make_label, wrap_row)
+        setup_appearance_inspector(
+            self,
+            make_label,
+            wrap_row,
+            add_color_row,
+            make_compact_labeled_row,
         )
-        self.designer_font_plus_btn.clicked.connect(
-            lambda: self.designer_font_size_spin.setValue(min(self.designer_font_size_spin.maximum(), self.designer_font_size_spin.value() + 1))
-        )
-        self.font_row = wrap_row(
-            self.designer_font_family_combo,
-            self.designer_font_minus_btn,
-            self.designer_font_size_spin,
-            self.designer_font_plus_btn,
-            stretch_first=True,
-        )
-        self.row_appearance_font = make_label("Czcionka")
-        self.inspector_appearance_layout.addRow(self.row_appearance_font, self.font_row)
-        self.font_style_row = wrap_row(
-            self.designer_font_bold_chk,
-            self.designer_font_italic_chk,
-            self.designer_font_underline_chk,
-        )
-        self.row_appearance_font_style = make_label("Styl")
-        self.inspector_appearance_layout.addRow(self.row_appearance_font_style, self.font_style_row)
-        self.row_appearance_align = make_label("Wyrównanie")
-        self.inspector_appearance_layout.addRow(self.row_appearance_align, self.designer_align_combo)
+        setup_gauge_inspector(self, make_label, add_color_row)
 
-        self.designer_color_row, self.designer_color_btn = add_color_row(self.designer_color_edit)
-        self.row_appearance_color = make_label("Kolor")
-        self.inspector_appearance_layout.addRow(self.row_appearance_color, self.designer_color_row)
+        setup_geometry_inspector(self, make_label, wrap_row)
+        setup_image_inspector(self, make_label, wrap_row, make_compact_labeled_row)
+        setup_media_inspector(self, make_label, wrap_row)
+        setup_animation_inspector(self, make_label)
 
-        self.designer_label_color_row, self.designer_label_color_btn = add_color_row(self.designer_label_color_edit)
-        self.row_appearance_label_color = make_label("Kolor etykiety")
-        self.inspector_appearance_layout.addRow(self.row_appearance_label_color, self.designer_label_color_row)
-
-        self.designer_value_color_row, self.designer_value_color_btn = add_color_row(self.designer_value_color_edit)
-        self.row_appearance_value_color = make_label("Kolor wartości")
-        self.inspector_appearance_layout.addRow(self.row_appearance_value_color, self.designer_value_color_row)
-        self.designer_track_color_row, self.designer_track_color_btn = add_color_row(self.designer_track_color_edit)
-        self.row_appearance_track_color = make_label("Kolor tła gauge / paska / wykresu")
-        self.inspector_appearance_layout.addRow(self.row_appearance_track_color, self.designer_track_color_row)
-        self.designer_fill_color_row, self.designer_fill_color_btn = add_color_row(self.designer_fill_color_edit)
-        self.row_appearance_fill_color = make_label("Kolor linii / wypełnienia / wartości")
-        self.inspector_appearance_layout.addRow(self.row_appearance_fill_color, self.designer_fill_color_row)
-        self.row_sparkline_points = make_label("Punkty historii")
-        self.inspector_appearance_layout.addRow(self.row_sparkline_points, self.designer_sparkline_points_spin)
-        self.row_sparkline_fill_opacity = make_label("Przezrocz. wypełnienia")
-        self.inspector_appearance_layout.addRow(self.row_sparkline_fill_opacity, self.designer_sparkline_fill_opacity_spin)
-        self.row_sparkline_show_points = make_label("Punkt końcowy")
-        self.inspector_appearance_layout.addRow(self.row_sparkline_show_points, self.designer_sparkline_show_points_chk)
-
-        self.row_appearance_stroke_width = make_label("Grubość linii / gauge (0 = auto)")
-        self.row_gauge_ring = make_label("Średnica pierścienia")
-        self.row_gauge_value_layout = make_label("Układ wartości")
-        self.designer_gauge_low_row, self.designer_gauge_low_btn = add_color_row(self.designer_gauge_low_edit)
-        self.designer_gauge_mid_row, self.designer_gauge_mid_btn = add_color_row(self.designer_gauge_mid_edit)
-        self.designer_gauge_high_row, self.designer_gauge_high_btn = add_color_row(self.designer_gauge_high_edit)
-        self.designer_gauge_low_edit.setPlaceholderText("[R,G,B,A] — opcjonalnie, puste = z presetu")
-        self.designer_gauge_mid_edit.setPlaceholderText("[R,G,B,A] — opcjonalnie")
-        self.designer_gauge_high_edit.setPlaceholderText("[R,G,B,A] — opcjonalnie")
-        self.row_gauge_preset = make_label("Preset kolorów")
-        self.row_gauge_grad_low = make_label("Łuk: kolor niski")
-        self.row_gauge_grad_mid = make_label("Łuk: środek")
-        self.row_gauge_grad_high = make_label("Łuk: wysoki")
-        self.row_gauge_smooth = make_label("Wygładzanie igły")
-        self.row_gauge_match_value = make_label("Kolor wartości jak łuk")
-        self.row_gauge_inner_alpha = make_label("Przezrocz. środka")
-
-        self.inspector_gauge_layout.addRow(self.row_appearance_stroke_width, self.designer_stat_stroke_width_spin)
-        self.inspector_gauge_layout.addRow(self.row_gauge_ring, self.designer_gauge_ring_spin)
-        self.inspector_gauge_layout.addRow(self.row_gauge_value_layout, self.designer_gauge_value_layout_combo)
-        self.inspector_gauge_layout.addRow(self.row_gauge_inner_alpha, self.designer_gauge_inner_alpha_spin)
-        self.inspector_gauge_layout.addRow(self.row_gauge_preset, self.designer_stat_gauge_preset_combo)
-        self.inspector_gauge_layout.addRow(self.row_gauge_grad_low, self.designer_gauge_low_row)
-        self.inspector_gauge_layout.addRow(self.row_gauge_grad_mid, self.designer_gauge_mid_row)
-        self.inspector_gauge_layout.addRow(self.row_gauge_grad_high, self.designer_gauge_high_row)
-        self.inspector_gauge_layout.addRow(self.row_gauge_smooth, self.designer_gauge_smooth_spin)
-        self.inspector_gauge_layout.addRow(self.row_gauge_match_value, self.designer_gauge_match_value_chk)
-
-        self.row_panel_fill = make_label("Wypełnienie panelu")
-        self.panel_fill_row = wrap_row(self.panel_fill_edit, self.panel_fill_btn, stretch_first=True)
-        self.panel_fill_btn.clicked.connect(lambda _checked=False: self.pick_color_for_edit(self.panel_fill_edit))
-        self.inspector_appearance_layout.addRow(self.row_panel_fill, self.panel_fill_row)
-        self.row_panel_opacity = make_label("Przezroczystość panelu")
-        self.inspector_appearance_layout.addRow(self.row_panel_opacity, self.panel_opacity_spin)
-        self.row_panel_radius = make_label("Promień narożników")
-        self.inspector_appearance_layout.addRow(self.row_panel_radius, self.panel_radius_spin)
-
-        self.row_geometry_x = make_label("X")
-        self.inspector_geometry_layout.addRow(self.row_geometry_x, self.designer_x_spin)
-        self.row_geometry_y = make_label("Y")
-        self.inspector_geometry_layout.addRow(self.row_geometry_y, self.designer_y_spin)
-        self.row_geometry_w = make_label("Szerokość")
-        self.inspector_geometry_layout.addRow(self.row_geometry_w, self.designer_w_spin)
-        self.row_geometry_h = make_label("Wysokość")
-        self.inspector_geometry_layout.addRow(self.row_geometry_h, self.designer_h_spin)
-        self.row_motion_enabled = make_label("Ruch")
-        self.inspector_geometry_layout.addRow(self.row_motion_enabled, self.motion_enabled_chk)
-        self.row_motion_range = make_label("Zakres klatek")
-        self.motion_range_row = wrap_row(self.motion_start_spin, self.motion_end_spin)
-        self.inspector_geometry_layout.addRow(self.row_motion_range, self.motion_range_row)
-        self.row_motion_target_x = make_label("Koniec X")
-        self.inspector_geometry_layout.addRow(self.row_motion_target_x, self.motion_target_x_spin)
-        self.row_motion_target_y = make_label("Koniec Y")
-        self.inspector_geometry_layout.addRow(self.row_motion_target_y, self.motion_target_y_spin)
-        self.row_motion_target_opacity = make_label("Końcowa przezr.")
-        self.inspector_geometry_layout.addRow(self.row_motion_target_opacity, self.motion_target_opacity_spin)
-        self.row_motion_actions = make_label("Akcje ruchu")
-        self.motion_actions_row = wrap_row(self.motion_capture_current_btn, self.motion_remove_btn)
-        self.inspector_geometry_layout.addRow(self.row_motion_actions, self.motion_actions_row)
-
-        self.designer_path_browse_btn = QPushButton("Wybierz")
-        self.designer_path_browse_btn.clicked.connect(self.browse_designer_image_path)
-        self.designer_path_prepare_btn = QPushButton("Przygotuj")
-        self.designer_path_prepare_btn.clicked.connect(self.browse_designer_image_path)
-        self.designer_image_fullscreen_btn = QPushButton("Ustaw fullscreen")
-        self.designer_image_fullscreen_btn.clicked.connect(lambda: self.apply_image_rect_preset("fullscreen"))
-        self.designer_image_left_half_btn = QPushButton("Lewa połowa")
-        self.designer_image_left_half_btn.clicked.connect(lambda: self.apply_image_rect_preset("left-half"))
-        self.designer_image_right_half_btn = QPushButton("Prawa połowa")
-        self.designer_image_right_half_btn.clicked.connect(lambda: self.apply_image_rect_preset("right-half"))
-        self.designer_image_reset_btn = QPushButton("Reset kadru")
-        self.designer_image_reset_btn.clicked.connect(lambda: self.apply_image_rect_preset("contain-full"))
-        self.designer_import_image_btn = QPushButton("Importuj obraz do motywu")
-        self.designer_import_image_btn.clicked.connect(self.import_image_as_designer_element)
-        self.designer_path_row = wrap_row(
-            self.designer_path_edit,
-            self.designer_path_browse_btn,
-            self.designer_path_prepare_btn,
-            stretch_first=True,
-        )
-        self.row_image_path = make_label("Plik obrazu")
-        self.inspector_image_layout.addRow(self.row_image_path, self.designer_path_row)
-        self.row_image_fit = make_label("Dopasowanie")
-        self.inspector_image_layout.addRow(self.row_image_fit, self.designer_fit_combo)
-        self.row_image_opacity = make_label("Przezroczystość")
-        self.inspector_image_layout.addRow(self.row_image_opacity, self.designer_opacity_spin)
-        self.row_image_rotation = make_label("Obrót")
-        self.inspector_image_layout.addRow(self.row_image_rotation, self.designer_rotation_spin)
-        self.row_image_import = make_label("Import")
-        self.inspector_image_layout.addRow(self.row_image_import, self.designer_import_image_btn)
-        self.row_image_actions = make_label("Szybkie akcje")
-        self.designer_image_actions_row = wrap_row(
-            self.designer_image_fullscreen_btn,
-            self.designer_image_left_half_btn,
-            self.designer_image_right_half_btn,
-            self.designer_image_reset_btn,
-        )
-        self.inspector_image_layout.addRow(self.row_image_actions, self.designer_image_actions_row)
-        self.row_image_preview = make_label("Podgląd")
-        self.designer_image_preview_label = QLabel("Image preview")
-        self.designer_image_preview_label.setAlignment(Qt.AlignCenter)
-        self.designer_image_preview_label.setMinimumHeight(104)
-        self.designer_image_preview_label.setObjectName("selectionSummaryLabel")
-        self.inspector_image_layout.addRow(self.row_image_preview, self.designer_image_preview_label)
-
-        self.background_preview_label.setAlignment(Qt.AlignCenter)
-        self.background_preview_label.setMinimumHeight(92)
-        self.background_preview_label.setObjectName("selectionSummaryLabel")
-        self.media_background_path_row = wrap_row(
-            self.bg_path_edit,
-            self.bg_path_browse_btn,
-            self.bg_prepare_btn,
-            stretch_first=True,
-        )
-        self.row_media_bg_mode = make_label("Background mode")
-        self.inspector_media_layout.addRow(self.row_media_bg_mode, self.bg_kind_combo)
-        self.row_media_bg_path = make_label("File / import")
-        self.inspector_media_layout.addRow(self.row_media_bg_path, self.media_background_path_row)
-        self.row_media_bg_fit = make_label("Fit")
-        self.inspector_media_layout.addRow(self.row_media_bg_fit, self.bg_fit_combo)
-        self.row_media_bg_opacity = make_label("Opacity")
-        self.inspector_media_layout.addRow(self.row_media_bg_opacity, self.bg_opacity_spin)
-        self.row_media_bg_rotation = make_label("Rotation")
-        self.inspector_media_layout.addRow(self.row_media_bg_rotation, self.bg_rotation_spin)
-        media_colors_row = wrap_row(self.bg_base_color_edit, self.bg_base_color_btn, self.bg_accent_color_edit, self.bg_accent_color_btn)
-        self.row_media_bg_colors = make_label("Colors")
-        self.inspector_media_layout.addRow(self.row_media_bg_colors, media_colors_row)
-        media_presets_row = wrap_row(
-            self.bg_cover_btn,
-            self.bg_contain_btn,
-            self.bg_preset_ocean_btn,
-            self.bg_preset_amber_btn,
-            self.bg_preset_mono_btn,
-            self.bg_preset_neon_btn,
-        )
-        self.row_media_bg_presets = make_label("Presets")
-        self.inspector_media_layout.addRow(self.row_media_bg_presets, media_presets_row)
-        self.row_media_bg_texture = make_label("Texture")
-        self.inspector_media_layout.addRow(self.row_media_bg_texture, self.bg_texture_alpha_spin)
-        self.row_media_bg_preview = make_label("Background preview")
-        self.inspector_media_layout.addRow(self.row_media_bg_preview, self.background_preview_label)
-
-        self.inspector_animation_details_hint = QLabel(
-            "Use Animation Studio for the timeline, multi-frame timing, and a large preview. "
-            "After editing frames, switch to Theme Designer to place stats and widgets like on a static theme."
-        )
-        self.inspector_animation_details_hint.setWordWrap(True)
-        self.inspector_animation_details_hint.setObjectName("selectionSummaryLabel")
-        self.row_animation_overview = make_label("Animation")
-        self.inspector_animation_layout.addRow(self.row_animation_overview, self.inspector_animation_details_hint)
-        self.open_animation_studio_btn = QPushButton("Open Animation Studio")
-        self.open_animation_studio_btn.setObjectName("secondaryAccentButton")
-        self.open_animation_studio_btn.clicked.connect(self._go_animation_studio)
-        self.row_animation_editor = make_label("Editor")
-        self.inspector_animation_layout.addRow(self.row_animation_editor, self.open_animation_studio_btn)
-
-        self.inspector_tabs.addTab(self.inspector_general, "General")
-        self.inspector_tabs.addTab(self.inspector_content, "Content")
-        self.inspector_tabs.addTab(self.inspector_music, "Music")
-        self.inspector_tabs.addTab(self.inspector_appearance, "Style")
-        self.inspector_tabs.addTab(self.inspector_gauge, "Gauge")
-        self.inspector_tabs.addTab(self.inspector_geometry, "Position")
-        self.inspector_tabs.addTab(self.inspector_image, "Image")
-        self.inspector_tabs.addTab(self.inspector_media, "Media")
-        self.inspector_tabs.addTab(self.inspector_animation, "Animation")
-
-        compact_widgets = [
-            self.designer_id_edit,
-            self.designer_text_edit,
-            self.designer_label_edit,
-            self.designer_format_edit,
-            self.designer_source_combo,
-            self.designer_stat_display_combo,
-            self.designer_stat_min_spin,
-            self.designer_stat_max_spin,
-            self.designer_align_combo,
-            self.designer_font_family_combo,
-            self.designer_font_size_spin,
-            self.designer_color_edit,
-            self.designer_label_color_edit,
-            self.designer_value_color_edit,
-            self.designer_track_color_edit,
-            self.designer_fill_color_edit,
-            self.designer_x_spin,
-            self.designer_y_spin,
-            self.designer_w_spin,
-            self.designer_h_spin,
-            self.designer_z_spin,
-            self.designer_path_edit,
-            self.designer_fit_combo,
-            self.designer_opacity_spin,
-            self.designer_rotation_spin,
-            self.panel_fill_edit,
-            self.panel_opacity_spin,
-            self.panel_radius_spin,
-            self.designer_stat_stroke_width_spin,
-            self.designer_gauge_ring_spin,
-            self.designer_gauge_value_layout_combo,
-            self.designer_gauge_inner_alpha_spin,
-            self.designer_sparkline_points_spin,
-            self.designer_sparkline_fill_opacity_spin,
-            self.motion_start_spin,
-            self.motion_end_spin,
-            self.motion_target_x_spin,
-            self.motion_target_y_spin,
-            self.motion_target_opacity_spin,
-        ]
-        for widget in compact_widgets:
-            widget.setMaximumHeight(32)
-        for button in (
-            self.designer_font_minus_btn,
-            self.designer_font_plus_btn,
-            self.designer_path_browse_btn,
-            self.designer_path_prepare_btn,
-            self.designer_import_image_btn,
-            self.motion_capture_current_btn,
-            self.motion_remove_btn,
-            self.bg_path_browse_btn,
-            self.bg_prepare_btn,
-            self.bg_cover_btn,
-            self.bg_contain_btn,
-            self.bg_preset_ocean_btn,
-            self.bg_preset_amber_btn,
-            self.bg_preset_mono_btn,
-            self.bg_preset_neon_btn,
-            self.bg_animation_prev_btn,
-            self.bg_animation_next_btn,
-            self.bg_animation_play_btn,
-            self.bg_animation_import_btn,
-            self.bg_animation_add_btn,
-            self.bg_animation_blank_btn,
-            self.bg_animation_export_btn,
-            self.bg_animation_duplicate_btn,
-            self.bg_animation_repeat_all_btn,
-            self.bg_animation_remove_btn,
-            self.bg_animation_up_btn,
-            self.bg_animation_down_btn,
-            self.bg_animation_clear_btn,
-        ):
-            button.setMinimumHeight(28)
-            button.setMaximumHeight(30)
-        for check in (
-            self.designer_visible_chk,
-            self.designer_locked_chk,
-            self.designer_font_bold_chk,
-            self.designer_font_italic_chk,
-            self.designer_font_underline_chk,
-            self.motion_enabled_chk,
-        ):
-            check.setMaximumHeight(26)
+        add_inspector_tabs(self)
+        apply_inspector_compact_sizing(self)
 
         layout.addWidget(self.inspector_tabs)
         container_layout.addWidget(box)
@@ -5642,6 +3718,21 @@ class TrofeoGui(QMainWindow):
             QPushButton#quickAddButton:hover {{
                 border: 1px solid {primary_color};
                 background: {bg_tab_selected};
+            }}
+            QPushButton#compactActionButton {{
+                background: {bg_input};
+                border: 1px solid {border_soft};
+                border-radius: 7px;
+                padding: 3px 8px;
+                color: {text_main};
+                font-size: {small_font}px;
+                font-weight: 700;
+                text-align: center;
+            }}
+            QPushButton#compactActionButton:hover {{
+                border: 1px solid {primary_color};
+                background: {bg_tab_selected};
+                color: {text_main};
             }}
             QPushButton#quickPresetButton {{
                 background: {bg_input};
@@ -6007,28 +4098,36 @@ class TrofeoGui(QMainWindow):
         if scale_percent is None:
             scale_percent = int(self.ui_scale_combo.currentData() or 100) if hasattr(self, "ui_scale_combo") else 100
         scale = scale_percent / 100.0
-        width = max(1200, self.width() or 0)
-        height = max(840, self.height() or 0)
+        width = int(self.width() or 0)
+        height = int(self.height() or 0)
         compact = width < 1650
         short = height < 1180
+        self._apply_header_responsive(width, height)
         if hasattr(self, "_shell_nav_buttons") and self._shell_nav_buttons:
-            sidebar_width = 102 if getattr(self, "sidebar_collapsed", False) else (224 if compact else 242)
+            collapsed = bool(getattr(self, "sidebar_collapsed", False))
+            if collapsed:
+                computed_width = int(96 * min(scale, 1.15))
+            else:
+                base_width = 224 if compact else 248
+                computed_width = max(210, int(base_width * max(scale, 0.95)))
             parent_sidebar = getattr(self, "sidebar_frame", None)
-            if parent_sidebar is not None:
-                if getattr(self, "sidebar_collapsed", False):
-                    computed_width = int(sidebar_width * min(scale, 1.15))
-                else:
-                    computed_width = max(214, int(sidebar_width * max(scale, 0.95)))
+            if parent_sidebar is not None and parent_sidebar.width() != computed_width:
                 parent_sidebar.setFixedWidth(computed_width)
         if hasattr(self, "designer_elements_box"):
-            self.designer_elements_box.setMinimumWidth(max(340, int((380 if compact else 430) * scale)))
+            self.designer_elements_box.setMinimumWidth(max(260, int((320 if compact else 400) * scale)))
             self.designer_elements_box.setMaximumWidth(max(560, int((600 if compact else 660) * scale)))
         if hasattr(self, "designer_component_search"):
             self.designer_component_search.setMaximumHeight(26 if short else 28)
         if hasattr(self, "designer_quick_add_toggle_btn"):
             self.designer_quick_add_toggle_btn.setMaximumHeight(26 if short else 28)
         if hasattr(self, "props_box"):
-            self.props_box.setMinimumWidth(max(270, int((300 if compact else 360) * scale)))
+            self.props_box.setMinimumWidth(max(210, int((260 if compact else 360) * scale)))
+        min_canvas, max_inspector = self._designer_splitter_limits()
+        if hasattr(self, "designer_canvas_workbench"):
+            self.designer_canvas_workbench.setMinimumHeight(min_canvas)
+        if hasattr(self, "designer_inspector_container"):
+            self.designer_inspector_container.setMinimumHeight(self._designer_inspector_min_height())
+            self.designer_inspector_container.setMaximumHeight(max_inspector)
         if getattr(self, "studio_splitter", None) is not None:
             total = int((1480 if compact else 1760) * scale)
             self.studio_splitter.setSizes([max(980, total), 0])
@@ -6044,12 +4143,52 @@ class TrofeoGui(QMainWindow):
                 self.designer_assets_box.setMaximumHeight(210 if short else 260)
                 self.designer_animation_box.setMaximumHeight(170 if short else 220)
         self._apply_designer_aux_visibility(auto_short=short)
+        self._clamp_designer_splitter_later()
+
+    def _apply_header_responsive(self, width: int, height: int) -> None:
+        compact = width < 1650
+        narrow = width < 1360
+        for name in (
+            "header_mode_label",
+            "header_scale_label",
+            "header_conn_label",
+            "header_device_label",
+            "header_language_label",
+        ):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setVisible(not compact)
+        title_sub = getattr(self, "shell_title_sub", None)
+        if title_sub is not None:
+            title_sub.setVisible(not narrow)
+        device_combo = getattr(self, "header_device_combo", None)
+        if device_combo is not None:
+            device_combo.setVisible(not narrow)
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
-        if hasattr(self, "ui_scale_combo"):
-            self._apply_responsive_layout_metrics()
-            self._apply_content_width_rules(int(self.ui_scale_combo.currentData() or 100))
+        if not hasattr(self, "ui_scale_combo"):
+            return
+        # Recomputing fixed widths and splitter sizes on every pixel of a live
+        # resize makes the layout thrash and visibly "jump". Coalesce the work
+        # into a single pass shortly after resizing settles.
+        timer = getattr(self, "responsive_update_timer", None)
+        if timer is not None:
+            if not timer.isActive():
+                timer.start(40)
+        else:
+            self._run_responsive_update()
+
+    def _run_responsive_update(self) -> None:
+        if not hasattr(self, "ui_scale_combo"):
+            return
+        scale_percent = int(self.ui_scale_combo.currentData() or 100)
+        key = (int(self.width() or 0), int(self.height() or 0), scale_percent)
+        if key == getattr(self, "_responsive_update_key", None):
+            return
+        self._responsive_update_key = key
+        self._apply_responsive_layout_metrics(scale_percent)
+        self._apply_content_width_rules(scale_percent)
 
     def _apply_designer_aux_visibility(self, *_args: object, auto_short: bool | None = None) -> None:
         short = (self.height() or 0) < 1180 if auto_short is None else bool(auto_short)
@@ -6181,66 +4320,10 @@ class TrofeoGui(QMainWindow):
         return pl_text if self._current_ui_language() == "pl" else en_text
 
     def _populate_designer_quick_add_menu(self) -> None:
-        menu = getattr(self, "designer_quick_add_menu", None)
-        if menu is None:
-            return
-        menu.clear()
-        tr = self._tr
-        domain = self._designer_domain_mode()
-
-        def add_section(title: str) -> None:
-            try:
-                menu.addSection(title)
-            except Exception:
-                menu.addSeparator()
-
-        basics: list[tuple[str, object]] = [
-            (tr("Text", "Tekst"), lambda: self.quick_add_designer_element("texts")),
-            (tr("Stat", "Statystyka"), lambda: self.quick_add_designer_element("stats")),
-            (tr("Image", "Obraz"), lambda: self.quick_add_designer_element("images")),
-            (tr("Panel", "Panel"), lambda: self.quick_add_designer_element("panels")),
-        ]
-        music_audio: list[tuple[str, object]] = [
-            (tr("Now Playing", "Now Playing"), self.add_now_playing_widget),
-            (tr("Now Playing Hero", "Now Playing Hero"), self.add_now_playing_widget_hero),
-            (tr("Now Playing Mini", "Now Playing Mini"), self.add_now_playing_widget_mini),
-            (tr("Volume", "Głośność"), self.add_volume_widget),
-            (tr("Graphic EQ", "Korektor graficzny"), self.add_graphic_equalizer_widget),
-        ]
-        widgets: list[tuple[str, object]] = [
-            (tr("Analog Clock Classic", "Analog Clock Classic"), lambda: self.add_analog_clock_widget("classic")),
-            (tr("Analog Clock Modern", "Analog Clock Modern"), lambda: self.add_analog_clock_widget("modern")),
-            (tr("Analog Clock Nordic", "Analog Clock Nordic"), lambda: self.add_analog_clock_widget("nordic")),
-            (tr("Gauge Set: System Trio", "Gauge Set: System Trio"), lambda: self.add_gauge_ring_bundle("system")),
-            (tr("Gauge Set: Nordic Trio", "Gauge Set: Nordic Trio"), lambda: self.add_gauge_ring_bundle("nordic")),
-            (tr("Gauge Set: Cyber Trio", "Gauge Set: Cyber Trio"), lambda: self.add_gauge_ring_bundle("cyber")),
-            (tr("Gauge Set: Thermal Trio", "Gauge Set: Thermal Trio"), lambda: self.add_gauge_ring_bundle("thermal")),
-        ]
-
-        if domain in {"all", "system"}:
-            add_section(tr("Basics", "Podstawowe"))
-            for label, handler in basics:
-                action = menu.addAction(label)
-                action.triggered.connect(handler)
-        if domain in {"all", "music"}:
-            add_section(tr("Music & audio", "Muzyka i audio"))
-            for label, handler in music_audio:
-                action = menu.addAction(label)
-                action.triggered.connect(handler)
-        if domain != "music":
-            add_section(tr("Widgets", "Widgety"))
-            for label, handler in widgets:
-                action = menu.addAction(label)
-                action.triggered.connect(handler)
+        populate_quick_add_menu(self, translate=self._tr, domain=self._designer_domain_mode())
 
     def _refresh_designer_quick_add_groups(self) -> None:
-        domain = self._designer_domain_mode()
-        if hasattr(self, "quick_add_group_basics"):
-            self.quick_add_group_basics.setVisible(domain in {"all", "system"})
-        if hasattr(self, "quick_add_group_music"):
-            self.quick_add_group_music.setVisible(domain in {"all", "music"})
-        if hasattr(self, "quick_add_group_widgets"):
-            self.quick_add_group_widgets.setVisible(domain != "music")
+        refresh_quick_add_groups(self, domain=self._designer_domain_mode())
 
     def _on_designer_domain_changed(self, _index: int) -> None:
         current_source = str(self.designer_source_combo.currentData() or "").strip()
@@ -6251,123 +4334,7 @@ class TrofeoGui(QMainWindow):
 
     def _refresh_inspector_form_labels(self, tr) -> None:
         """Inspector / media / motion row captions and related buttons (EN default, PL via tr)."""
-        for attr, en, pl in (
-            ("row_general_id", "Element ID", "ID elementu"),
-            ("row_general_visible", "Visibility", "Widoczność"),
-            ("row_general_locked", "Locked", "Zablokowany"),
-            ("row_general_z", "Layer (Z)", "Warstwa"),
-            ("row_music_tools", "Music tools", "Narzędzia muzyczne"),
-            ("row_music_equalizer_bars", "EQ bars", "Słupki EQ"),
-            ("row_music_equalizer_gap", "Bar gap", "Odstęp słupków"),
-            ("row_music_equalizer_mirror", "Mirror mode", "Tryb lustrzany"),
-            ("row_content_text", "Text", "Tekst"),
-            ("row_content_label", "Label", "Etykieta"),
-            ("row_content_source", "Data source", "Źródło"),
-            ("row_content_format", "Value format", "Format wartości"),
-            ("row_content_stat_display", "Display mode", "Tryb wyświetlania"),
-            ("row_content_stat_range", "Range", "Zakres"),
-            ("row_content_stat_show_value", "Show value text", "Tekst wartości"),
-            ("row_appearance_font", "Font", "Czcionka"),
-            ("row_appearance_font_style", "Style", "Styl"),
-            ("row_appearance_align", "Alignment", "Wyrównanie"),
-            ("row_appearance_color", "Color", "Kolor"),
-            ("row_appearance_label_color", "Label color", "Kolor etykiety"),
-            ("row_appearance_value_color", "Value color", "Kolor wartości"),
-            ("row_appearance_track_color", "Track / chart background", "Kolor tła gauge / paska / wykresu"),
-            ("row_appearance_fill_color", "Line / fill color", "Kolor linii / wypełnienia / wartości"),
-            ("row_sparkline_points", "History points", "Punkty historii"),
-            ("row_sparkline_fill_opacity", "Fill opacity", "Przezrocz. wypełnienia"),
-            ("row_sparkline_show_points", "Endpoint marker", "Punkt końcowy"),
-            ("row_appearance_stroke_width", "Line / gauge stroke (0 = auto)", "Grubość linii / gauge (0 = auto)"),
-            ("row_gauge_ring", "Ring diameter", "Średnica pierścienia"),
-            ("row_gauge_value_layout", "Value layout", "Układ wartości"),
-            ("row_gauge_preset", "Color preset", "Preset kolorów"),
-            ("row_gauge_grad_low", "Arc: low color", "Łuk: kolor niski"),
-            ("row_gauge_grad_mid", "Arc: mid color", "Łuk: środek"),
-            ("row_gauge_grad_high", "Arc: high color", "Łuk: wysoki"),
-            ("row_gauge_smooth", "Needle smoothing", "Wygładzanie igły"),
-            ("row_gauge_match_value", "Value color matches arc", "Kolor wartości jak łuk"),
-            ("row_gauge_inner_alpha", "Inner transparency", "Przezrocz. środka"),
-            ("row_panel_fill", "Panel fill", "Wypełnienie panelu"),
-            ("row_panel_opacity", "Panel opacity", "Przezroczystość panelu"),
-            ("row_panel_radius", "Corner radius", "Promień narożników"),
-            ("row_geometry_x", "X", "X"),
-            ("row_geometry_y", "Y", "Y"),
-            ("row_geometry_w", "Width", "Szerokość"),
-            ("row_geometry_h", "Height", "Wysokość"),
-            ("row_motion_enabled", "Motion", "Ruch"),
-            ("row_motion_range", "Frame range", "Zakres klatek"),
-            ("row_motion_target_x", "End X", "Koniec X"),
-            ("row_motion_target_y", "End Y", "Koniec Y"),
-            ("row_motion_target_opacity", "End opacity", "Końcowa przezr."),
-            ("row_motion_actions", "Motion actions", "Akcje ruchu"),
-            ("row_image_path", "Image file", "Plik obrazu"),
-            ("row_image_fit", "Fit", "Dopasowanie"),
-            ("row_image_opacity", "Opacity", "Przezroczystość"),
-            ("row_image_rotation", "Rotation", "Obrót"),
-            ("row_image_import", "Import", "Import"),
-            ("row_image_actions", "Quick actions", "Szybkie akcje"),
-            ("row_image_preview", "Preview", "Podgląd"),
-            ("row_media_bg_mode", "Background mode", "Tryb tła"),
-            ("row_media_bg_path", "File / import", "Plik / import"),
-            ("row_media_bg_fit", "Fit", "Dopasowanie"),
-            ("row_media_bg_opacity", "Opacity", "Przezroczystość"),
-            ("row_media_bg_rotation", "Rotation", "Obrót"),
-            ("row_media_bg_colors", "Colors", "Kolory"),
-            ("row_media_bg_presets", "Presets", "Presety"),
-            ("row_media_bg_texture", "Texture", "Tekstura"),
-            ("row_media_bg_preview", "Background preview", "Podgląd tła"),
-            ("row_animation_overview", "Animation", "Animacja"),
-        ):
-            w = getattr(self, attr, None)
-            if isinstance(w, QLabel):
-                w.setText(tr(en, pl))
-        if hasattr(self, "inspector_animation_details_hint"):
-            self.inspector_animation_details_hint.setText(
-                tr(
-                    "Use Animation Studio for the timeline, multi-frame timing, and a large preview. "
-                    "After editing frames, switch to Theme Designer to place stats and widgets like on a static theme.",
-                    "W Studio animacji masz oś czasu, zbiorcze czasy i duży podgląd. "
-                    "Po edycji klatek wróć do Projektanta, by ułożyć statystyki i widgety jak na statycznym motywie.",
-                )
-            )
-        if hasattr(self, "open_animation_studio_btn"):
-            self.open_animation_studio_btn.setText(tr("Open Animation Studio", "Otwórz Studio animacji"))
-        if hasattr(self, "motion_enabled_chk"):
-            self.motion_enabled_chk.setText(tr("Animate element", "Animuj element"))
-        if hasattr(self, "motion_capture_current_btn"):
-            self.motion_capture_current_btn.setText(tr("Set end from current", "Ustaw koniec z bieżącej"))
-        if hasattr(self, "motion_remove_btn"):
-            self.motion_remove_btn.setText(tr("Remove motion", "Usuń ruch"))
-        if hasattr(self, "designer_path_browse_btn"):
-            self.designer_path_browse_btn.setText(tr("Browse…", "Wybierz…"))
-        if hasattr(self, "designer_path_prepare_btn"):
-            self.designer_path_prepare_btn.setText(tr("Prepare", "Przygotuj"))
-        if hasattr(self, "designer_image_fullscreen_btn"):
-            self.designer_image_fullscreen_btn.setText(tr("Fullscreen", "Ustaw fullscreen"))
-        if hasattr(self, "designer_image_left_half_btn"):
-            self.designer_image_left_half_btn.setText(tr("Left half", "Lewa połowa"))
-        if hasattr(self, "designer_image_right_half_btn"):
-            self.designer_image_right_half_btn.setText(tr("Right half", "Prawa połowa"))
-        if hasattr(self, "designer_image_reset_btn"):
-            self.designer_image_reset_btn.setText(tr("Reset frame", "Reset kadru"))
-        if hasattr(self, "designer_import_image_btn"):
-            self.designer_import_image_btn.setText(tr("Import image into theme", "Importuj obraz do motywu"))
-        if hasattr(self, "designer_image_preview_label"):
-            pm = self.designer_image_preview_label.pixmap()
-            if pm is None or pm.isNull():
-                self.designer_image_preview_label.setText(tr("Image preview", "Podgląd obrazu"))
-        ph_g = tr("[R,G,B,A] — optional, empty = from preset", "[R,G,B,A] — opcjonalnie, puste = z presetu")
-        ph_m = tr("[R,G,B,A] — optional", "[R,G,B,A] — opcjonalnie")
-        if hasattr(self, "designer_gauge_low_edit"):
-            self.designer_gauge_low_edit.setPlaceholderText(ph_g)
-        if hasattr(self, "designer_gauge_mid_edit"):
-            self.designer_gauge_mid_edit.setPlaceholderText(ph_m)
-        if hasattr(self, "designer_gauge_high_edit"):
-            self.designer_gauge_high_edit.setPlaceholderText(ph_m)
-        if hasattr(self, "preview_tools_label"):
-            self.preview_tools_label.setText(tr("Mouse:", "Mysz:"))
-        return self._tr("Background preview", "Podgląd tła")
+        return refresh_designer_inspector_form_labels(self, tr)
 
     def _empty_image_preview_caption(self) -> str:
         return self._tr("Image preview", "Podgląd obrazu")
@@ -6375,603 +4342,19 @@ class TrofeoGui(QMainWindow):
     def _refresh_extended_ui_labels(self) -> None:
         tr = self._tr
         self._refresh_inspector_form_labels(tr)
-        if hasattr(self, "endpoint_box"):
-            self.endpoint_box.setTitle(tr("Backend", "Backend"))
-        if hasattr(self, "control_box"):
-            self.control_box.setTitle(tr("Device control", "Kontrola urządzenia"))
-        if hasattr(self, "runtime_hero_text_label"):
-            self.runtime_hero_text_label.setText(
-                tr(
-                    "Control the panel like a native Plasma app: start the runtime, push single frames "
-                    "and manage themes from clear cards instead of raw fields.",
-                    "Steruj panelem jak natywną aplikacją Plasma: uruchom runtime, wyślij pojedyncze klatki "
-                    "i zarządzaj motywami z czytelnych kart zamiast surowych pól.",
-                )
-            )
-        if hasattr(self, "runtime_sections_tabs"):
-            self.runtime_sections_tabs.setTabText(0, tr("Device", "Urządzenie"))
-            self.runtime_sections_tabs.setTabText(1, tr("Image", "Obraz"))
-            self.runtime_sections_tabs.setTabText(2, tr("Themes", "Motywy"))
-        if hasattr(self, "work_box"):
-            self.work_box.setTitle(tr("Single image", "Pojedynczy obraz"))
-        if hasattr(self, "cfg_box"):
-            self.cfg_box.setTitle(tr("Playback settings", "Ustawienia odtwarzania"))
-        if hasattr(self, "status_box"):
-            self.status_box.setTitle(tr("System monitor", "Monitor systemu"))
-        if hasattr(self, "runtime_legacy_theme_box"):
-            self.runtime_legacy_theme_box.setTitle(tr("Theme library", "Biblioteka motywów"))
-        if hasattr(self, "runtime_theme_cards_box"):
-            self.runtime_theme_cards_box.setTitle(tr("Theme cards", "Karty motywów"))
-        if hasattr(self, "system_intro_text_label"):
-            self.system_intro_text_label.setText(
-                tr(
-                    "This tab shows backend status, device state and basic host metrics. "
-                    "Quick actions use the same live API endpoints as before.",
-                    "Ta zakładka pokazuje status backendu, stan urządzenia i podstawowe metryki hosta. "
-                    "Szybkie akcje korzystają z tych samych endpointów API co wcześniej.",
-                )
-            )
-        if hasattr(self, "backend_status_box"):
-            self.backend_status_box.setTitle(tr("Backend status", "Status backendu"))
-        if hasattr(self, "system_api_status_title"):
-            self.system_api_status_title.setText(tr("API Server", "Serwer API"))
-        if hasattr(self, "system_ws_status_title"):
-            self.system_ws_status_title.setText(tr("WebSocket", "WebSocket"))
-        if hasattr(self, "system_lcd_status_title"):
-            self.system_lcd_status_title.setText(tr("LCD Daemon", "Demon LCD"))
-        if hasattr(self, "system_queue_status_title"):
-            self.system_queue_status_title.setText(tr("Queue Worker", "Worker kolejki"))
-        if hasattr(self, "system_theme_engine_title"):
-            self.system_theme_engine_title.setText(tr("Theme Engine", "Silnik motywów"))
-        if hasattr(self, "system_backup_title"):
-            self.system_backup_title.setText(tr("Auto Backup", "Auto backup"))
-        if hasattr(self, "system_info_box"):
-            self.system_info_box.setTitle(tr("System information", "Informacje o systemie"))
-        if hasattr(self, "resources_box"):
-            self.resources_box.setTitle(tr("System resources", "Zasoby systemu"))
-        if hasattr(self, "system_cpu_title"):
-            self.system_cpu_title.setText(tr("CPU", "CPU"))
-        if hasattr(self, "system_mem_title"):
-            self.system_mem_title.setText(tr("RAM", "RAM"))
-        if hasattr(self, "system_disk_title"):
-            self.system_disk_title.setText(tr("DISK", "DYSK"))
-        if hasattr(self, "system_temp_title"):
-            self.system_temp_title.setText(tr("TEMP", "TEMP"))
-        if hasattr(self, "runtime_dashboard_device_box"):
-            self.runtime_dashboard_device_box.setTitle(tr("Network & device", "Sieć i urządzenie"))
-        if hasattr(self, "system_events_box"):
-            self.system_events_box.setTitle(tr("System events", "Zdarzenia systemowe"))
-        if hasattr(self, "system_events_header_labels") and len(getattr(self, "system_events_header_labels", [])) == 4:
-            hdr = self.system_events_header_labels
-            hdr[0].setText(tr("Time", "Czas"))
-            hdr[1].setText(tr("Level", "Poziom"))
-            hdr[2].setText(tr("Source", "Źródło"))
-            hdr[3].setText(tr("Message", "Komunikat"))
-        if hasattr(self, "system_quick_actions_box"):
-            self.system_quick_actions_box.setTitle(tr("Quick actions", "Szybkie akcje"))
-        if hasattr(self, "system_restart_backend_btn"):
-            self.system_restart_backend_btn.setText(tr("Restart backend", "Restart backendu"))
-        if hasattr(self, "system_restart_service_btn"):
-            self.system_restart_service_btn.setText(tr("Restart service", "Restart usługi"))
-        if hasattr(self, "system_refresh_status_btn"):
-            self.system_refresh_status_btn.setText(tr("Refresh status", "Odśwież status"))
-        if hasattr(self, "system_export_logs_btn"):
-            self.system_export_logs_btn.setText(tr("Export logs", "Eksport logów"))
-        if hasattr(self, "system_diagnostic_btn"):
-            self.system_diagnostic_btn.setText(tr("Diagnostics", "Diagnostyka"))
-        if hasattr(self, "config_intro_text_label"):
-            self.config_intro_text_label.setText(
-                tr(
-                    "Configuration centralizes interface settings, LCD preferences and integrations in one place. "
-                    "App theme management now lives here instead of the top control bar.",
-                    "Konfiguracja grupuje ustawienia interfejsu, preferencje LCD i integracje w jednym miejscu. "
-                    "Motyw aplikacji jest ustawiany tutaj zamiast na górnym pasku.",
-                )
-            )
-        if hasattr(self, "designer_elements_box"):
-            self.designer_elements_box.setTitle("")
-        if hasattr(self, "designer_elements_title_label"):
-            self.designer_elements_title_label.setText(tr("Layers & components", "Warstwy i komponenty"))
-        if hasattr(self, "quick_add_group_basics"):
-            self.quick_add_group_basics.setTitle(tr("Basics", "Podstawowe"))
-        if hasattr(self, "quick_add_group_music"):
-            self.quick_add_group_music.setTitle(tr("Music & audio", "Muzyka i audio"))
-        if hasattr(self, "quick_add_group_widgets"):
-            self.quick_add_group_widgets.setTitle(tr("Widgets", "Widgety"))
-        if hasattr(self, "designer_component_search"):
-            self.designer_component_search.setPlaceholderText(tr("Search layers or text…", "Szukaj warstwy lub tekstu…"))
-        if hasattr(self, "designer_kind_combo"):
-            kind_labels = [
-                (tr("Texts", "Teksty"), "texts"),
-                (tr("Stats", "Statystyki"), "stats"),
-                (tr("Images", "Obrazy"), "images"),
-                (tr("Panels", "Panele"), "panels"),
-            ]
-            current_kind = str(self.designer_kind_combo.currentData() or "texts")
-            self.designer_kind_combo.blockSignals(True)
-            self.designer_kind_combo.clear()
-            for text, data in kind_labels:
-                self.designer_kind_combo.addItem(text, data)
-            idx = self.designer_kind_combo.findData(current_kind)
-            self.designer_kind_combo.setCurrentIndex(idx if idx >= 0 else 0)
-            self.designer_kind_combo.blockSignals(False)
-        if hasattr(self, "designer_domain_combo"):
-            labels = [
-                (tr("All", "Wszystko"), "all"),
-                (tr("System", "System"), "system"),
-                (tr("Music", "Muzyka"), "music"),
-            ]
-            current = str(self.designer_domain_combo.currentData() or "all")
-            self.designer_domain_combo.blockSignals(True)
-            self.designer_domain_combo.clear()
-            for text, data in labels:
-                self.designer_domain_combo.addItem(text, data)
-            idx = self.designer_domain_combo.findData(current)
-            self.designer_domain_combo.setCurrentIndex(idx if idx >= 0 else 0)
-            self.designer_domain_combo.blockSignals(False)
-        if hasattr(self, "designer_quick_add_toggle_btn"):
-            self.designer_quick_add_toggle_btn.setText("+")
-            self.designer_quick_add_toggle_btn.setToolTip(tr("Add component", "Dodaj komponent"))
-        if hasattr(self, "designer_source_combo"):
-            current_source = str(self.designer_source_combo.currentData() or "").strip()
-            self._populate_designer_source_combo(current_source)
-        if hasattr(self, "quick_add_text_btn"):
-            self.quick_add_text_btn.setText(tr("Text", "Tekst"))
-        if hasattr(self, "quick_add_stat_btn"):
-            self.quick_add_stat_btn.setText(tr("Stat", "Statystyka"))
-        if hasattr(self, "quick_add_image_btn"):
-            self.quick_add_image_btn.setText(tr("Image", "Obraz"))
-        if hasattr(self, "quick_add_panel_btn"):
-            self.quick_add_panel_btn.setText(tr("Panel", "Panel"))
-        if hasattr(self, "quick_add_now_playing_btn"):
-            self.quick_add_now_playing_btn.setText(tr("Now Playing", "Now Playing"))
-        if hasattr(self, "quick_add_now_playing_hero_btn"):
-            self.quick_add_now_playing_hero_btn.setText(tr("Now Playing Hero", "Now Playing Hero"))
-        if hasattr(self, "quick_add_now_playing_mini_btn"):
-            self.quick_add_now_playing_mini_btn.setText(tr("Now Playing Mini", "Now Playing Mini"))
-        if hasattr(self, "quick_add_volume_btn"):
-            self.quick_add_volume_btn.setText(tr("Volume", "Głośność"))
-        if hasattr(self, "quick_add_equalizer_btn"):
-            self.quick_add_equalizer_btn.setText(tr("Graphic EQ", "Korektor"))
-        if hasattr(self, "quick_add_analog_clock_btn"):
-            self.quick_add_analog_clock_btn.setText(tr("Analog Clock", "Zegar analogowy"))
-        if hasattr(self, "quick_add_gauge_set_btn"):
-            self.quick_add_gauge_set_btn.setText(tr("Gauge Set", "Zestaw gauge"))
-        if hasattr(self, "designer_move_box"):
-            self.designer_move_box.setTitle(tr("Nudge selection", "Przesuwanie zaznaczenia"))
-        if hasattr(self, "designer_nudge_step_label"):
-            self.designer_nudge_step_label.setText(tr("Step:", "Krok:"))
-        if hasattr(self, "designer_nudge_up_btn"):
-            self.designer_nudge_up_btn.setToolTip(tr("Nudge up", "Przesuń w górę"))
-        if hasattr(self, "designer_nudge_left_btn"):
-            self.designer_nudge_left_btn.setToolTip(tr("Nudge left", "Przesuń w lewo"))
-        if hasattr(self, "designer_nudge_right_btn"):
-            self.designer_nudge_right_btn.setToolTip(tr("Nudge right", "Przesuń w prawo"))
-        if hasattr(self, "designer_nudge_down_btn"):
-            self.designer_nudge_down_btn.setToolTip(tr("Nudge down", "Przesuń w dół"))
-        if hasattr(self, "designer_remove_btn"):
-            self.designer_remove_btn.setText(tr("🗑 Delete", "🗑 Usuń"))
-        if hasattr(self, "props_box"):
-            self.props_box.setTitle(tr("Element properties", "Właściwości elementu"))
-        if hasattr(self, "inspector_selection_summary"):
-            self.inspector_selection_summary.setText(
-                tr("Select an element to edit its properties.", "Wybierz element, aby edytować jego właściwości.")
-            )
-        if hasattr(self, "inspector_tabs"):
-            self.inspector_tabs.setTabText(0, tr("General", "Ogólne"))
-            self.inspector_tabs.setTabText(1, tr("Content", "Treść"))
-            self.inspector_tabs.setTabText(2, tr("Music", "Muzyka"))
-            self.inspector_tabs.setTabText(3, tr("Style", "Styl"))
-            self.inspector_tabs.setTabText(4, tr("Gauge", "Gauge"))
-            self.inspector_tabs.setTabText(5, tr("Position", "Pozycja"))
-            self.inspector_tabs.setTabText(6, tr("Image", "Obraz"))
-            self.inspector_tabs.setTabText(7, tr("Background", "Tło"))
-            self.inspector_tabs.setTabText(8, tr("Animation", "Animacja"))
-        if hasattr(self, "music_tool_now_playing_btn"):
-            self.music_tool_now_playing_btn.setText(tr("Now Playing", "Now Playing"))
-        if hasattr(self, "music_tool_hero_btn"):
-            self.music_tool_hero_btn.setText(tr("Hero", "Hero"))
-        if hasattr(self, "music_tool_mini_btn"):
-            self.music_tool_mini_btn.setText(tr("Mini", "Mini"))
-        if hasattr(self, "music_tool_volume_btn"):
-            self.music_tool_volume_btn.setText(tr("Volume", "Głośność"))
-        if hasattr(self, "music_tool_eq_btn"):
-            self.music_tool_eq_btn.setText(tr("Graphic EQ", "Korektor"))
-        if hasattr(self, "log_panel_box"):
-            self.log_panel_box.setTitle(tr("API & application logs", "Logi API i aplikacji"))
-        if hasattr(self, "log_filter_edit"):
-            self.log_filter_edit.setPlaceholderText(tr("Filter logs…", "Filtr logów…"))
-        if hasattr(self, "log_only_errors_chk"):
-            self.log_only_errors_chk.setText(tr("Errors only", "Tylko błędy"))
-        if hasattr(self, "log_hide_status_chk"):
-            self.log_hide_status_chk.setText(tr("Hide status lines", "Ukryj status"))
-        if hasattr(self, "log_copy_btn"):
-            self.log_copy_btn.setText(tr("Copy view", "Kopiuj widok"))
-        if hasattr(self, "log_copy_selection_btn"):
-            self.log_copy_selection_btn.setText(tr("Copy selection", "Kopiuj zaznaczenie"))
-        if hasattr(self, "log_clear_btn"):
-            self.log_clear_btn.setText(tr("Clear", "Wyczyść"))
-        if hasattr(self, "log_search_label"):
-            self.log_search_label.setText(tr("Search:", "Szukaj:"))
-        if hasattr(self, "preview_guides_chk"):
-            self.preview_guides_chk.setText(tr("Show layer bounds", "Pokaż ramki warstw"))
-        if hasattr(self, "theme_doc_manual_json_label"):
-            self.theme_doc_manual_json_label.setText(tr("Manual JSON:", "JSON ręczny:"))
-        if hasattr(self, "theme_doc_open_external_btn"):
-            self.theme_doc_open_external_btn.setText(tr("Open JSON file…", "Otwórz plik JSON…"))
-            self.theme_doc_open_external_btn.setToolTip(
-                tr(
-                    "Writes the theme with an English field guide and opens it in your default app. "
-                    "After saving in the editor, use Load theme. // and /* */ comments are ignored when loading.",
-                    "Zapisuje motyw z angielskim opisem pól i otwiera go w domyślnej aplikacji. "
-                    "Po zapisie w edytorze użyj „Wczytaj motyw”. Komentarze // oraz /* */ są pomijane przy wczytywaniu.",
-                )
-            )
-        if hasattr(self, "theme_doc_insert_guide_btn"):
-            self.theme_doc_insert_guide_btn.setText(tr("Insert field guide", "Wstaw opis pól"))
-            self.theme_doc_insert_guide_btn.setToolTip(
-                tr(
-                    "Prepends the guide to the JSON tab (persist with Save / Load flow as usual).",
-                    "Wstawia opis na początku zakładki JSON (zapis jak przy zwykłym Zapisz / Wczytaj).",
-                )
-            )
-        if hasattr(self, "designer_open_json_btn"):
-            self.designer_open_json_btn.setText(tr("Open JSON…", "Otwórz JSON…"))
-            self.designer_open_json_btn.setToolTip(
-                tr(
-                    "Save the theme file with a field guide and open it externally, then use Load theme.",
-                    "Zapisuje plik motywu z opisem pól i otwiera go na zewnątrz, potem użyj „Wczytaj motyw”.",
-                )
-            )
-        if hasattr(self, "designer_save_as_btn"):
-            self.designer_save_as_btn.setText(tr("Save As…", "Zapisz jako…"))
-            self.designer_save_as_btn.setToolTip(
-                tr("Save the current theme as a new editable file.", "Zapisz bieżący motyw jako nowy plik do edycji.")
-            )
-        if hasattr(self, "theme_doc_save_as_btn"):
-            self.theme_doc_save_as_btn.setText(tr("Save As", "Zapisz jako"))
-        if hasattr(self, "animation_studio_open_json_btn"):
-            self.animation_studio_open_json_btn.setText(tr("Open JSON…", "Otwórz JSON…"))
-            self.animation_studio_open_json_btn.setToolTip(
-                tr(
-                    "Same theme file; background animation is under effects.animation.",
-                    "Ten sam plik motywu; animacja tła jest w effects.animation.",
-                )
-            )
-        if hasattr(self, "animation_studio_save_as_btn"):
-            self.animation_studio_save_as_btn.setText(tr("Save As…", "Zapisz jako…"))
-            self.animation_studio_save_as_btn.setToolTip(
-                tr(
-                    "Create a new theme file from the current animation edit.",
-                    "Utwórz nowy plik motywu z bieżącej edycji animacji.",
-                )
-            )
-        if hasattr(self, "animation_studio_back_btn"):
-            self.animation_studio_back_btn.setText(tr("← Theme Designer", "← Projektant motywów"))
-        if hasattr(self, "animation_studio_quick_export_btn"):
-            self.animation_studio_quick_export_btn.setText(tr("Export", "Eksportuj"))
-            self.animation_studio_quick_export_btn.setToolTip(
-                tr("Export the full animation sequence to ZIP.", "Eksportuj całą sekwencję animacji do ZIP.")
-            )
-        if hasattr(self, "animation_studio_title_label"):
-            self.animation_studio_title_label.setText(tr("Animation Studio", "Studio animacji"))
-        if hasattr(self, "animation_studio_subtitle_label"):
-            self.animation_studio_subtitle_label.setText(
-                tr(
-                    "Create and manage frame-based animations for Trofeo LCD.",
-                    "Twórz i zarządzaj animacjami klatkowymi dla Trofeo LCD.",
-                )
-            )
-        if hasattr(self, "animation_worker_status_label"):
-            self._refresh_animation_worker_status()
-        if hasattr(self, "animation_preview_title_label"):
-            self.animation_preview_title_label.setText(tr("Preview", "Podgląd"))
-        if hasattr(self, "animation_auto_composite_chk"):
-            self.animation_auto_composite_chk.setText(tr("Auto composite", "Auto kompozycja"))
-            self.animation_auto_composite_chk.setToolTip(
-                tr(
-                    "Render the full theme preview whenever the selected frame changes.",
-                    "Renderuj pełny podgląd motywu przy każdej zmianie wybranej klatki.",
-                )
-            )
-        if hasattr(self, "animation_refresh_composite_btn"):
-            self.animation_refresh_composite_btn.setText(tr("Refresh composite", "Odśwież kompozycję"))
-            self.animation_refresh_composite_btn.setToolTip(
-                tr("Render the full theme with the current animation frame.", "Wyrenderuj pełny motyw z bieżącą klatką animacji.")
-            )
-        if hasattr(self, "animation_onion_skin_chk"):
-            self.animation_onion_skin_chk.setText(tr("Onion skin", "Onion skin"))
-            self.animation_onion_skin_chk.setToolTip(
-                tr(
-                    "Overlay previous and next animation frames over the current frame.",
-                    "Nałóż poprzednią i następną klatkę animacji na bieżącą klatkę.",
-                )
-            )
-        if hasattr(self, "bg_animation_export_btn") and not getattr(self, "_animation_export_in_flight", False):
-            self.bg_animation_export_btn.setText(tr("Export", "Eksportuj"))
-            self.bg_animation_export_btn.setToolTip(
-                tr(
-                    "Render animation frames to a ZIP archive in a background worker.",
-                    "Renderuj klatki animacji do archiwum ZIP w tle.",
-                )
-            )
-            if hasattr(self, "animation_export_loop_btn"):
-                self.animation_export_loop_btn.setText(tr("Export Loop", "Eksport pętli"))
-                self.animation_export_loop_btn.setToolTip(
-                    tr(
-                        "Export only the active animation loop range to ZIP.",
-                        "Eksportuj do ZIP tylko aktywny zakres pętli animacji.",
-                    )
-                )
-            if hasattr(self, "animation_export_selection_btn"):
-                self.animation_export_selection_btn.setText(tr("Export Sel", "Eksport zazn."))
-                self.animation_export_selection_btn.setToolTip(
-                    tr(
-                        "Export only selected animation frames to ZIP.",
-                        "Eksportuj do ZIP tylko zaznaczone klatki animacji.",
-                    )
-                )
-        if not getattr(self, "_animation_import_in_flight", False):
-            if hasattr(self, "bg_animation_import_btn"):
-                self.bg_animation_import_btn.setText(tr("Import", "Importuj"))
-                self.bg_animation_import_btn.setToolTip(
-                    tr(
-                        "Replace the current sequence with selected frames or a TTCR container. Files are prepared in the background.",
-                        "Zastąp bieżącą sekwencję wybranymi klatkami lub kontenerem TTCR. Pliki są przygotowywane w tle.",
-                    )
-                )
-            if hasattr(self, "bg_animation_add_btn"):
-                self.bg_animation_add_btn.setText(tr("Add", "Dodaj"))
-                self.bg_animation_add_btn.setToolTip(
-                    tr(
-                        "Append selected frames to the current sequence. Files are prepared in the background.",
-                        "Dopisz wybrane klatki do bieżącej sekwencji. Pliki są przygotowywane w tle.",
-                    )
-                )
-        if hasattr(self, "bg_animation_duplicate_btn"):
-            self.bg_animation_duplicate_btn.setText(tr("Duplicate asset", "Duplikuj asset"))
-            self.bg_animation_duplicate_btn.setToolTip(
-                tr("Create real copied frame files.", "Utwórz fizyczne kopie plików klatek.")
-            )
-        if hasattr(self, "bg_animation_hold_repeat_btn"):
-            self.bg_animation_hold_repeat_btn.setText(tr("Hold ×N", "Hold ×N"))
-            self.bg_animation_hold_repeat_btn.setToolTip(
-                tr(
-                    "Extend selected frame durations without copying files.",
-                    "Wydłuż czas zaznaczonych klatek bez kopiowania plików.",
-                )
-            )
-        if hasattr(self, "animation_bulk_apply_duration_btn"):
-            self.animation_bulk_apply_duration_btn.setText(tr("Retime selection", "Ustaw czas zaznaczenia"))
-            self.animation_bulk_apply_duration_btn.setToolTip(
-                tr(
-                    "Set the duration for selected frames only.",
-                    "Ustaw czas tylko dla zaznaczonych klatek.",
-                )
-            )
-        if hasattr(self, "animation_stabilize_btn") and not getattr(self, "_animation_stabilize_in_flight", False):
-            self.animation_stabilize_btn.setText(tr("Stabilize", "Stabilizuj"))
-            self.animation_stabilize_btn.setToolTip(
-                tr(
-                    "Align selected frames to the first selected frame using OpenCV ECC. If no range is selected, align the full sequence.",
-                    "Wyrównaj zaznaczone klatki do pierwszej zaznaczonej przez OpenCV ECC. Bez zaznaczenia wyrównuje całą sekwencję.",
-                )
-            )
-        combo = getattr(self, "animation_stabilize_mode_combo", None)
-        if combo is not None:
-            cur_data = combo.currentData()
-            combo.blockSignals(True)
-            labels = [
-                tr("Safe Translation", "Safe Translation"),
-                tr("Auto Safe", "Auto Safe"),
-                tr("Affine", "Affine"),
-                tr("Euclidean", "Euclidean"),
-                tr("Translation", "Translation"),
-            ]
-            for idx, label in enumerate(labels):
-                if idx < combo.count():
-                    combo.setItemText(idx, label)
-            match = combo.findData(cur_data)
-            if match >= 0:
-                combo.setCurrentIndex(match)
-            combo.blockSignals(False)
-            combo.setToolTip(
-                tr(
-                    "Stabilization model. Safe modes reject aggressive warps and avoid visible frame deformation.",
-                    "Model stabilizacji. Tryby Safe odrzucają agresywne transformacje i unikają widocznej deformacji klatek.",
-                )
-            )
-        if hasattr(self, "bg_animation_normalize_duration_btn"):
-            self.bg_animation_normalize_duration_btn.setText(tr("Normalize", "Wyrównaj"))
-            self.bg_animation_normalize_duration_btn.setToolTip(
-                tr(
-                    "Set all selected frames, or the whole sequence if nothing is selected, to this duration.",
-                    "Ustaw ten czas dla zaznaczonych klatek albo całej sekwencji, gdy nic nie zaznaczono.",
-                )
-            )
-        if hasattr(self, "bg_animation_reverse_btn"):
-            self.bg_animation_reverse_btn.setText(tr("Reverse", "Odwróć"))
-            self.bg_animation_reverse_btn.setToolTip(
-                tr(
-                    "Reverse selected frames, or the whole sequence if nothing is selected.",
-                    "Odwróć zaznaczone klatki albo całą sekwencję, gdy nic nie zaznaczono.",
-                )
-            )
-        if hasattr(self, "bg_animation_pingpong_btn"):
-            self.bg_animation_pingpong_btn.setText(tr("Ping-pong", "Ping-pong"))
-            self.bg_animation_pingpong_btn.setToolTip(
-                tr(
-                    "Append a mirrored tail using frame references, without copying files.",
-                    "Dodaj lustrzany ogon z referencji klatek, bez kopiowania plików.",
-                )
-            )
-        if hasattr(self, "animation_select_range_btn"):
-            self.animation_select_range_btn.setText(tr("Range", "Zakres"))
-            self.animation_select_range_btn.setToolTip(
-                tr(
-                    "Select every frame between the first and last selected frame. Shortcut: R.",
-                    "Zaznacz wszystkie klatki między pierwszą i ostatnią zaznaczoną. Skrót: R.",
-                )
-            )
-        if hasattr(self, "animation_invert_selection_btn"):
-            self.animation_invert_selection_btn.setText(tr("Invert", "Odwróć zazn."))
-            self.animation_invert_selection_btn.setToolTip(
-                tr("Invert frame selection. Shortcut: Ctrl+I.", "Odwróć zaznaczenie klatek. Skrót: Ctrl+I.")
-            )
-        if hasattr(self, "animation_clear_selection_btn"):
-            self.animation_clear_selection_btn.setText(tr("Clear Sel", "Wyczyść zazn."))
-            self.animation_clear_selection_btn.setToolTip(
-                tr("Clear frame selection. Shortcut: Esc.", "Wyczyść zaznaczenie klatek. Skrót: Esc.")
-            )
-        if hasattr(self, "animation_timeline_home_btn"):
-            self.animation_timeline_home_btn.setText(tr("Start", "Start"))
-            self.animation_timeline_home_btn.setToolTip(
-                tr("Scroll timeline to the first frame. Shortcut: Home.", "Przewiń oś czasu do pierwszej klatki. Skrót: Home.")
-            )
-        if hasattr(self, "animation_timeline_end_btn"):
-            self.animation_timeline_end_btn.setText(tr("End", "Koniec"))
-            self.animation_timeline_end_btn.setToolTip(
-                tr("Scroll timeline to the last frame. Shortcut: End.", "Przewiń oś czasu do ostatniej klatki. Skrót: End.")
-            )
-        if hasattr(self, "animation_loop_from_selection_btn"):
-            self.animation_loop_from_selection_btn.setText(tr("Loop Sel", "Pętla z zazn."))
-            self.animation_loop_from_selection_btn.setToolTip(
-                tr(
-                    "Set preview loop from selected frame range. Shortcut: Ctrl+R.",
-                    "Ustaw pętlę podglądu z zaznaczonego zakresu. Skrót: Ctrl+R.",
-                )
-            )
-        if hasattr(self, "animation_trim_selection_btn"):
-            self.animation_trim_selection_btn.setText(tr("Trim Sel", "Przytnij zazn."))
-            self.animation_trim_selection_btn.setToolTip(
-                tr(
-                    "Keep only selected frames in the sequence. Asset files are not deleted. Shortcut: Ctrl+T.",
-                    "Zostaw w sekwencji tylko zaznaczone klatki. Pliki assetów nie są usuwane. Skrót: Ctrl+T.",
-                )
-            )
-        if hasattr(self, "animation_timeline_label"):
-            self.animation_timeline_label.setText(tr("Timeline", "Oś czasu"))
-            self.animation_timeline_label.setToolTip(
-                tr(
-                    "Shortcuts: Space play/pause, I/O loop in/out, Ctrl+L clear loop, Delete remove, Ctrl+A select all, R range, Ctrl+I invert, Esc clear, Ctrl+R loop selection, Ctrl+T trim, +/- zoom.",
-                    "Skróty: Spacja play/pause, I/O loop in/out, Ctrl+L czyść pętlę, Delete usuń, Ctrl+A zaznacz wszystko, R zakres, Ctrl+I odwróć, Esc wyczyść, Ctrl+R pętla z zazn., Ctrl+T przytnij, +/- zoom.",
-                )
-            )
-        if hasattr(self, "animation_timeline_hint_label"):
-            self.animation_timeline_hint_label.setText(
-                tr(
-                    "Click a frame to select it. Drag to select a range. Use Set In / Set Out to mark a loop.",
-                    "Kliknij klatkę, aby ją wybrać. Przeciągnij, aby zaznaczyć zakres. Użyj In / Out do pętli.",
-                )
-            )
-        if hasattr(self, "animation_loop_in_btn"):
-            self.animation_loop_in_btn.setText(tr("Set In", "Ustaw In"))
-            self.animation_loop_in_btn.setToolTip(
-                tr("Set loop start to the current frame.", "Ustaw początek pętli na bieżącej klatce.")
-            )
-        if hasattr(self, "animation_loop_out_btn"):
-            self.animation_loop_out_btn.setText(tr("Set Out", "Ustaw Out"))
-            self.animation_loop_out_btn.setToolTip(
-                tr("Set loop end to the current frame.", "Ustaw koniec pętli na bieżącej klatce.")
-            )
-        if hasattr(self, "animation_loop_clear_btn"):
-            self.animation_loop_clear_btn.setText(tr("Clear Loop", "Wyczyść pętlę"))
-            self.animation_loop_clear_btn.setToolTip(
-                tr("Preview the full animation sequence again.", "Podglądaj ponownie całą sekwencję animacji.")
-            )
-        if hasattr(self, "bg_animation_repeat_all_btn"):
-            self.bg_animation_repeat_all_btn.setText(tr("Duplicate sequence ×N", "Duplikuj sekwencję ×N"))
-        if hasattr(self, "theme_doc_box"):
-            self.theme_doc_box.setTitle(tr("Theme", "Motyw"))
-        if hasattr(self, "theme_doc_path_caption"):
-            self.theme_doc_path_caption.setText(tr("Theme file:", "Plik motywu:"))
-        if hasattr(self, "theme_doc_sources_caption"):
-            self.theme_doc_sources_caption.setText(tr("Declared stats:", "Źródła danych:"))
-        if hasattr(self, "theme_doc_browse_btn"):
-            self.theme_doc_browse_btn.setText(tr("Browse theme…", "Wybierz motyw…"))
-        if hasattr(self, "theme_doc_use_selected_btn"):
-            self.theme_doc_use_selected_btn.setText(tr("From active theme", "Z aktywnego motywu"))
-        if hasattr(self, "theme_doc_load_btn"):
-            self.theme_doc_load_btn.setText(tr("Load", "Wczytaj"))
-        if hasattr(self, "theme_doc_save_btn"):
-            self.theme_doc_save_btn.setText(tr("Save", "Zapisz"))
-        if hasattr(self, "theme_doc_save_as_btn"):
-            self.theme_doc_save_as_btn.setText(tr("Save As", "Zapisz jako"))
-        if hasattr(self, "theme_doc_apply_btn"):
-            self.theme_doc_apply_btn.setText(tr("Apply", "Zastosuj"))
-        if hasattr(self, "theme_doc_stop_before_apply_chk"):
-            self.theme_doc_stop_before_apply_chk.setText(tr("Stop runtime before apply", "Zatrzymaj runtime przed apply"))
-        if hasattr(self, "theme_doc_resume_chk"):
-            self.theme_doc_resume_chk.setText(tr("Resume loop after apply", "Wznów loop po apply"))
-        if hasattr(self, "studio_toolbar_load_btn"):
-            self.studio_toolbar_load_btn.setText(tr("Load theme", "Wczytaj motyw"))
-        if hasattr(self, "studio_toolbar_save_btn"):
-            self.studio_toolbar_save_btn.setText(tr("Save theme", "Zapisz motyw"))
-        if hasattr(self, "studio_toolbar_preview_btn"):
-            self.studio_toolbar_preview_btn.setText(tr("Preview", "Podgląd"))
-        if hasattr(self, "studio_toolbar_apply_btn"):
-            self.studio_toolbar_apply_btn.setText(tr("Apply theme", "Zastosuj motyw"))
-        if hasattr(self, "studio_toolbar_reload_btn"):
-            self.studio_toolbar_reload_btn.setText(tr("JSON → Designer", "JSON → Projektant"))
-        if hasattr(self, "studio_toolbar_export_btn"):
-            self.studio_toolbar_export_btn.setText(tr("Designer → JSON", "Projektant → JSON"))
-        if hasattr(self, "studio_left_tabs"):
-            self.studio_left_tabs.setTabText(0, tr("Designer", "Projektant"))
-            self.studio_left_tabs.setTabText(1, tr("JSON", "JSON"))
-        if hasattr(self, "designer_theme_gauge_bar_label"):
-            self.designer_theme_gauge_bar_label.setText(
-                tr("Default gauge preset (meta.gauge_style):", "Domyślny preset gauge (meta.gauge_style):")
-            )
-        if hasattr(self, "designer_reload_btn"):
-            self.designer_reload_btn.setText(tr("Load theme", "Wczytaj motyw"))
-        if hasattr(self, "designer_write_btn"):
-            self.designer_write_btn.setText(tr("Save theme", "Zapisz motyw"))
-        if hasattr(self, "designer_save_as_btn"):
-            self.designer_save_as_btn.setText(tr("Save As", "Zapisz jako"))
-        if hasattr(self, "designer_animation_mode_btn"):
-            self.designer_animation_mode_btn.setText(tr("Animation", "Animacja"))
-        if hasattr(self, "designer_assets_toggle_btn"):
-            self.designer_assets_toggle_btn.setText(tr("Media", "Multimedia"))
-        if hasattr(self, "designer_preview_btn"):
-            self.designer_preview_btn.setText(tr("Preview", "Podgląd"))
-        if hasattr(self, "designer_apply_btn"):
-            self.designer_apply_btn.setText(tr("Apply theme", "Zastosuj motyw"))
-        if hasattr(self, "bg_animation_enabled_chk"):
-            self.bg_animation_enabled_chk.setText(tr("Animation enabled", "Animacja aktywna"))
-        if hasattr(self, "bg_animation_use_bg_chk"):
-            self.bg_animation_use_bg_chk.setText(tr("Use as background", "Użyj jako tła"))
-        if hasattr(self, "animation_studio_fps_label"):
-            self.animation_studio_fps_label.setText(tr("FPS", "FPS"))
-        if hasattr(self, "animation_studio_frame_index_label"):
-            self.animation_studio_frame_index_label.setText(tr("Frame", "Klatka"))
-        if hasattr(self, "animation_studio_duration_label"):
-            self.animation_studio_duration_label.setText(tr("Duration (ms)", "Czas (ms)"))
-        if hasattr(self, "animation_studio_bulk_duration_label"):
-            self.animation_studio_bulk_duration_label.setText(tr("Bulk duration (ms)", "Zbiorczy czas (ms)"))
-        if hasattr(self, "animation_onion_skin_opacity_label"):
-            self.animation_onion_skin_opacity_label.setText(tr("Opacity", "Przezrocz."))
-        combo = getattr(self, "animation_preview_scale_combo", None)
-        if combo is not None and combo.count() >= 4:
-            cur = combo.currentIndex()
-            combo.blockSignals(True)
-            combo.setItemText(0, tr("Fit width", "Dopasuj szerokość"))
-            combo.setItemText(1, "100%")
-            combo.setItemText(2, "150%")
-            combo.setItemText(3, "200%")
-            combo.setCurrentIndex(cur)
-            combo.blockSignals(False)
-        if hasattr(self, "animation_duplicate_repeat_spin"):
-            self.animation_duplicate_repeat_spin.setToolTip(
-                tr(
-                    "Duplicate the selected frames this many times (copies files).",
-                    "Tyle razy zduplikuj zaznaczone klatki (kopiuje pliki).",
-                )
-            )
-        if hasattr(self, "designer_theme_gauge_style_combo") and self.designer_theme_gauge_style_combo.count() > 0:
-            self.designer_theme_gauge_style_combo.setItemText(
-                0,
-                tr("(default from theme name)", "(domyślny z nazwy motywu)"),
-            )
+        refresh_system_overview_labels(self, tr)
+        refresh_config_weather_labels(self, tr)
+        refresh_log_panel_labels(self, tr)
+        refresh_layer_panel_labels(self, tr)
+        refresh_quick_add_labels(self, tr)
+        refresh_layer_action_labels(self, tr)
+        refresh_inspector_tab_labels(self, tr)
+        refresh_music_inspector_labels(self, tr)
+        refresh_weather_inspector_labels(self, tr)
+        refresh_geometry_preset_labels(self, tr)
+        refresh_appearance_inspector_labels(self, tr)
+        refresh_animation_studio_labels(self, tr)
+        refresh_theme_workbench_labels(self, tr)
         if hasattr(self, "bg_animation_play_btn"):
             self._update_animation_preview_timer()
         self._populate_designer_quick_add_menu()
@@ -6980,112 +4363,10 @@ class TrofeoGui(QMainWindow):
         # _apply_sidebar_mode → _apply_responsive_layout_metrics → _apply_designer_aux_visibility.
 
     def _refresh_localized_texts(self) -> None:
-        if hasattr(self, "brand_sub"):
-            self.brand_sub.setText("TROFEO LCD")
-        if hasattr(self, "sidebar_footer_note"):
-            self.sidebar_footer_note.setText("Open Trofeo LCD\nLinux Open Driver")
-        if hasattr(self, "chrome_box"):
-            self.chrome_box.setTitle(self._tr("Control", "Sterowanie"))
-        if hasattr(self, "shell_title_sub"):
-            self.shell_title_sub.setText(self._tr("LCD control and themes.", "Sterowanie LCD i motywami."))
-        if hasattr(self, "header_mode_label"):
-            self.header_mode_label.setText(self._tr("Mode", "Tryb"))
-        if hasattr(self, "header_scale_label"):
-            self.header_scale_label.setText(self._tr("Scale", "Skala"))
-        if hasattr(self, "header_conn_label"):
-            self.header_conn_label.setText(self._tr("Connection", "Połączenie"))
-        if hasattr(self, "header_device_label"):
-            self.header_device_label.setText(self._tr("Device", "Urządzenie"))
-        if hasattr(self, "header_language_label"):
-            self.header_language_label.setText(self._tr("Language", "Język"))
-        if hasattr(self, "header_donate_btn"):
-            self.header_donate_btn.setText(self._tr("Donate", "Donate"))
-            self.header_donate_btn.setToolTip(self._tr("Open GitHub Sponsors for Open Trofeo LCD", "Otwórz GitHub Sponsors dla Open Trofeo LCD"))
-        if hasattr(self, "header_ready_label"):
-            current = self.header_ready_label.text().strip().lower()
-            if current in {"start", "ready", "gotowe"}:
-                self.header_ready_label.setText(self._tr("Ready", "Gotowe"))
-            elif current in {"error", "błąd"}:
-                self.header_ready_label.setText(self._tr("Error", "Błąd"))
-        if hasattr(self, "header_connection_label"):
-            current = self.header_connection_label.text()
-            if "Połączono" in current or "Connected" in current:
-                self.header_connection_label.setText(self._tr("● Connected", "● Połączono"))
-            elif "Rozłączono" in current or "Disconnected" in current:
-                self.header_connection_label.setText(self._tr("● Disconnected", "● Rozłączono"))
-        self._nav_button_meta = {
-            self.nav_library_btn: ("🗂", self._tr("Theme Gallery", "Galeria motywów")),
-            self.nav_designer_btn: ("✎", self._tr("Theme Designer", "Projektant motywów")),
-            self.nav_animation_studio_btn: ("🎞", self._tr("Animation Studio", "Studio animacji")),
-            self.nav_system_btn: ("◉", self._tr("System", "System")),
-            self.nav_logs_btn: ("☰", self._tr("Logs", "Logi")),
-            self.nav_config_btn: ("⚙", self._tr("Configuration", "Konfiguracja")),
-        }
-        if hasattr(self, "main_tabs"):
-            self.main_tabs.setTabText(0, self._tr("System", "System"))
-            self.main_tabs.setTabText(1, self._tr("Theme Designer", "Projektant motywów"))
-            self.main_tabs.setTabText(2, self._tr("Configuration", "Konfiguracja"))
-            self.main_tabs.setTabText(3, self._tr("Logs", "Logi"))
-        if hasattr(self, "studio_sections_tabs"):
-            self.studio_sections_tabs.setTabText(0, self._tr("Theme Gallery", "Galeria motywów"))
-            self.studio_sections_tabs.setTabText(1, self._tr("Designer", "Projektant"))
-            self.studio_sections_tabs.setTabText(2, self._tr("Animation Studio", "Studio animacji"))
-        if hasattr(self, "appearance_box"):
-            self.appearance_box.setTitle(self._tr("App Appearance", "Wygląd Aplikacji"))
-        if hasattr(self, "paths_box"):
-            self.paths_box.setTitle(self._tr("Paths and Integration", "Ścieżki i Integracja"))
-        if hasattr(self, "quick_cfg_box"):
-            self.quick_cfg_box.setTitle(self._tr("Quick Actions", "Szybkie Akcje"))
-        if hasattr(self, "automation_tools_box"):
-            self.automation_tools_box.setTitle(self._tr("Automation and Bundles", "Automatyzacja i Bundles"))
-        if hasattr(self, "cfg_cancel_btn"):
-            self.cfg_cancel_btn.setText(self._tr("Cancel", "Anuluj"))
-        if hasattr(self, "cfg_apply_btn"):
-            self.cfg_apply_btn.setText(self._tr("Apply", "Zastosuj"))
-        if hasattr(self, "cfg_save_btn"):
-            self.cfg_save_btn.setText(self._tr("Save Settings", "Zapisz ustawienia"))
-        if hasattr(self, "cfg_reset_btn"):
-            self.cfg_reset_btn.setText(self._tr("Restore Defaults", "Przywróć domyślne"))
-        if hasattr(self, "cfg_export_btn"):
-            self.cfg_export_btn.setText(self._tr("Export Configuration", "Eksportuj konfigurację"))
-        if hasattr(self, "cfg_import_btn"):
-            self.cfg_import_btn.setText(self._tr("Import Configuration", "Importuj konfigurację"))
-        if hasattr(self, "cfg_clear_cache_btn"):
-            self.cfg_clear_cache_btn.setText(self._tr("Clear Cache", "Wyczyść cache"))
-        if hasattr(self, "cfg_restart_app_btn"):
-            self.cfg_restart_app_btn.setText(self._tr("Restart Whole App", "Uruchom całą aplikację ponownie"))
-        if hasattr(self, "library_summary_label"):
-            self.library_summary_label.setText(self._tr("Theme gallery quick actions", "Szybkie akcje galerii motywów"))
-        if hasattr(self, "library_import_ttcr_btn"):
-            self.library_import_ttcr_btn.setText(self._tr("Import TTCR", "Import TTCR"))
-        if hasattr(self, "library_refresh_btn"):
-            self.library_refresh_btn.setText(self._tr("Refresh", "Odśwież"))
-        if hasattr(self, "new_theme_create_btn"):
-            self.new_theme_create_btn.setText(self._tr("Create Theme", "Utwórz motyw"))
-        if hasattr(self, "new_theme_advanced_btn"):
-            self.new_theme_advanced_btn.setText(self._tr("File Settings", "Ustawienia pliku"))
-        if hasattr(self, "new_theme_hint_label"):
-            self.new_theme_hint_label.setText(self._tr("Enter a name and style. The theme file path will be suggested automatically.", "Podaj nazwę i styl. Plik motywu zostanie zaproponowany automatycznie."))
-        if hasattr(self, "new_theme_name_edit"):
-            self.new_theme_name_edit.setPlaceholderText(self._tr("e.g. My Dashboard", "Np. Mój dashboard"))
-        if hasattr(self, "theme_browser_box"):
-            self.theme_browser_box.setTitle(self._tr("Themes", "Motywy"))
-        if hasattr(self, "asset_gallery_box"):
-            self.asset_gallery_box.setTitle(self._tr("Theme Assets", "Zasoby motywu"))
-        if hasattr(self, "library_current_theme_label"):
-            current = getattr(self, "theme_combo", None)
-            current_name = current.currentText().strip() if current is not None else ""
-            self.library_current_theme_label.setText(
-                self._tr(f"Currently selected: {current_name}", f"Aktualnie wybrany: {current_name}") if current_name
-                else self._tr("No active theme.", "Brak aktywnego motywu.")
-            )
+        refresh_shell_chrome_labels(self, self._tr)
+        refresh_configuration_action_labels(self, self._tr)
+        refresh_theme_gallery_labels(self, self._tr)
         self._apply_sidebar_mode()
-        if hasattr(self, "theme_browser_controls_search_label"):
-            self.theme_browser_controls_search_label.setText(self._tr("Search", "Szukaj"))
-        if hasattr(self, "theme_browser_controls_type_label"):
-            self.theme_browser_controls_type_label.setText(self._tr("Type", "Typ"))
-        if hasattr(self, "theme_browser_controls_sort_label"):
-            self.theme_browser_controls_sort_label.setText(self._tr("Sort", "Sortuj"))
         self._refresh_extended_ui_labels()
 
     def _apply_language_selection(self, _value: str | None = None, *, persist: bool = True) -> None:
@@ -7124,6 +4405,52 @@ class TrofeoGui(QMainWindow):
                 self.designer_mode_combo.setCurrentText(designer_mode)
             self._startup_theme_name = str(payload.get("startup_theme", "")).strip()
             self._startup_theme_applied = False
+            self._gaming_auto_theme_enabled = bool(payload.get("gaming_auto_theme_enabled", False))
+            self._gaming_auto_theme_name = str(payload.get("gaming_auto_theme", "")).strip()
+            self._gaming_auto_theme_restore_on_fps_loss = bool(payload.get("gaming_auto_theme_restore_on_fps_loss", False))
+            try:
+                self._gaming_auto_theme_fps_loss_delay_s = int(payload.get("gaming_auto_theme_fps_loss_delay_s", 12) or 12)
+            except Exception:
+                self._gaming_auto_theme_fps_loss_delay_s = 12
+            if hasattr(self, "cfg_game_auto_theme_chk"):
+                self.cfg_game_auto_theme_chk.blockSignals(True)
+                try:
+                    self.cfg_game_auto_theme_chk.setChecked(self._gaming_auto_theme_enabled)
+                finally:
+                    self.cfg_game_auto_theme_chk.blockSignals(False)
+            if hasattr(self, "cfg_game_auto_theme_restore_on_fps_loss_chk"):
+                self.cfg_game_auto_theme_restore_on_fps_loss_chk.blockSignals(True)
+                try:
+                    self.cfg_game_auto_theme_restore_on_fps_loss_chk.setChecked(self._gaming_auto_theme_restore_on_fps_loss)
+                finally:
+                    self.cfg_game_auto_theme_restore_on_fps_loss_chk.blockSignals(False)
+            if hasattr(self, "cfg_game_auto_theme_fps_loss_delay_spin"):
+                self.cfg_game_auto_theme_fps_loss_delay_spin.blockSignals(True)
+                try:
+                    self.cfg_game_auto_theme_fps_loss_delay_spin.setValue(max(5, min(120, self._gaming_auto_theme_fps_loss_delay_s)))
+                finally:
+                    self.cfg_game_auto_theme_fps_loss_delay_spin.blockSignals(False)
+            if hasattr(self, "cfg_weather_lat_edit"):
+                self.cfg_weather_lat_edit.setText(str(payload.get("weather_lat", "") or ""))
+                self.cfg_weather_lon_edit.setText(str(payload.get("weather_lon", "") or ""))
+                self.cfg_weather_location_edit.setText(str(payload.get("weather_location", "") or ""))
+                try:
+                    self.cfg_weather_refresh_spin.setValue(int(payload.get("weather_refresh_s", 900) or 900))
+                except Exception:
+                    self.cfg_weather_refresh_spin.setValue(900)
+            if hasattr(self, "cfg_audio_eq_input_combo"):
+                idx = self.cfg_audio_eq_input_combo.findData(str(payload.get("audio_eq_input", "auto") or "auto"))
+                if idx >= 0:
+                    self.cfg_audio_eq_input_combo.setCurrentIndex(idx)
+            if hasattr(self, "cfg_audio_eq_profile_combo"):
+                idx = self.cfg_audio_eq_profile_combo.findData(str(payload.get("audio_eq_profile", "responsive") or "responsive"))
+                if idx >= 0:
+                    self.cfg_audio_eq_profile_combo.setCurrentIndex(idx)
+            if hasattr(self, "cfg_audio_eq_sensitivity_spin"):
+                try:
+                    self.cfg_audio_eq_sensitivity_spin.setValue(int(round(float(payload.get("audio_eq_sensitivity", 1.0) or 1.0) * 100.0)))
+                except Exception:
+                    self.cfg_audio_eq_sensitivity_spin.setValue(100)
             for attr, key, default in (
                 ("cfg_start_with_system_chk", "cfg_start_with_system", True),
                 ("cfg_minimize_to_tray_chk", "cfg_minimize_to_tray", True),
@@ -7141,7 +4468,7 @@ class TrofeoGui(QMainWindow):
                 widget = getattr(self, attr, None)
                 if widget is not None:
                     widget.setChecked(bool(payload.get(key, default)))
-            self._sync_config_ui_controls_from_header()
+            self.config_preferences.sync_ui_controls_from_header()
             self._refresh_localized_texts()
         except Exception:
             pass
@@ -7158,6 +4485,21 @@ class TrofeoGui(QMainWindow):
         if hasattr(self, "designer_mode_combo"):
             payload["designer_mode"] = self.designer_mode_combo.currentText()
         payload["startup_theme"] = str(getattr(self, "_startup_theme_name", "")).strip()
+        payload["gaming_auto_theme_enabled"] = bool(getattr(self, "_gaming_auto_theme_enabled", False))
+        payload["gaming_auto_theme"] = str(getattr(self, "_gaming_auto_theme_name", "")).strip()
+        payload["gaming_auto_theme_restore_on_fps_loss"] = bool(getattr(self, "_gaming_auto_theme_restore_on_fps_loss", False))
+        payload["gaming_auto_theme_fps_loss_delay_s"] = int(getattr(self, "_gaming_auto_theme_fps_loss_delay_s", 12) or 12)
+        if hasattr(self, "cfg_weather_lat_edit"):
+            payload["weather_lat"] = self.cfg_weather_lat_edit.text().strip()
+            payload["weather_lon"] = self.cfg_weather_lon_edit.text().strip()
+            payload["weather_location"] = self.cfg_weather_location_edit.text().strip()
+            payload["weather_refresh_s"] = int(self.cfg_weather_refresh_spin.value())
+        if hasattr(self, "cfg_audio_eq_input_combo"):
+            payload["audio_eq_input"] = str(self.cfg_audio_eq_input_combo.currentData() or "auto")
+        if hasattr(self, "cfg_audio_eq_profile_combo"):
+            payload["audio_eq_profile"] = str(self.cfg_audio_eq_profile_combo.currentData() or "responsive")
+        if hasattr(self, "cfg_audio_eq_sensitivity_spin"):
+            payload["audio_eq_sensitivity"] = float(self.cfg_audio_eq_sensitivity_spin.value()) / 100.0
         for attr, key in (
             ("cfg_start_with_system_chk", "cfg_start_with_system"),
             ("cfg_minimize_to_tray_chk", "cfg_minimize_to_tray"),
@@ -7251,10 +4593,10 @@ class TrofeoGui(QMainWindow):
         if hasattr(self, "sidebar_layout"):
             if collapsed:
                 self.sidebar_layout.setContentsMargins(10, 12, 10, 12)
-                self.sidebar_layout.setSpacing(10)
+                self.sidebar_layout.setSpacing(8)
             else:
-                self.sidebar_layout.setContentsMargins(18, 18, 18, 18)
-                self.sidebar_layout.setSpacing(14)
+                self.sidebar_layout.setContentsMargins(14, 16, 14, 16)
+                self.sidebar_layout.setSpacing(10)
         if hasattr(self, "sidebar_toggle_btn"):
             self.sidebar_toggle_btn.setText("⟩" if collapsed else "⟨")
             self.sidebar_toggle_btn.setToolTip(self._tr("Expand menu", "Rozwiń menu") if collapsed else self._tr("Collapse menu", "Zwiń menu"))
@@ -7272,7 +4614,7 @@ class TrofeoGui(QMainWindow):
             wrapped = full_text.replace(" ", chr(10), 1) if full_text.count(" ") >= 1 and len(full_text) > 11 else full_text
             btn.setText(icon_text if collapsed else f"{icon_text}  {wrapped}")
             btn.setToolTip(full_text)
-            btn.setMinimumHeight(66 if collapsed else 88)
+            btn.setMinimumHeight(48 if collapsed else 60)
         self._apply_responsive_layout_metrics()
 
     def toggle_sidebar_collapsed(self) -> None:
@@ -7379,6 +4721,11 @@ class TrofeoGui(QMainWindow):
         self.animation_worker_status_label.setMinimumWidth(180)
         self.animation_worker_status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         meta_row.addWidget(self.animation_worker_status_label)
+        self.animation_cancel_worker_btn = QPushButton("Cancel task")
+        self.animation_cancel_worker_btn.setObjectName("secondaryAccentButton")
+        self.animation_cancel_worker_btn.setVisible(False)
+        self.animation_cancel_worker_btn.clicked.connect(self.cancel_animation_background_tasks)
+        meta_row.addWidget(self.animation_cancel_worker_btn)
         lay.addLayout(meta_row)
 
         preview_row = QHBoxLayout()
@@ -7397,7 +4744,7 @@ class TrofeoGui(QMainWindow):
         self.animation_preview_scale_combo.currentIndexChanged.connect(lambda _idx: self._refresh_animation_studio_preview())
         preview_row.addWidget(self.animation_preview_scale_combo)
         self.animation_auto_composite_chk = QCheckBox("Auto composite")
-        self.animation_auto_composite_chk.setChecked(False)
+        self.animation_auto_composite_chk.setChecked(True)
         self.animation_auto_composite_chk.toggled.connect(lambda _checked: self._refresh_animation_studio_preview(force_composite=True))
         self.animation_refresh_composite_btn = QPushButton("Refresh composite")
         self.animation_refresh_composite_btn.setObjectName("secondaryAccentButton")
@@ -7514,6 +4861,7 @@ class TrofeoGui(QMainWindow):
                     self.animation_loop_in_btn,
                     self.animation_loop_out_btn,
                     self.animation_loop_clear_btn,
+                    self.animation_loop_close_seam_btn,
                     self.animation_loop_from_selection_btn,
                     self.animation_select_range_btn,
                     self.animation_trim_selection_btn,
@@ -7581,20 +4929,14 @@ class TrofeoGui(QMainWindow):
         self.bg_animation_list.setVisible(False)
         self.bg_animation_list.setParent(self.animation_studio_tab)
         self._register_animation_studio_shortcuts()
-        tr = self._tr
-        self.animation_studio_open_json_btn.setText(tr("Open JSON…", "Otwórz JSON…"))
-        self.animation_studio_open_json_btn.setToolTip(
-            tr(
-                "Same theme file; background animation is under effects.animation.",
-                "Ten sam plik motywu; animacja tła jest w effects.animation.",
-            )
-        )
+        refresh_animation_studio_labels(self, self._tr)
 
     def _go_library(self) -> None:
         if hasattr(self, "main_tabs"):
             self.main_tabs.setCurrentIndex(1)
         if hasattr(self, "studio_sections_tabs"):
             self.studio_sections_tabs.setCurrentIndex(0)
+        self._maybe_rebuild_visible_theme_views()
         self._sync_shell_navigation()
 
     def _go_designer(self) -> None:
@@ -7607,6 +4949,7 @@ class TrofeoGui(QMainWindow):
     def _go_system(self) -> None:
         if hasattr(self, "main_tabs"):
             self.main_tabs.setCurrentIndex(0)
+        self._maybe_rebuild_visible_theme_views()
         self._sync_shell_navigation()
 
     def _go_logs(self) -> None:
@@ -7783,7 +5126,11 @@ class TrofeoGui(QMainWindow):
             return QPixmap()
         try:
             document = normalize_theme_document(deepcopy(self.theme_doc_model))
-            image = render_theme_document(ThemeDocument(document), base_dir=self._theme_base_dir())
+            image = render_theme_document(
+                ThemeDocument(document),
+                base_dir=self._theme_base_dir(),
+                stats_provider=self._preview_stats_provider,
+            )
             buffer = io.BytesIO()
             image.save(buffer, format="PNG")
             pixmap = QPixmap()
@@ -7894,15 +5241,15 @@ class TrofeoGui(QMainWindow):
         if n >= ANIMATION_FRAMES_SOFT_WARN:
             parts.append(
                 self._tr(
-                    f"{n} frames: high count for TRCC (each bitmap is kept in memory and sent over USB).",
-                    f"{n} klatek: dużo dla TRCC (każda bitmapa w pamięci i przez USB).",
+                    f"{n} frames: higher LCD cost (each RGB bitmap uses memory and USB bandwidth).",
+                    f"{n} klatek: wyższy koszt LCD (każda bitmapa RGB używa pamięci i transferu USB).",
                 )
             )
         if n >= ANIMATION_FRAMES_EXTREME_WARN:
             parts.append(
                 self._tr(
-                    f"Strongly consider ≤{ANIMATION_FRAMES_STRONG_WARN} frames for reliable playback.",
-                    f"Rozważ ≤{ANIMATION_FRAMES_STRONG_WARN} klatek dla stabilnego odtwarzania.",
+                    "This can still work, but verify loop smoothness on the LCD and avoid heavy live overlays.",
+                    "To nadal może działać, ale sprawdź płynność pętli na LCD i unikaj ciężkich nakładek live.",
                 )
             )
         has_eq = False
@@ -7945,12 +5292,80 @@ class TrofeoGui(QMainWindow):
         if not active:
             self.animation_worker_status_label.setText(self._tr("Workers: idle", "Zadania: bezczynne"))
             self.animation_worker_status_label.setToolTip("")
+            if hasattr(self, "animation_cancel_worker_btn"):
+                self.animation_cancel_worker_btn.setVisible(False)
+                self.animation_cancel_worker_btn.setEnabled(False)
             return
         text = self._tr("Working: ", "Praca: ") + ", ".join(active[:2])
         if len(active) > 2:
             text += f" +{len(active) - 2}"
         self.animation_worker_status_label.setText(text)
         self.animation_worker_status_label.setToolTip("\n".join(active))
+        cancellable = bool(
+            getattr(self, "_animation_export_in_flight", False)
+            or getattr(self, "_animation_import_in_flight", False)
+        )
+        if hasattr(self, "animation_cancel_worker_btn"):
+            self.animation_cancel_worker_btn.setVisible(cancellable)
+            self.animation_cancel_worker_btn.setEnabled(cancellable)
+
+    def cancel_animation_background_tasks(self) -> None:
+        cancelled = False
+        for event in (
+            getattr(self, "_animation_export_cancel_event", None),
+            getattr(self, "_animation_import_cancel_event", None),
+        ):
+            if event is not None and not event.is_set():
+                event.set()
+                cancelled = True
+        if cancelled:
+            self._set_animation_worker_state(
+                "cancel",
+                self._tr("cancelling current task", "anulowanie zadania"),
+            )
+            if hasattr(self, "animation_cancel_worker_btn"):
+                self.animation_cancel_worker_btn.setEnabled(False)
+            if hasattr(self, "preview_info_label"):
+                self.preview_info_label.setText(self._tr("Cancelling animation task…", "Anuluję zadanie animacji…"))
+
+    def _animation_task_cancelled(self, event: threading.Event | None) -> bool:
+        return bool(event is not None and event.is_set())
+
+    def _raise_if_animation_task_cancelled(self, event: threading.Event | None) -> None:
+        if self._animation_task_cancelled(event):
+            raise RuntimeError("Animation task cancelled.")
+
+    def _emit_animation_progress(self, worker: str, current: int, total: int, label: str = "") -> None:
+        self.api_result.emit(
+            "animation-progress",
+            True,
+            {
+                "result": {
+                    "worker": worker,
+                    "current": max(0, int(current)),
+                    "total": max(0, int(total)),
+                    "label": str(label),
+                }
+            },
+        )
+
+    def _apply_animation_progress_payload(self, payload: object) -> None:
+        data = payload if isinstance(payload, dict) else {}
+        result = data.get("result", {})
+        if not isinstance(result, dict):
+            return
+        worker = str(result.get("worker", "task"))
+        current = int(result.get("current", 0) or 0)
+        total = int(result.get("total", 0) or 0)
+        label = str(result.get("label", "")).strip()
+        pct = int(round((current * 100.0) / total)) if total > 0 else 0
+        if label:
+            text = f"{label}: {current}/{total} ({pct}%)" if total else label
+        else:
+            text = f"{worker}: {current}/{total} ({pct}%)" if total else worker
+        self._set_animation_worker_state(worker, text)
+        if hasattr(self, "preview_info_label"):
+            self.preview_info_label.setText(text)
 
     def _selected_animation_rows(self, *, fallback_current: bool = True, fallback_all: bool = False) -> list[int]:
         controller = self._animation_controller()
@@ -8069,6 +5484,37 @@ class TrofeoGui(QMainWindow):
             self._tr(
                 f"Preview loop set from selection: {loop_start + 1}-{loop_end + 1}.",
                 f"Pętla podglądu ustawiona z zaznaczenia: {loop_start + 1}-{loop_end + 1}.",
+            )
+        )
+        self.schedule_preview_theme_doc()
+
+    def close_animation_loop_seam(self) -> None:
+        controller = self._animation_controller()
+        if controller is None:
+            return
+        seq = controller.normalize()
+        if seq.frame_count < 2:
+            return
+        loop_range = self._current_animation_loop_range()
+        if loop_range is not None:
+            rows = list(range(loop_range[0], loop_range[1] + 1))
+        else:
+            rows = self._selected_animation_rows(fallback_current=False, fallback_all=True)
+        if len(rows) < 2:
+            return
+        self.push_designer_history()
+        result = controller.close_loop_seam(rows)
+        inserted = min(rows[-1] + 1, result.frame_count - 1)
+        self.write_designer_to_json()
+        self._refresh_animation_controls()
+        self._sync_designer_preview_policy()
+        self._refresh_animation_frame_list(preserve_selection=False)
+        self._set_animation_frame_selection([inserted])
+        self._maybe_warn_animation_frame_count(result.frame_count)
+        self.preview_info_label.setText(
+            self._tr(
+                f"Closed loop seam by appending frame {rows[0] + 1} after frame {rows[-1] + 1}.",
+                f"Domknięto pętlę: dodano klatkę {rows[0] + 1} za klatką {rows[-1] + 1}.",
             )
         )
         self.schedule_preview_theme_doc()
@@ -8391,10 +5837,31 @@ class TrofeoGui(QMainWindow):
             (getattr(self, "designer_gauge_low_btn", None), getattr(self, "designer_gauge_low_edit", None)),
             (getattr(self, "designer_gauge_mid_btn", None), getattr(self, "designer_gauge_mid_edit", None)),
             (getattr(self, "designer_gauge_high_btn", None), getattr(self, "designer_gauge_high_edit", None)),
+            (getattr(self, "designer_track_color_btn", None), getattr(self, "designer_track_color_edit", None)),
+            (getattr(self, "designer_fill_color_btn", None), getattr(self, "designer_fill_color_edit", None)),
+            (getattr(self, "designer_equalizer_threshold_color_btn", None), getattr(self, "designer_equalizer_threshold_color_edit", None)),
         ]
         for button, edit in mapping:
             if button is not None and edit is not None:
                 self._apply_color_preview_style(button, edit)
+
+    def _on_equalizer_preset_changed(self, _idx: int) -> None:
+        if bool(getattr(self, "_designer_updating", False)):
+            return
+        preset_id = str(self.designer_equalizer_preset_combo.currentData() or "custom")
+        preset = EQUALIZER_COLOR_PRESETS.get(preset_id)
+        if not preset:
+            return
+        self.designer_fill_color_edit.setText(json.dumps(preset["fill"], ensure_ascii=False))
+        self.designer_value_color_edit.setText(json.dumps(preset["value"], ensure_ascii=False))
+        if bool(self.designer_equalizer_transparent_bg_chk.isChecked()):
+            self.designer_track_color_edit.setText(json.dumps([0, 0, 0, 0], ensure_ascii=False))
+        else:
+            self.designer_track_color_edit.setText(json.dumps(preset["track"], ensure_ascii=False))
+        self.designer_equalizer_threshold_spin.setValue(float(preset["threshold"]) * 100.0)
+        self.designer_equalizer_threshold_color_edit.setText(json.dumps(preset["threshold_color"], ensure_ascii=False))
+        self._refresh_all_color_previews()
+        self.on_designer_field_changed()
 
     def apply_theme_color_preset(self, preset_name: str) -> None:
         preset = THEME_COLOR_PRESETS.get(preset_name)
@@ -8547,6 +6014,11 @@ class TrofeoGui(QMainWindow):
         except Exception:
             return str(path.resolve())
 
+    @staticmethod
+    def _raise_if_worker_cancelled(cancel_event: threading.Event | None) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError("Animation task cancelled.")
+
     @classmethod
     def _collect_animation_frame_paths_for_worker(
         cls,
@@ -8555,17 +6027,25 @@ class TrofeoGui(QMainWindow):
         target_dir: Path,
         theme_stem: str,
         base_dir: Path,
+        cancel_event: threading.Event | None = None,
+        progress_callback: Any | None = None,
     ) -> list[str]:
         copied_paths: list[str] = []
         target_dir.mkdir(parents=True, exist_ok=True)
         if len(sources) == 1 and sources[0].suffix.lower() == ".zt":
+            cls._raise_if_worker_cancelled(cancel_event)
             if extract_ttcr_zt_frames is None:
                 return []
             frames = extract_ttcr_zt_frames(sources[0], target_dir, f"{theme_stem}_anim")
             for frame in frames:
+                cls._raise_if_worker_cancelled(cancel_event)
                 copied_paths.append(cls._display_path_for_base(frame, base_dir))
+                if callable(progress_callback):
+                    progress_callback(len(copied_paths), max(1, len(frames)), "Import TTCR frames")
             return copied_paths
-        for source in sources:
+        total = max(1, len(sources))
+        for source_index, source in enumerate(sources):
+            cls._raise_if_worker_cancelled(cancel_event)
             if not source.exists():
                 continue
             stem = f"{theme_stem}_anim_{source.stem}"
@@ -8577,6 +6057,8 @@ class TrofeoGui(QMainWindow):
                 idx += 1
             shutil.copy2(source, candidate)
             copied_paths.append(cls._display_path_for_base(candidate, base_dir))
+            if callable(progress_callback):
+                progress_callback(source_index + 1, total, "Copy animation frames")
         return copied_paths
 
     def _render_current_animation_frame_image(self) -> "Image.Image | None":
@@ -8584,7 +6066,11 @@ class TrofeoGui(QMainWindow):
             return None
         try:
             document = normalize_theme_document(self.theme_doc_model)
-            return render_theme_document(ThemeDocument(document), base_dir=self._theme_base_dir())
+            return render_theme_document(
+                ThemeDocument(document),
+                base_dir=self._theme_base_dir(),
+                stats_provider=self._preview_stats_provider,
+            )
         except Exception:
             return None
 
@@ -8701,12 +6187,10 @@ class TrofeoGui(QMainWindow):
                 self,
                 title,
                 self._tr(
-                    f"You have {count} frames. The LCD driver keeps each bitmap in memory and sends full frames over USB — "
-                    f"counts above ~{ANIMATION_FRAMES_STRONG_WARN} often cause stutter, long applies, or device errors. "
-                    f"Consider fewer frames, lower resolution, or merging holds.",
-                    f"Masz {count} klatek. Sterownik LCD trzyma każdą bitmapę w pamięci i wysyła pełne klatki po USB — "
-                    f"powyżej ~{ANIMATION_FRAMES_STRONG_WARN} często są przycięcia, długie „Zastosuj” lub błędy urządzenia. "
-                    f"Rozważ mniej klatek, niższą rozdzielczość lub dłuższe ujęcia statyczne.",
+                    f"You have {count} frames. This is allowed, but the LCD path keeps RGB frames in memory and sends them over USB. "
+                    "Check real playback, loop continuity, frame size, and live overlay cost.",
+                    f"Masz {count} klatek. To jest dozwolone, ale tor LCD trzyma klatki RGB w pamięci i wysyła je po USB. "
+                    "Sprawdź realne odtwarzanie, ciągłość pętli, rozmiar ramek i koszt nakładek live.",
                 ),
             )
         elif count >= ANIMATION_FRAMES_STRONG_WARN:
@@ -8714,8 +6198,8 @@ class TrofeoGui(QMainWindow):
                 self,
                 title,
                 self._tr(
-                    f"{count} frames is heavy for many LCD setups. If playback stutters, reduce frame count or slow timing.",
-                    f"{count} klatek to dużo dla wielu konfiguracji LCD. Jeśli odtwarzanie się przycina, zmniejsz liczbę klatek lub wydłuż czasy.",
+                    f"{count} frames increases LCD memory and USB transfer cost. If playback stutters, lower FPS, slow timing, or simplify overlays.",
+                    f"{count} klatek zwiększa koszt pamięci LCD i transferu USB. Jeśli odtwarzanie się przycina, obniż FPS, wydłuż czasy albo uprość nakładki.",
                 ),
             )
 
@@ -8752,6 +6236,11 @@ class TrofeoGui(QMainWindow):
                 row = self.bg_animation_list.currentRow()
                 self.select_animation_frame(min(self.bg_animation_list.count() - 1, row + 1))
                 return True
+        if (
+            watched is getattr(getattr(self, "theme_browser_scroll", None), "viewport", lambda: None)()
+            and event.type() == QEvent.Type.Resize
+        ):
+            self._schedule_library_theme_browser_rebuild()
         return super().eventFilter(watched, event)
 
     def _refresh_animation_frame_list(self, *, preserve_selection: bool = True) -> None:
@@ -8876,6 +6365,8 @@ class TrofeoGui(QMainWindow):
             self.animation_loop_out_btn.setEnabled(has_frames)
         if hasattr(self, "animation_loop_clear_btn"):
             self.animation_loop_clear_btn.setEnabled(self._current_animation_loop_range() is not None)
+        if hasattr(self, "animation_loop_close_seam_btn"):
+            self.animation_loop_close_seam_btn.setEnabled(len(frame_paths) > 1)
         if hasattr(self, "animation_loop_label"):
             loop_range = self._current_animation_loop_range()
             if loop_range is None:
@@ -8901,11 +6392,40 @@ class TrofeoGui(QMainWindow):
             return str(path.resolve()), 0
 
     def _start_animation_thumbnail_worker(self, jobs: list[dict[str, Any]]) -> None:
-        self._animation_thumbnail_generation += 1
-        generation = self._animation_thumbnail_generation
         if not jobs:
+            if not getattr(self, "_animation_thumbnail_in_flight", False):
+                self._set_animation_worker_state("thumbnails", None)
+            return
+        pending = getattr(self, "_animation_thumbnail_pending_jobs", {})
+        if not isinstance(pending, dict):
+            pending = {}
+            self._animation_thumbnail_pending_jobs = pending
+        for job in jobs:
+            key = (str(job.get("path", "")), int(job.get("mtime", 0) or 0))
+            if key[0]:
+                pending[key] = job
+        if getattr(self, "_animation_thumbnail_in_flight", False):
+            self._set_animation_worker_state(
+                "thumbnails",
+                self._tr(
+                    f"thumbnail queue: {len(pending)} pending",
+                    f"kolejka miniaturek: {len(pending)}",
+                ),
+            )
+            return
+        self._drain_animation_thumbnail_queue()
+
+    def _drain_animation_thumbnail_queue(self) -> None:
+        pending = getattr(self, "_animation_thumbnail_pending_jobs", {})
+        if not isinstance(pending, dict) or not pending:
+            self._animation_thumbnail_in_flight = False
             self._set_animation_worker_state("thumbnails", None)
             return
+        jobs = list(pending.values())
+        pending.clear()
+        self._animation_thumbnail_generation += 1
+        generation = self._animation_thumbnail_generation
+        self._animation_thumbnail_in_flight = True
         self._set_animation_worker_state(
             "thumbnails",
             self._tr(f"building {len(jobs)} thumbnails", f"miniatury: {len(jobs)}"),
@@ -8931,6 +6451,14 @@ class TrofeoGui(QMainWindow):
             self.api_result.emit(f"animation-thumbnails::{generation}", True, {"result": {"items": results}})
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_animation_thumbnail_worker(self) -> None:
+        self._animation_thumbnail_in_flight = False
+        pending = getattr(self, "_animation_thumbnail_pending_jobs", {})
+        if isinstance(pending, dict) and pending:
+            QTimer.singleShot(0, self._drain_animation_thumbnail_queue)
+        else:
+            self._set_animation_worker_state("thumbnails", None)
 
     def _update_animation_preview_timer(self) -> None:
         animation = self._current_animation_effect()
@@ -9849,9 +7377,17 @@ class TrofeoGui(QMainWindow):
         frame_indices: list[int],
         scope_label: str,
     ) -> None:
+        cancel_event = self._animation_export_cancel_event
         def worker() -> None:
             try:
-                result = self._export_animation_sequence_zip(target, document, base_dir, frame_indices, scope_label)
+                result = self._export_animation_sequence_zip(
+                    target,
+                    document,
+                    base_dir,
+                    frame_indices,
+                    scope_label,
+                    cancel_event=cancel_event,
+                )
                 self.api_result.emit("animation-export", True, {"result": result})
             except Exception as exc:
                 self.api_result.emit("animation-export", False, str(exc))
@@ -9865,9 +7401,11 @@ class TrofeoGui(QMainWindow):
         base_dir: Path,
         frame_indices: list[int],
         scope_label: str,
+        cancel_event: threading.Event | None = None,
     ) -> dict[str, Any]:
         if render_theme_document is None:
             raise RuntimeError("Theme renderer is not available.")
+        self._raise_if_animation_task_cancelled(cancel_event)
         target.parent.mkdir(parents=True, exist_ok=True)
         animation = document.setdefault("effects", {}).setdefault("animation", {})
         if not isinstance(animation, dict):
@@ -9900,14 +7438,27 @@ class TrofeoGui(QMainWindow):
                 "frame_durations_ms": export_durations,
             }
             zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+            self._emit_animation_progress("export", 0, len(export_indices), self._tr("Exporting animation", "Eksport animacji"))
             for out_idx, source_idx in enumerate(export_indices):
+                self._raise_if_animation_task_cancelled(cancel_event)
                 theme_frame = deepcopy(document)
                 theme_frame.setdefault("effects", {}).setdefault("animation", {})
                 theme_frame["effects"]["animation"]["current_frame"] = source_idx
-                image = render_theme_document(ThemeDocument(normalize_theme_document(theme_frame)), base_dir=base_dir)
+                image = render_theme_document(
+                    ThemeDocument(normalize_theme_document(theme_frame)),
+                    base_dir=base_dir,
+                    stats_provider=self._preview_stats_provider,
+                )
                 buffer = io.BytesIO()
                 image.save(buffer, format="PNG")
                 zf.writestr(f"frames/frame_{out_idx:04d}.png", buffer.getvalue())
+                if out_idx == len(export_indices) - 1 or out_idx % max(1, len(export_indices) // 20) == 0:
+                    self._emit_animation_progress(
+                        "export",
+                        out_idx + 1,
+                        len(export_indices),
+                        self._tr("Exporting animation", "Eksport animacji"),
+                    )
         return {
             "target": str(target),
             "name": target.name,
@@ -9919,10 +7470,13 @@ class TrofeoGui(QMainWindow):
 
     def _set_animation_export_busy(self, busy: bool) -> None:
         self._animation_export_in_flight = bool(busy)
+        self._animation_export_cancel_event = threading.Event() if busy else None
         self._set_animation_worker_state(
             "export",
             self._tr("exporting ZIP", "eksport ZIP") if busy else None,
         )
+        if not busy:
+            self._set_animation_worker_state("cancel", None)
         if hasattr(self, "bg_animation_export_btn"):
             self.bg_animation_export_btn.setEnabled(not busy)
             self.bg_animation_export_btn.setText(
@@ -9998,11 +7552,11 @@ class TrofeoGui(QMainWindow):
                 return
         selected, _ = QFileDialog.getOpenFileNames(
             self,
-            self._tr("Choose animation frames or a TTCR container", "Wybierz klatki animacji lub kontener TTCR"),
+            self._tr("Choose animation frames, video, ZIP, or TTCR container", "Wybierz klatki animacji, wideo, ZIP lub kontener TTCR"),
             str(Path.cwd()),
             self._tr(
-                "Animation frames (*.zt *.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
-                "Animacje/ramki (*.zt *.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
+                "Animation media (*.zt *.zip *.jpg *.jpeg *.png *.webp *.bmp *.mp4 *.webm *.mov *.mkv *.avi *.m4v);;Video (*.mp4 *.webm *.mov *.mkv *.avi *.m4v);;Frames (*.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
+                "Animacje/media (*.zt *.zip *.jpg *.jpeg *.png *.webp *.bmp *.mp4 *.webm *.mov *.mkv *.avi *.m4v);;Wideo (*.mp4 *.webm *.mov *.mkv *.avi *.m4v);;Klatki (*.jpg *.jpeg *.png *.webp *.bmp);;All files (*)",
             ),
         )
         if not selected:
@@ -10017,6 +7571,13 @@ class TrofeoGui(QMainWindow):
         theme_stem = Path(self.theme_doc_path_edit.text() or "theme").stem or "theme"
         base_dir = self._theme_base_dir()
         self._set_animation_import_busy(True)
+        canvas = self.theme_doc_model.get("canvas", {}) if isinstance(self.theme_doc_model, dict) else {}
+        canvas_size = (
+            int(canvas.get("width", 1920) or 1920),
+            int(canvas.get("height", 462) or 462),
+        )
+        fps = float(self.bg_animation_fps_spin.value()) if hasattr(self, "bg_animation_fps_spin") else 12.0
+        cancel_event = self._animation_import_cancel_event
         self.preview_info_label.setText(
             self._tr(
                 f"Preparing animation frames in background ({len(sources)} source file(s)).",
@@ -10026,12 +7587,24 @@ class TrofeoGui(QMainWindow):
 
         def worker() -> None:
             try:
+                self._raise_if_animation_task_cancelled(cancel_event)
+                self._emit_animation_progress("import", 0, len(sources), self._tr("Preparing frames", "Przygotowanie klatek"))
                 import_payload = self._collect_animation_frame_import_payload_for_worker(
                     sources,
                     target_dir=target_dir,
                     theme_stem=theme_stem,
                     base_dir=base_dir,
+                    fps=fps,
+                    canvas_size=canvas_size,
+                    cancel_event=cancel_event,
+                    progress_callback=lambda current, total, label="": self._emit_animation_progress(
+                        "import",
+                        current,
+                        total,
+                        label or self._tr("Preparing frames", "Przygotowanie klatek"),
+                    ),
                 )
+                self._raise_if_animation_task_cancelled(cancel_event)
                 self.api_result.emit(
                     "animation-import",
                     True,
@@ -10050,6 +7623,10 @@ class TrofeoGui(QMainWindow):
         target_dir: Path,
         theme_stem: str,
         base_dir: Path,
+        fps: float = 12.0,
+        canvas_size: tuple[int, int] = (1920, 462),
+        cancel_event: threading.Event | None = None,
+        progress_callback: Any | None = None,
     ) -> dict[str, Any]:
         if len(sources) == 1 and sources[0].suffix.lower() == ".zip":
             return cls._collect_animation_zip_export_for_worker(
@@ -10057,14 +7634,112 @@ class TrofeoGui(QMainWindow):
                 target_dir=target_dir,
                 theme_stem=theme_stem,
                 base_dir=base_dir,
+                cancel_event=cancel_event,
+                progress_callback=progress_callback,
+            )
+        if any(source.suffix.lower() in VIDEO_BACKGROUND_EXTENSIONS for source in sources):
+            return cls._collect_animation_video_frames_for_worker(
+                sources,
+                target_dir=target_dir,
+                theme_stem=theme_stem,
+                base_dir=base_dir,
+                fps=fps,
+                canvas_size=canvas_size,
+                cancel_event=cancel_event,
+                progress_callback=progress_callback,
             )
         copied_paths = cls._collect_animation_frame_paths_for_worker(
             sources,
             target_dir=target_dir,
             theme_stem=theme_stem,
             base_dir=base_dir,
+            cancel_event=cancel_event,
+            progress_callback=progress_callback,
         )
         return {"frame_paths": copied_paths, "frame_durations_ms": []}
+
+    @classmethod
+    def _collect_animation_video_frames_for_worker(
+        cls,
+        sources: list[Path],
+        *,
+        target_dir: Path,
+        theme_stem: str,
+        base_dir: Path,
+        fps: float,
+        canvas_size: tuple[int, int],
+        cancel_event: threading.Event | None = None,
+        progress_callback: Any | None = None,
+    ) -> dict[str, Any]:
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise RuntimeError("ffmpeg not found; video background import requires ffmpeg.")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        safe_stem = "".join(ch.lower() if ch.isalnum() else "_" for ch in theme_stem).strip("_") or "theme"
+        width = max(1, int(canvas_size[0]))
+        height = max(1, int(canvas_size[1]))
+        fps_value = max(1.0, min(30.0, float(fps or 12.0)))
+        max_frames = int(max(24, min(VIDEO_IMPORT_MAX_FRAMES, fps_value * 20.0)))
+        copied_paths: list[str] = []
+        durations: list[int] = []
+        truncated = False
+        video_sources = [source for source in sources if source.suffix.lower() in VIDEO_BACKGROUND_EXTENSIONS and source.exists()]
+        total_sources = max(1, len(video_sources))
+        for source_index, source in enumerate(video_sources):
+            cls._raise_if_worker_cancelled(cancel_event)
+            prefix = target_dir / f"{safe_stem}_video_{source_index:02d}_%05d.png"
+            vf = f"fps={fps_value:.3f},scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
+            cmd = [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source),
+                "-vf",
+                vf,
+                "-frames:v",
+                str(max_frames),
+                str(prefix),
+            ]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            started_at = time.time()
+            while proc.poll() is None:
+                if cancel_event is not None and cancel_event.is_set():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=2.0)
+                    cls._raise_if_worker_cancelled(cancel_event)
+                if time.time() - started_at > 180:
+                    proc.kill()
+                    proc.wait(timeout=2.0)
+                    raise RuntimeError(f"ffmpeg timed out for {source}")
+                time.sleep(0.1)
+            stdout, stderr = proc.communicate()
+            cls._raise_if_worker_cancelled(cancel_event)
+            if proc.returncode != 0:
+                raise RuntimeError((stderr or stdout or "").strip() or f"ffmpeg failed for {source}")
+            frames = sorted(target_dir.glob(f"{safe_stem}_video_{source_index:02d}_*.png"))
+            if len(frames) >= max_frames:
+                truncated = True
+            for frame in frames:
+                cls._raise_if_worker_cancelled(cancel_event)
+                copied_paths.append(cls._display_path_for_base(frame, base_dir))
+                durations.append(max(1, int(round(1000.0 / fps_value))))
+            if callable(progress_callback):
+                progress_callback(source_index + 1, total_sources, "Import video frames")
+        return {
+            "frame_paths": copied_paths,
+            "frame_durations_ms": durations[: len(copied_paths)],
+            "source_kind": "video",
+            "video_fps": fps_value,
+            "video_max_frames": max_frames,
+            "video_truncated": truncated,
+        }
 
     @classmethod
     def _collect_animation_zip_export_for_worker(
@@ -10074,6 +7749,8 @@ class TrofeoGui(QMainWindow):
         target_dir: Path,
         theme_stem: str,
         base_dir: Path,
+        cancel_event: threading.Event | None = None,
+        progress_callback: Any | None = None,
     ) -> dict[str, Any]:
         copied_paths: list[str] = []
         durations: list[int] = []
@@ -10103,15 +7780,25 @@ class TrofeoGui(QMainWindow):
                 and Path(name).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
             ]
             names.sort()
+            total = max(1, len(names))
             for idx, name in enumerate(names):
+                cls._raise_if_worker_cancelled(cancel_event)
                 suffix = Path(name).suffix.lower() or ".png"
                 out = target_dir / f"{safe_stem}_zip_{idx:04d}{suffix}"
                 with zf.open(name, "r") as src, out.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
                 copied_paths.append(cls._display_path_for_base(out, base_dir))
+                if callable(progress_callback):
+                    progress_callback(idx + 1, total, "Import ZIP frames")
         return {"frame_paths": copied_paths, "frame_durations_ms": durations[: len(copied_paths)]}
 
-    def _finish_animation_frame_import(self, mode: str, copied_paths: list[str], frame_durations: list[int] | None = None) -> None:
+    def _finish_animation_frame_import(
+        self,
+        mode: str,
+        copied_paths: list[str],
+        frame_durations: list[int] | None = None,
+        import_info: dict[str, Any] | None = None,
+    ) -> None:
         if not copied_paths:
             QMessageBox.warning(
                 self,
@@ -10155,18 +7842,40 @@ class TrofeoGui(QMainWindow):
         self._set_image_preview_label(self.background_preview_label, copied_paths[0], empty_text=self._empty_background_preview_caption())
         self._rebuild_theme_asset_gallery()
         self._maybe_warn_animation_frame_count(controller.normalize().frame_count)
+        info = import_info if isinstance(import_info, dict) else {}
+        source_kind = str(info.get("source_kind", "")).strip().lower()
+        truncated = bool(info.get("video_truncated", False))
         if mode == "append":
-            self.preview_info_label.setText(self._tr(f"Added {len(copied_paths)} animation frame(s).", f"Dodano {len(copied_paths)} klat. animacji."))
+            if source_kind == "video" and truncated:
+                self.preview_info_label.setText(
+                    self._tr(
+                        f"Added {len(copied_paths)} video frame(s); import was capped for LCD performance.",
+                        f"Dodano {len(copied_paths)} klatek wideo; import ograniczony dla wydajności LCD.",
+                    )
+                )
+            else:
+                self.preview_info_label.setText(self._tr(f"Added {len(copied_paths)} animation frame(s).", f"Dodano {len(copied_paths)} klat. animacji."))
         else:
-            self.preview_info_label.setText(self._tr(f"Imported animation: {len(copied_paths)} frame(s).", f"Zaimportowano animację: {len(copied_paths)} klat."))
+            if source_kind == "video" and truncated:
+                self.preview_info_label.setText(
+                    self._tr(
+                        f"Imported video background: {len(copied_paths)} frame(s); import was capped for LCD performance.",
+                        f"Zaimportowano tło wideo: {len(copied_paths)} klat.; import ograniczony dla wydajności LCD.",
+                    )
+                )
+            else:
+                self.preview_info_label.setText(self._tr(f"Imported animation: {len(copied_paths)} frame(s).", f"Zaimportowano animację: {len(copied_paths)} klat."))
         self.schedule_preview_theme_doc()
 
     def _set_animation_import_busy(self, busy: bool) -> None:
         self._animation_import_in_flight = bool(busy)
+        self._animation_import_cancel_event = threading.Event() if busy else None
         self._set_animation_worker_state(
             "import",
             self._tr("preparing frames", "przygotowanie klatek") if busy else None,
         )
+        if not busy:
+            self._set_animation_worker_state("cancel", None)
         for button in (getattr(self, "bg_animation_import_btn", None), getattr(self, "bg_animation_add_btn", None)):
             if button is not None:
                 button.setEnabled(not busy)
@@ -10182,12 +7891,13 @@ class TrofeoGui(QMainWindow):
             return
         if generation != getattr(self, "_animation_thumbnail_generation", 0):
             return
-        self._set_animation_worker_state("thumbnails", None)
+        self._finish_animation_thumbnail_worker()
         data = payload if isinstance(payload, dict) else {}
         result = data.get("result", {})
         items = result.get("items", []) if isinstance(result, dict) else []
         if not isinstance(items, list) or not hasattr(self, "bg_animation_list"):
             return
+        timeline_updates: dict[int, QPixmap] = {}
         for entry in items:
             if not isinstance(entry, dict):
                 continue
@@ -10207,7 +7917,20 @@ class TrofeoGui(QMainWindow):
             self._image_thumbnail_cache = {key: val for key, val in self._image_thumbnail_cache.items() if key[0] != cache_key[0]}
             self._image_thumbnail_cache[cache_key] = pixmap
             item.setIcon(QIcon(pixmap))
-        self._refresh_animation_frame_list(preserve_selection=True)
+            timeline_updates[row] = pixmap
+        self._trim_animation_thumbnail_cache()
+        timeline = getattr(self, "bg_animation_timeline", None)
+        if timeline is not None and hasattr(timeline, "update_thumbnails") and timeline_updates:
+            timeline.update_thumbnails(timeline_updates)
+        self._refresh_animation_controls()
+
+    def _trim_animation_thumbnail_cache(self) -> None:
+        max_items = 720
+        cache = getattr(self, "_image_thumbnail_cache", {})
+        if not isinstance(cache, dict) or len(cache) <= max_items:
+            return
+        keep = list(cache.items())[-max_items:]
+        self._image_thumbnail_cache = dict(keep)
 
     def clear_background_animation(self) -> None:
         if self.theme_doc_model is None:
@@ -10277,6 +8000,7 @@ class TrofeoGui(QMainWindow):
             self._load_background_fields()
             self.refresh_designer_element_list()
             self._update_preview_canvas_overlay()
+            self._mark_theme_doc_dirty("autosave-restore")
             self.append_log(f"[autosave] restored {THEME_AUTOSAVE_PATH}")
             self.preview_theme_doc()
             return True
@@ -10299,9 +8023,56 @@ class TrofeoGui(QMainWindow):
                 data = self.client.request(method=method, path=path, payload=payload, timeout=timeout)
                 self.api_result.emit(action, True, data)
             except Exception as exc:
+                if self._recover_backend_for_api_error(action, exc):
+                    try:
+                        data = self.client.request(method=method, path=path, payload=payload, timeout=timeout)
+                        self.api_result.emit(action, True, data)
+                        return
+                    except Exception as retry_exc:
+                        exc = retry_exc
                 self.api_result.emit(action, False, str(exc))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _recover_backend_for_api_error(self, action: str, exc: Exception) -> bool:
+        if action == "status":
+            return False
+        text = str(exc).lower()
+        recoverable = any(
+            marker in text
+            for marker in (
+                "remote end closed",
+                "connection refused",
+                "connection reset",
+                "połączenie nieudane",
+                "failed to establish",
+            )
+        )
+        if not recoverable:
+            return False
+        if not self._backend_recovery_lock.acquire(blocking=False):
+            time.sleep(1.5)
+            return True
+        try:
+            subprocess.run(
+                ["systemctl", "--user", "restart", "trofeo-backend.service"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=12.0,
+                check=False,
+            )
+            deadline = time.time() + 8.0
+            while time.time() < deadline:
+                try:
+                    self.client.request("GET", "/health", None, timeout=1.0)
+                    return True
+                except Exception:
+                    time.sleep(0.4)
+            return False
+        except Exception:
+            return False
+        finally:
+            self._backend_recovery_lock.release()
 
     def api_call_with_optional_stop(
         self,
@@ -10321,6 +8092,13 @@ class TrofeoGui(QMainWindow):
                 data = self.client.request(method=method, path=path, payload=payload, timeout=timeout)
                 self.api_result.emit(action, True, data)
             except Exception as exc:
+                if self._recover_backend_for_api_error(action, exc):
+                    try:
+                        data = self.client.request(method=method, path=path, payload=payload, timeout=timeout)
+                        self.api_result.emit(action, True, data)
+                        return
+                    except Exception as retry_exc:
+                        exc = retry_exc
                 self.api_result.emit(action, False, str(exc))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -10328,8 +8106,15 @@ class TrofeoGui(QMainWindow):
     def _on_api_result(self, action: str, ok: bool, payload: object) -> None:
         is_designer_preview = action.startswith("theme-doc-preview")
         is_animation_thumbnails = action.startswith("animation-thumbnails::")
+        if action == "animation-progress":
+            if ok:
+                self._apply_animation_progress_payload(payload)
+            return
         if action == "status":
             self._status_in_flight = False
+        if action.startswith("vrr-control::"):
+            self._finish_vrr_control(ok, payload)
+            return
         if action == "animation-export":
             self._set_animation_export_busy(False)
         if action == "animation-import":
@@ -10355,10 +8140,16 @@ class TrofeoGui(QMainWindow):
         if is_animation_thumbnails:
             if ok:
                 self._apply_animation_thumbnail_payload(action, payload)
+            else:
+                self._finish_animation_thumbnail_worker()
             return
 
         if action == "animation-export" and not ok:
             self.append_log(f"[{action}] ERROR: {payload}")
+            if "cancel" in str(payload).lower():
+                self.preview_info_label.setText(self._tr("Animation export cancelled.", "Eksport animacji anulowany."))
+                self._set_animation_worker_state("cancel", None)
+                return
             self.preview_info_label.setText(
                 self._tr(
                     f"Animation export failed: {str(payload)[:140]}",
@@ -10374,6 +8165,10 @@ class TrofeoGui(QMainWindow):
             return
         if action == "animation-import" and not ok:
             self.append_log(f"[{action}] ERROR: {payload}")
+            if "cancel" in str(payload).lower():
+                self.preview_info_label.setText(self._tr("Animation import cancelled.", "Import animacji anulowany."))
+                self._set_animation_worker_state("cancel", None)
+                return
             self.preview_info_label.setText(
                 self._tr(
                     f"Animation import failed: {str(payload)[:140]}",
@@ -10415,6 +8210,8 @@ class TrofeoGui(QMainWindow):
             if is_designer_preview and self._preview_request_queued:
                 self._preview_request_queued = False
                 self.preview_debounce.start(self._designer_preview_delay_ms())
+            elif is_designer_preview and hasattr(self, "preview_label"):
+                self.preview_label.set_render_pending(False)
             if action != "status" and not is_template_preview and action not in quiet_actions:
                 QMessageBox.warning(self, "API Error", str(payload))
             return
@@ -10449,7 +8246,7 @@ class TrofeoGui(QMainWindow):
                             frame_durations.append(max(1, int(float(item))))
                         except Exception:
                             continue
-                self._finish_animation_frame_import(mode, copied_paths, frame_durations)
+                self._finish_animation_frame_import(mode, copied_paths, frame_durations, result)
             return
         if action == "animation-stabilize":
             result = data.get("result", {})
@@ -10536,6 +8333,7 @@ class TrofeoGui(QMainWindow):
                         self._sync_designer_preview_policy()
                         self.load_selected_designer_item()
                         self._update_preview_canvas_overlay()
+                        self._mark_theme_doc_clean()
                 resolved_path = result.get("resolved_path")
                 if resolved_path:
                     self.theme_doc_path_edit.setText(str(resolved_path))
@@ -10543,6 +8341,8 @@ class TrofeoGui(QMainWindow):
                 if action == "theme-doc-load":
                     self._set_designer_toolbar_feedback(f"Wczytano motyw: {Path(str(resolved_path or self.theme_doc_path_edit.text())).name}")
                     self.preview_theme_doc()
+                elif action == "theme-doc-save":
+                    self._mark_theme_doc_clean()
         if action in {"studio-theme-save", "studio-theme-apply"}:
             result = data.get("result", {})
             if isinstance(result, dict):
@@ -10556,6 +8356,7 @@ class TrofeoGui(QMainWindow):
                 if resolved_path:
                     self.theme_path_edit.setText(str(resolved_path))
                 self._rebuild_theme_asset_gallery()
+                self._mark_theme_doc_clean()
                 if action == "studio-theme-save":
                     self._set_designer_toolbar_feedback("Motyw zapisany. Możesz od razu zastosować go na LCD.")
                 else:
@@ -10580,26 +8381,46 @@ class TrofeoGui(QMainWindow):
                 except Exception:
                     preview_seq = 0
             if preview_seq and preview_seq != self._preview_request_active_seq:
+                if self._preview_request_queued:
+                    self._preview_request_queued = False
+                    self.preview_debounce.start(self._designer_preview_delay_ms())
                 return
             result = data.get("result", {})
             if isinstance(result, dict):
                 image_path = str(result.get("image_path", "")).strip()
-                if image_path:
-                    pixmap = QPixmap(image_path)
-                    if not pixmap.isNull():
-                        canvas_rotation = 0
-                        if isinstance(self.theme_doc_model, dict):
-                            canvas_rotation = int(self.theme_doc_model.get("canvas", {}).get("rotation", 0)) % 360
-                        display_rotation = (-canvas_rotation) % 360
-                        self.preview_label.set_preview_pixmap(pixmap, display_rotation=display_rotation)
-                        self.animate_preview_flash()
-                        self._set_designer_toolbar_feedback(
-                            f"Podgląd gotowy {pixmap.width()}x{pixmap.height()} | kliknij, przeciągnij lub zaznacz prostokątem."
-                        )
-                        self._update_preview_canvas_overlay()
+                pixmap = load_uncached_pixmap(image_path)
+                if pixmap.isNull():
+                    encoded = str(result.get("image_base64", "")).strip()
+                    if encoded:
+                        try:
+                            raw = base64.b64decode(encoded)
+                            pixmap.loadFromData(raw)
+                        except Exception:
+                            pixmap = QPixmap()
+                if not pixmap.isNull():
+                    canvas_rotation = 0
+                    if isinstance(self.theme_doc_model, dict):
+                        canvas_rotation = int(self.theme_doc_model.get("canvas", {}).get("rotation", 0)) % 360
+                    display_rotation = (-canvas_rotation) % 360
+                    self.preview_label.set_preview_pixmap(pixmap, display_rotation=display_rotation)
+                    self.animate_preview_flash()
+                    self._set_designer_toolbar_feedback(
+                        f"Podgląd gotowy {pixmap.width()}x{pixmap.height()} | kliknij, przeciągnij lub zaznacz prostokątem."
+                    )
+                    self._update_preview_canvas_overlay()
+                else:
+                    self._set_designer_toolbar_feedback(
+                        self._tr(
+                            f"Preview rendered, but GUI cannot load image: {image_path or 'no image path'}",
+                            f"Podgląd wyrenderowany, ale GUI nie może załadować obrazu: {image_path or 'brak ścieżki'}",
+                        ),
+                        auto_clear_ms=None,
+                    )
             if self._preview_request_queued:
                 self._preview_request_queued = False
                 self.preview_debounce.start(self._designer_preview_delay_ms())
+            elif hasattr(self, "preview_label"):
+                self.preview_label.set_render_pending(False)
         if is_template_preview:
             result = data.get("result", {})
             if isinstance(result, dict):
@@ -10621,6 +8442,13 @@ class TrofeoGui(QMainWindow):
 
     def _update_status(self, status: dict[str, Any]) -> None:
         self.current_status = dict(status)
+        # Themes added through the API must also appear in the auto-theme selector.
+        if (isinstance(status.get("theme_count"), int)
+                and status["theme_count"] != len(self.theme_items)
+                and time.monotonic() - self._theme_list_refresh_at >= 5.0):
+            self._theme_list_refresh_at = time.monotonic()
+            self.refresh_themes()
+        self._maybe_apply_gaming_auto_theme(status)
         
         if hasattr(self, "header_connection_label"):
             running = bool(status.get("running", False))
@@ -10629,7 +8457,7 @@ class TrofeoGui(QMainWindow):
             self.header_ready_label.setText(self._tr("Ready", "Gotowe") if bool(status.get("ok", False)) else self._tr("Error", "Błąd"))
 
         if hasattr(self, "cfg_ui_theme_combo"):
-            self._sync_config_ui_controls_from_header()
+            self.config_preferences.sync_ui_controls_from_header()
 
         self.lbl_mode.setText(str(status.get("mode", "-")))
         
@@ -10651,6 +8479,12 @@ class TrofeoGui(QMainWindow):
         self.lbl_last_error.setText(str(status.get("last_error", "-")))
 
         cfg = status.get("config", {}) or {}
+        game_cfg = cfg.get("game", {}) if isinstance(cfg, dict) else {}
+        fps_probe_cfg = cfg.get("fps_probe", {}) if isinstance(cfg, dict) else {}
+        self._update_gaming_fps_metrics(
+            game_cfg if isinstance(game_cfg, dict) else {},
+            fps_probe_cfg if isinstance(fps_probe_cfg, dict) else {},
+        )
         self.lbl_pcap.setText(str(cfg.get("pcap_path", "-")))
         if "frame_index" in cfg:
             self.frame_spin.setValue(int(cfg.get("frame_index", 0)))
@@ -10666,6 +8500,92 @@ class TrofeoGui(QMainWindow):
             self.cfg_api_port_spin.setValue(int(cfg.get("port", 18777)))
         if hasattr(self, "cfg_theme_dir_edit"):
             self.cfg_theme_dir_edit.setText(str((Path.cwd() / "themes").resolve()))
+        weather_cfg = cfg.get("weather", {}) if isinstance(cfg, dict) else {}
+        if isinstance(weather_cfg, dict) and hasattr(self, "cfg_weather_lat_edit"):
+            if weather_cfg.get("lat") is not None:
+                self.cfg_weather_lat_edit.setText(str(weather_cfg.get("lat")))
+            if weather_cfg.get("lon") is not None:
+                self.cfg_weather_lon_edit.setText(str(weather_cfg.get("lon")))
+            if weather_cfg.get("location"):
+                self.cfg_weather_location_edit.setText(str(weather_cfg.get("location")))
+            if weather_cfg.get("refresh_s") is not None:
+                try:
+                    self.cfg_weather_refresh_spin.setValue(int(float(weather_cfg.get("refresh_s"))))
+                except Exception:
+                    pass
+            if hasattr(self, "cfg_weather_status_label"):
+                enabled = bool(weather_cfg.get("enabled", False))
+                city = str(weather_cfg.get("location_label") or weather_cfg.get("location") or "N/A")
+                temp = str(weather_cfg.get("temperature") or "N/A")
+                condition = str(weather_cfg.get("condition") or "N/A")
+                source = str(weather_cfg.get("last_source") or "none")
+                cache_age = weather_cfg.get("cache_age_s")
+                update_age = weather_cfg.get("last_update_age_s")
+                error = str(weather_cfg.get("last_error") or "").strip()
+                parts = [
+                    f"Weather: {self._tr('enabled', 'włączona') if enabled else self._tr('not configured', 'brak konfiguracji')}",
+                    f"{city}: {temp}, {condition}",
+                    f"Source: {source}",
+                ]
+                if update_age is not None:
+                    parts.append(f"Updated: {update_age}s ago")
+                if cache_age is not None:
+                    parts.append(f"Cache: {cache_age}s")
+                if error:
+                    parts.append(f"Error: {error[:100]}")
+                self.cfg_weather_status_label.setText("\n".join(parts))
+        audio_eq_cfg = cfg.get("audio_eq", {}) if isinstance(cfg, dict) else {}
+        if isinstance(audio_eq_cfg, dict) and hasattr(self, "cfg_audio_eq_status_label"):
+            method = str(audio_eq_cfg.get("input_method") or "").strip()
+            active_input = str(audio_eq_cfg.get("active_input") or "none").strip()
+            profile = str(audio_eq_cfg.get("profile") or "balanced").strip()
+            sensitivity = audio_eq_cfg.get("sensitivity", 1.0)
+            if not bool(getattr(self, "_audio_eq_config_dirty", False)):
+                idx = self.cfg_audio_eq_input_combo.findData(method)
+                if idx >= 0 and self.cfg_audio_eq_input_combo.currentIndex() != idx:
+                    self.cfg_audio_eq_input_combo.blockSignals(True)
+                    try:
+                        self.cfg_audio_eq_input_combo.setCurrentIndex(idx)
+                    finally:
+                        self.cfg_audio_eq_input_combo.blockSignals(False)
+                if hasattr(self, "cfg_audio_eq_profile_combo"):
+                    idx = self.cfg_audio_eq_profile_combo.findData(profile)
+                    if idx >= 0 and self.cfg_audio_eq_profile_combo.currentIndex() != idx:
+                        self.cfg_audio_eq_profile_combo.blockSignals(True)
+                        try:
+                            self.cfg_audio_eq_profile_combo.setCurrentIndex(idx)
+                        finally:
+                            self.cfg_audio_eq_profile_combo.blockSignals(False)
+                if hasattr(self, "cfg_audio_eq_sensitivity_spin"):
+                    try:
+                        sensitivity_value = int(round(float(sensitivity or 1.0) * 100.0))
+                        if self.cfg_audio_eq_sensitivity_spin.value() != sensitivity_value:
+                            self.cfg_audio_eq_sensitivity_spin.blockSignals(True)
+                            try:
+                                self.cfg_audio_eq_sensitivity_spin.setValue(sensitivity_value)
+                            finally:
+                                self.cfg_audio_eq_sensitivity_spin.blockSignals(False)
+                    except Exception:
+                        pass
+            status_text = str(audio_eq_cfg.get("status") or "unknown")
+            source = str(audio_eq_cfg.get("source") or "none")
+            age = str(audio_eq_cfg.get("age_ms") or "N/A")
+            bar_count = str(audio_eq_cfg.get("bar_count") or 0)
+            peak = str(audio_eq_cfg.get("peak") or 0.0)
+            raw_peak = str(audio_eq_cfg.get("raw_peak") or 0.0)
+            available = bool(audio_eq_cfg.get("cava_available", False))
+            enabled = bool(audio_eq_cfg.get("enabled", True))
+            thread_started = bool(audio_eq_cfg.get("thread_started", False))
+            framerate = str(audio_eq_cfg.get("framerate") or "N/A")
+            nice_value = str(audio_eq_cfg.get("nice", 0))
+            parts = [
+                f"Status: {status_text} | enabled: {'yes' if enabled else 'no'} | active: {active_input}",
+                f"Profile: {profile or 'balanced'} | sens: {int(round(float(sensitivity or 1.0) * 100.0))}% | {framerate} FPS | nice: {nice_value}",
+                f"Bars: {bar_count} | peak: {peak} | raw: {raw_peak} | age: {age} ms",
+            ]
+            if not available:
+                parts.append("cava not found")
+            self.cfg_audio_eq_status_label.setText("\n".join(parts))
 
         if hasattr(self, "system_api_status_value"):
             is_ok = bool(status.get("ok", False))
@@ -10725,15 +8645,31 @@ class TrofeoGui(QMainWindow):
         if self._startup_theme_name and self._startup_theme_name not in names:
             self._startup_theme_name = ""
             self._save_ui_state()
+        if self._gaming_auto_theme_name and self._gaming_auto_theme_name not in names:
+            self._gaming_auto_theme_name = ""
+            self._save_ui_state()
+        self._sync_gaming_auto_theme_combo()
         if hasattr(self, "library_summary_label"):
             self.library_summary_label.setText(
                 f"Biblioteka: {len(names)} motywów. Edytuj, zastosuj, duplikuj lub usuń z poziomu kafelka."
                 if names
                 else "Biblioteka jest pusta. Utwórz nowy motyw albo zaimportuj katalog TTCR."
             )
-        self._rebuild_runtime_theme_cards()
-        self._rebuild_library_theme_browser()
-        self._apply_startup_theme_if_needed()
+        self._runtime_theme_cards_dirty = True
+        if self.theme_gallery_refresh is not None:
+            self.theme_gallery_refresh.mark_dirty()
+        if getattr(self, "_initial_theme_data_loaded", False):
+            self._maybe_rebuild_visible_theme_views()
+        else:
+            self._initial_theme_data_loaded = True
+        self.theme_gallery_actions.apply_startup_theme_if_needed()
+
+    def _maybe_rebuild_visible_theme_views(self) -> None:
+        if hasattr(self, "main_tabs") and self.main_tabs.currentIndex() == 0 and getattr(self, "_runtime_theme_cards_dirty", False):
+            self._runtime_theme_cards_dirty = False
+            self._rebuild_runtime_theme_cards()
+        if self.theme_gallery_refresh is not None:
+            self.theme_gallery_refresh.maybe_rebuild_visible()
 
     def _update_playlist(self, playlist_payload: dict[str, Any]) -> None:
         items = playlist_payload.get("items", [])
@@ -10779,7 +8715,79 @@ class TrofeoGui(QMainWindow):
             "inter_packet_delay": float(self.inter_delay_spin.value()),
             "frame_delay": float(self.frame_delay_spin.value()),
         }
+        if hasattr(self, "cfg_weather_lat_edit"):
+            payload.update(self._weather_config_payload())
+        if hasattr(self, "cfg_audio_eq_input_combo"):
+            payload.update(self._audio_eq_config_payload())
         self.api_call("config", "POST", "/v1/config", payload)
+
+    def _usb_recovery_script_path(self) -> Path:
+        root = Path(__file__).resolve().parent
+        candidates = [
+            root / "scripts" / "trofeo_usb_power_cycle.sh",
+            Path("/usr/share/open-trofeo-lcd/scripts/trofeo_usb_power_cycle.sh"),
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
+
+    def run_usb_recovery(self) -> None:
+        script = self._usb_recovery_script_path()
+        if not script.exists():
+            QMessageBox.warning(
+                self,
+                "USB recovery",
+                f"Nie znaleziono skryptu recovery:\n{script}",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "USB recovery",
+            "Ta operacja zatrzyma backend, wykona bezpieczny reset USB Trofeo LCD i uruchomi backend ponownie.\n\n"
+            "Tryb bezpieczny nie odcina zasilania portu. Mocniejsze tryby zostają tylko jako awaryjne komendy terminalowe.\n\n"
+            "Będzie potrzebne sudo w otwartym terminalu. Kontynuować?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        command = (
+            "echo 'Stopping Open Trofeo LCD backend...'; "
+            "systemctl --user stop trofeo-backend.service || true; "
+            "echo; echo 'Running Trofeo LCD USB recovery. sudo password may be required.'; "
+            f"sudo {shlex.quote(str(script))} --mode safe; "
+            "recovery_status=$?; "
+            "echo; echo 'Restarting Open Trofeo LCD backend...'; "
+            "systemctl --user restart trofeo-backend.service; "
+            "echo; echo \"USB recovery finished with exit code ${recovery_status}. Press Enter to close this terminal.\"; "
+            "read"
+        )
+        terminal_cmds = [
+            ["konsole", "--new-tab", "-e", "bash", "-lc", command],
+            ["x-terminal-emulator", "-e", "bash", "-lc", command],
+            ["gnome-terminal", "--", "bash", "-lc", command],
+            ["kitty", "bash", "-lc", command],
+            ["alacritty", "-e", "bash", "-lc", command],
+        ]
+        for cmd in terminal_cmds:
+            if not shutil.which(cmd[0]):
+                continue
+            try:
+                subprocess.Popen(cmd)
+                self.append_log("[usb-recovery] Terminal opened; sudo may be required.")
+                return
+            except Exception:
+                continue
+        QMessageBox.information(
+            self,
+            "USB recovery",
+            "Nie znalazłem emulatora terminala. Uruchom ręcznie:\n\n"
+            f"systemctl --user stop trofeo-backend.service\n"
+            f"sudo {shlex.quote(str(script))} --mode safe\n"
+            f"systemctl --user restart trofeo-backend.service",
+        )
 
     def browse_image(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
@@ -10904,111 +8912,22 @@ class TrofeoGui(QMainWindow):
         )
 
     def _render_template_thumbnail(self, template_path: str) -> QPixmap | None:
-        if render_theme_file is None:
-            return None
-        try:
-            image = render_theme_file(template_path)
-            try:
-                raw = json.loads(Path(template_path).read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    rotation = int(raw.get("canvas", {}).get("rotation", 0)) % 360
-                    if rotation:
-                        image = image.rotate((-rotation) % 360, expand=True)
-            except Exception:
-                pass
-            image.thumbnail((240, 88))
-            buffer = io.BytesIO()
-            image.save(buffer, format="PNG")
-            pixmap = QPixmap()
-            if pixmap.loadFromData(buffer.getvalue(), "PNG"):
-                return pixmap
-        except Exception:
-            return None
-        return None
+        return self.theme_gallery_preview.render_template_thumbnail(template_path)
 
     def _upright_template_pixmap(self, pixmap: QPixmap, template_path: str) -> QPixmap:
-        try:
-            raw = json.loads(Path(template_path).read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                rotation = int(raw.get("canvas", {}).get("rotation", 0)) % 360
-                if rotation:
-                    return pixmap.transformed(QTransform().rotate((-rotation) % 360), Qt.SmoothTransformation)
-        except Exception:
-            pass
-        return pixmap
+        return self.theme_gallery_preview.upright_template_pixmap(pixmap, template_path)
 
     def _render_template_placeholder(self, title: str, accent: str, size: QSize) -> QPixmap:
-        width = max(220, int(size.width()))
-        height = max(88, int(size.height()))
-        pixmap = QPixmap(width, height)
-        pixmap.fill(QColor("#111723"))
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.fillRect(0, 0, width, height, QColor("#111723"))
-        painter.fillRect(0, 0, width, 16, QColor(accent))
-        painter.fillRect(0, height - 22, width, 22, QColor("#182230"))
-        painter.setPen(QColor("#2f3f58"))
-        for x in range(12, width, 28):
-            painter.drawLine(x, 18, x, height - 8)
-        painter.setPen(QColor("#e8f1ff"))
-        font = painter.font()
-        font.setBold(True)
-        font.setPointSize(12)
-        painter.setFont(font)
-        painter.drawText(QRect(14, 24, width - 28, 24), Qt.AlignLeft | Qt.AlignVCenter, title)
-        painter.setPen(QColor(accent))
-        font.setPointSize(10)
-        font.setBold(False)
-        painter.setFont(font)
-        painter.drawText(QRect(14, 50, width - 28, 18), Qt.AlignLeft | Qt.AlignVCenter, "Template")
-        painter.setPen(QColor("#9fb2ca"))
-        painter.drawRoundedRect(QRect(width - 84, height - 18, 68, 10), 5, 5)
-        painter.end()
-        return pixmap
+        return self.theme_gallery_preview.render_template_placeholder(title, accent, size)
 
     def _runtime_theme_card_pixmap(self, item: dict[str, Any], size: QSize) -> QPixmap:
-        path = str(item.get("path", "")).strip()
-        theme_type = str(item.get("type", "image")).strip()
-        if theme_type == "theme-doc" and render_theme_file is not None and path:
-            pixmap = self._render_template_thumbnail(path)
-            if pixmap is not None and not pixmap.isNull():
-                return pixmap
-        if path:
-            resolved = self._resolve_theme_asset_path(path)
-            pixmap = QPixmap(str(resolved))
-            if not pixmap.isNull():
-                return pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        return self._render_template_placeholder(str(item.get("name", "Theme")), "#5ec8ff", size)
+        return self.theme_gallery_preview.runtime_theme_card_pixmap(item, size)
+
+    def _theme_card_fast_preview_asset(self, raw_path: str) -> Path | None:
+        return self.theme_gallery_preview.theme_card_fast_preview_asset(raw_path)
 
     def _render_theme_preview_pixmap(self, item: dict[str, Any], size: QSize) -> QPixmap:
-        path = str(item.get("path", "")).strip()
-        theme_name = str(item.get("name", "Theme")).strip() or "Theme"
-        theme_type = str(item.get("type", "image")).strip()
-        if theme_type == "theme-doc" and render_theme_file is not None and path:
-            try:
-                image = render_theme_file(path)
-                try:
-                    raw = parse_theme_json_text(Path(path).read_text(encoding="utf-8"))
-                    if isinstance(raw, dict):
-                        rotation = int(raw.get("canvas", {}).get("rotation", 0)) % 360
-                        if rotation:
-                            image = image.rotate((-rotation) % 360, expand=True)
-                except Exception:
-                    pass
-                image.thumbnail((max(920, size.width()), max(280, size.height())))
-                buffer = io.BytesIO()
-                image.save(buffer, format="PNG")
-                pixmap = QPixmap()
-                if pixmap.loadFromData(buffer.getvalue(), "PNG"):
-                    return pixmap
-            except Exception:
-                pass
-        if path:
-            resolved = self._resolve_theme_asset_path(path)
-            pixmap = QPixmap(str(resolved))
-            if not pixmap.isNull():
-                return pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        return self._render_template_placeholder(theme_name, "#5ec8ff", size)
+        return self.theme_gallery_preview.render_theme_preview_pixmap(item, size)
 
     def _open_theme_preview_dialog(self, theme_name: str, theme_item: dict[str, Any]) -> None:
         pixmap = self._render_theme_preview_pixmap(theme_item, QSize(1180, 360))
@@ -11031,473 +8950,54 @@ class TrofeoGui(QMainWindow):
             self.runtime_theme_cards_layout.addStretch(1)
             return
         current = self.theme_combo.currentText().strip()
+        callbacks = RuntimeThemeCardCallbacks(
+            select_theme=self.theme_combo.setCurrentText,
+            apply_theme=self._apply_runtime_theme_card,
+            remove_theme=self._remove_runtime_theme_card,
+        )
         for name, item in self.theme_items.items():
-            card = AnimatedCardFrame("templateCard")
-            layout = QHBoxLayout(card)
-            layout.setContentsMargins(14, 14, 14, 14)
-            layout.setSpacing(14)
-            thumb = QLabel()
-            thumb.setObjectName("templateCardThumb")
-            thumb.setFixedSize(180, 72)
-            thumb.setPixmap(self._runtime_theme_card_pixmap(item, thumb.size()))
-            layout.addWidget(thumb)
-            text_col = QVBoxLayout()
-            title = QLabel(name)
-            title.setObjectName("templateCardTitle")
-            meta = QLabel(f"{item.get('type', 'image')} | {Path(str(item.get('path', ''))).name}")
-            meta.setObjectName("templateCardMeta")
-            meta.setWordWrap(True)
-            text_col.addWidget(title)
-            text_col.addWidget(meta)
-            text_col.addStretch(1)
-            layout.addLayout(text_col, 1)
-            actions = QVBoxLayout()
-            select_btn = QPushButton("Wybierz")
-            apply_btn = QPushButton("Zastosuj")
-            remove_btn = QPushButton("Usuń")
-            if name == current:
-                apply_btn.setObjectName("primaryButton")
-            for btn in (select_btn, apply_btn, remove_btn):
-                btn.setMinimumHeight(36)
-            select_btn.clicked.connect(lambda _checked=False, theme_name=name: self.theme_combo.setCurrentText(theme_name))
-            apply_btn.clicked.connect(lambda _checked=False, theme_name=name: self._apply_runtime_theme_card(theme_name))
-            remove_btn.clicked.connect(lambda _checked=False, theme_name=name: self._remove_runtime_theme_card(theme_name))
-            actions.addWidget(select_btn)
-            actions.addWidget(apply_btn)
-            actions.addWidget(remove_btn)
-            actions.addStretch(1)
-            layout.addLayout(actions)
+            card = build_runtime_theme_card(
+                name,
+                item,
+                current_name=current,
+                pixmap_for_item=self._runtime_theme_card_pixmap,
+                card_factory=AnimatedCardFrame,
+                callbacks=callbacks,
+            )
             self.runtime_theme_cards_layout.addWidget(card)
         self.runtime_theme_cards_layout.addStretch(1)
 
-    def _rebuild_library_theme_browser(self) -> None:
-        if not hasattr(self, "library_theme_cards_layout"):
-            return
-        while self.library_theme_cards_layout.count():
-            child = self.library_theme_cards_layout.takeAt(0)
-            widget = child.widget()
-            if widget is not None:
-                widget.deleteLater()
-        needle = self.library_theme_filter_edit.text().strip().lower() if hasattr(self, "library_theme_filter_edit") else ""
-        type_filter = self.library_theme_type_combo.currentText().strip() if hasattr(self, "library_theme_type_combo") else "All"
-        items: list[tuple[str, dict[str, Any]]] = []
-        for name, item in self.theme_items.items():
-            theme_type = str(item.get("type", "image"))
-            hay = " ".join([name, theme_type, str(item.get("path", ""))]).lower()
-            if needle and needle not in hay:
-                continue
-            category = self._theme_card_category(item)
-            if type_filter == "Image" and theme_type != "image":
-                continue
-            if type_filter == "Theme" and theme_type != "theme-doc":
-                continue
-            if type_filter in {"Local", "TTCR", "Animated"} and category != type_filter:
-                continue
-            items.append((name, item))
-        sort_mode = self.library_theme_sort_combo.currentText().strip() if hasattr(self, "library_theme_sort_combo") else "Name A-Z"
-        if sort_mode in {"Newest", "Oldest"}:
-            def _mtime(entry: tuple[str, dict[str, Any]]) -> float:
-                try:
-                    resolved = self._resolve_theme_asset_path(str(entry[1].get("path", "")))
-                    return resolved.stat().st_mtime if resolved.exists() else 0.0
-                except Exception:
-                    return 0.0
-            items.sort(key=_mtime, reverse=(sort_mode == "Newest"))
-        else:
-            items.sort(key=lambda entry: entry[0].lower(), reverse=(sort_mode == "Name Z-A"))
-        current = self.theme_combo.currentText().strip() if hasattr(self, "theme_combo") else ""
-        if hasattr(self, "library_current_theme_label"):
-            self.library_current_theme_label.setText(
-                self._tr(f"Currently selected: {current}", f"Aktualnie wybrany: {current}") if current else self._tr("No active theme.", "Brak aktywnego motywu.")
-            )
-        if not items:
-            empty = QLabel(self._tr("No themes match the current filter.", "Brak motywów pasujących do filtra."))
-            empty.setObjectName("selectionSummaryLabel")
-            empty.setWordWrap(True)
-            self.library_theme_cards_layout.addWidget(empty, 0, 0)
-            if hasattr(self, "theme_browser_scroll"):
-                self.theme_browser_scroll.setMinimumHeight(96)
-                self.theme_browser_scroll.setMaximumHeight(96)
-            if hasattr(self, "theme_browser_box"):
-                self.theme_browser_box.setMinimumHeight(212)
-                self.theme_browser_box.setMaximumHeight(212)
-            return
-        viewport_width = 0
-        if hasattr(self, "theme_browser_scroll"):
-            try:
-                viewport_width = self.theme_browser_scroll.viewport().width()
-            except Exception:
-                viewport_width = 0
-        container_width = max(
-            720,
-            viewport_width or (self.library_theme_cards_container.width() if hasattr(self, "library_theme_cards_container") else 960),
+    def _library_theme_browser_width(self) -> int:
+        if hasattr(self, "theme_gallery_browser"):
+            return self.theme_gallery_browser.browser_width()
+        return 960
+
+    def _library_theme_browser_is_visible(self) -> bool:
+        return (
+            hasattr(self, "main_tabs")
+            and hasattr(self, "studio_sections_tabs")
+            and self.main_tabs.currentIndex() == 1
+            and self.studio_sections_tabs.currentIndex() == 0
         )
-        if container_width >= 1450:
-            columns = 4
-        elif container_width >= 1040:
-            columns = 3
-        elif container_width >= 720:
-            columns = 2
-        else:
-            columns = 1
-        for idx, (name, item) in enumerate(items):
-            asset_count, animation_count = self._theme_card_stats(item)
-            category = self._theme_card_category(item)
-            card = AnimatedCardFrame("libraryCard")
-            card.setObjectName("libraryCard")
-            card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            card.setMinimumHeight(228)
-            card.setMaximumHeight(228)
-            layout = QVBoxLayout(card)
-            layout.setContentsMargins(10, 10, 10, 10)
-            layout.setSpacing(6)
-            thumb = QLabel()
-            thumb.setObjectName("templateCardThumb")
-            thumb.setMinimumSize(220, 92)
-            thumb.setMaximumHeight(92)
-            thumb.setAlignment(Qt.AlignCenter)
-            thumb.setPixmap(
-                self._runtime_theme_card_pixmap(item, thumb.size()).scaled(
-                    thumb.size(),
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation,
-                )
-            )
-            layout.addWidget(thumb)
-            top_meta_row = QHBoxLayout()
-            top_meta_row.setSpacing(8)
-            badge = QLabel(self._theme_type_badge(item))
-            badge.setObjectName("layerBadgeLabel")
-            category_badge = QLabel(category)
-            category_badge.setObjectName("layerBadgeLabel")
-            modified = QLabel(self._theme_modified_label(item))
-            modified.setObjectName("libraryCardMeta")
-            menu_btn = QPushButton("...")
-            menu_btn.setMinimumSize(34, 28)
-            menu_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item, btn=menu_btn: self._show_library_theme_card_menu(theme_name, theme_item, btn))
-            top_meta_row.addWidget(badge, 0)
-            top_meta_row.addWidget(category_badge, 0)
-            top_meta_row.addWidget(modified, 1)
-            top_meta_row.addWidget(menu_btn, 0)
-            layout.addLayout(top_meta_row)
-            title = QLabel(name)
-            title.setObjectName("libraryCardTitle")
-            title.setWordWrap(True)
-            meta = QLabel(Path(str(item.get('path', ''))).name)
-            meta.setObjectName("libraryCardMeta")
-            meta.setWordWrap(True)
-            desc_parts = []
-            if asset_count:
-                desc_parts.append(f"Assety: {asset_count}")
-            if animation_count:
-                desc_parts.append(f"Klatki: {animation_count}")
-            desc_text = " • ".join(desc_parts) if desc_parts else (
-                "Gotowy do edycji." if str(item.get("type", "")) == "theme-doc"
-                else "Gotowy do użycia."
-            )
-            desc = QLabel(desc_text)
-            desc.setObjectName("libraryCardDesc")
-            desc.setWordWrap(True)
-            layout.addWidget(title)
-            layout.addWidget(meta)
-            layout.addWidget(desc)
-            if name == current:
-                active_label = QLabel(self._tr("Currently selected", "Aktualnie wybrany"))
-                active_label.setObjectName("layerBadgeLabel")
-                layout.addWidget(active_label)
-            startup_row = QHBoxLayout()
-            startup_chk = QCheckBox(self._tr("Apply on startup", "Zastosuj przy uruchomieniu"))
-            startup_chk.setChecked(name == self._startup_theme_name)
-            startup_chk.toggled.connect(
-                lambda checked, theme_name=name: self._set_startup_theme_preference(theme_name, checked)
-            )
-            startup_row.addWidget(startup_chk)
-            startup_row.addStretch(1)
-            layout.addLayout(startup_row)
-            actions = QHBoxLayout()
-            actions.setSpacing(6)
-            select_btn = QPushButton(self._tr("Edit", "Edytuj") if str(item.get("type", "")) == "theme-doc" else self._tr("Select", "Wybierz"))
-            preview_btn = QPushButton(self._tr("Preview", "Podgląd"))
-            apply_btn = QPushButton(self._tr("Apply", "Zastosuj"))
-            duplicate_btn = QPushButton(self._tr("Duplicate", "Duplikuj"))
-            remove_btn = QPushButton(self._tr("Remove", "Usuń"))
-            apply_btn.setObjectName("primaryButton" if name == current else "secondaryAccentButton")
-            for btn in (select_btn, preview_btn, apply_btn, duplicate_btn, remove_btn):
-                btn.setMinimumHeight(28)
-                btn.setCursor(Qt.PointingHandCursor)
-            select_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item: self._library_select_theme(theme_name, theme_item))
-            preview_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item: self._open_theme_preview_dialog(theme_name, theme_item))
-            apply_btn.clicked.connect(lambda _checked=False, theme_name=name: self._apply_runtime_theme_card(theme_name))
-            duplicate_btn.clicked.connect(lambda _checked=False, theme_name=name, theme_item=item: self._duplicate_theme_card(theme_name, theme_item))
-            remove_btn.clicked.connect(lambda _checked=False, theme_name=name: self._remove_runtime_theme_card(theme_name))
-            actions.addWidget(select_btn, 2)
-            actions.addWidget(preview_btn, 1)
-            actions.addWidget(apply_btn, 2)
-            actions.addWidget(duplicate_btn, 1)
-            actions.addWidget(remove_btn, 1)
-            layout.addLayout(actions)
-            row = idx // columns
-            col = idx % columns
-            self.library_theme_cards_layout.addWidget(card, row, col)
-        for col in range(columns):
-            self.library_theme_cards_layout.setColumnStretch(col, 1)
-        row_count = max(1, (len(items) + columns - 1) // columns)
-        visible_rows = min(row_count, 3)
-        card_height = 228
-        row_gap = self.library_theme_cards_layout.verticalSpacing()
-        viewport_height = 14 + (visible_rows * card_height) + (max(0, visible_rows - 1) * row_gap) + 10
-        if hasattr(self, "theme_browser_scroll"):
-            self.theme_browser_scroll.setMinimumHeight(viewport_height)
-            self.theme_browser_scroll.setMaximumHeight(viewport_height if row_count <= 3 else 760)
-        if hasattr(self, "theme_browser_box"):
-            controls_height = 110
-            box_height = controls_height + viewport_height
-            self.theme_browser_box.setMinimumHeight(box_height)
-            self.theme_browser_box.setMaximumHeight(box_height if row_count <= 3 else 900)
 
-    def _library_select_theme(self, theme_name: str, theme_item: dict[str, Any]) -> None:
-        self.theme_combo.setCurrentText(theme_name)
-        theme_type = str(theme_item.get("type", ""))
-        path = str(theme_item.get("path", "")).strip()
-        if theme_type == "theme-doc" and path:
-            self.theme_doc_path_edit.setText(path)
-            self.load_theme_doc()
-            self._go_designer()
+    def _schedule_library_theme_browser_rebuild(self) -> None:
+        if self.theme_gallery_refresh is not None:
+            self.theme_gallery_refresh.schedule_for_resize()
 
-    def _set_startup_theme_preference(self, theme_name: str, enabled: bool) -> None:
-        if enabled:
-            next_name = theme_name
-        elif self._startup_theme_name == theme_name:
-            next_name = ""
-        else:
+    def _rebuild_library_theme_browser(self) -> None:
+        if not hasattr(self, "theme_gallery_browser"):
             return
-        if self._startup_theme_name == next_name:
-            return
-        self._startup_theme_name = next_name
-        self._startup_theme_applied = False
-        self._save_ui_state()
-        self._rebuild_library_theme_browser()
-        if next_name:
-            self.append_log(f"[theme-startup] Ustawiono motyw startowy: {next_name}")
-        else:
-            self.append_log("[theme-startup] Wyczyszczono motyw startowy.")
-
-    def _apply_startup_theme_if_needed(self) -> None:
-        if self._startup_theme_applied:
-            return
-        theme_name = self._startup_theme_name.strip()
-        if not theme_name or theme_name not in self.theme_items:
-            return
-        self._startup_theme_applied = True
-        self._apply_runtime_theme_card(theme_name)
-
-    def _theme_type_badge(self, theme_item: dict[str, Any]) -> str:
-        theme_type = str(theme_item.get("type", "image")).strip()
-        if theme_type == "theme-doc":
-            return self._tr("Theme", "Motyw")
-        if theme_type == "image":
-            return self._tr("Image", "Obraz")
-        return theme_type or self._tr("Theme", "Motyw")
-
-    def _read_theme_document_for_card(self, theme_item: dict[str, Any]) -> dict[str, Any] | None:
-        theme_type = str(theme_item.get("type", "")).strip()
-        path = str(theme_item.get("path", "")).strip()
-        if theme_type != "theme-doc" or not path:
-            return None
-        try:
-            resolved = self._resolve_theme_asset_path(path)
-            raw = parse_theme_json_text(resolved.read_text(encoding="utf-8"))
-            return raw if isinstance(raw, dict) else None
-        except Exception:
-            return None
-
-    def _theme_card_category(self, theme_item: dict[str, Any]) -> str:
-        document = self._read_theme_document_for_card(theme_item)
-        if isinstance(document, dict):
-            effects = document.get("effects", {})
-            animation = effects.get("animation", {}) if isinstance(effects, dict) else {}
-            frame_paths = animation.get("frame_paths", []) if isinstance(animation, dict) else []
-            if bool(animation.get("enabled", False)) and isinstance(frame_paths, list) and len(frame_paths) > 1:
-                return "Animated"
-            meta = document.get("meta", {})
-            tags = meta.get("tags", []) if isinstance(meta, dict) else []
-            if isinstance(tags, list) and any(str(tag).strip().lower() == "ttcr-import" for tag in tags):
-                return "TTCR"
-            if isinstance(effects, dict) and isinstance(effects.get("import_report"), dict):
-                source_path = str(effects["import_report"].get("source_path", "")).lower()
-                if "ttcr" in source_path:
-                    return "TTCR"
-        path = str(theme_item.get("path", "")).lower()
-        if "ttcr" in path:
-            return "TTCR"
-        return "Local"
-
-    def _theme_card_stats(self, theme_item: dict[str, Any]) -> tuple[int, int]:
-        document = self._read_theme_document_for_card(theme_item)
-        if not isinstance(document, dict):
-            return 0, 0
-        asset_count = 0
-        background = document.get("background", {})
-        if isinstance(background, dict) and str(background.get("path", "")).strip():
-            asset_count += 1
-        images = document.get("images", [])
-        if isinstance(images, list):
-            asset_count += sum(1 for item in images if isinstance(item, dict) and str(item.get("path", "")).strip())
-        effects = document.get("effects", {})
-        animation = effects.get("animation", {}) if isinstance(effects, dict) else {}
-        frame_paths = animation.get("frame_paths", []) if isinstance(animation, dict) else []
-        animation_count = len(frame_paths) if isinstance(frame_paths, list) else 0
-        return asset_count, animation_count
-
-    def _theme_modified_label(self, theme_item: dict[str, Any]) -> str:
-        path = str(theme_item.get("path", "")).strip()
-        if not path:
-            return "Brak pliku"
-        try:
-            resolved = self._resolve_theme_asset_path(path)
-            if resolved.exists():
-                stamp = datetime.fromtimestamp(resolved.stat().st_mtime)
-                return f"Zmieniono: {stamp.strftime('%Y-%m-%d %H:%M')}"
-        except Exception:
-            pass
-        return "Brak daty"
-
-    def _show_library_theme_card_menu(self, theme_name: str, theme_item: dict[str, Any], anchor: QWidget) -> None:
-        menu = QMenu(self)
-        tr = self._tr
-        edit_action = menu.addAction(tr("Edit", "Edytuj"))
-        preview_action = menu.addAction(tr("Preview", "Podgląd"))
-        apply_action = menu.addAction(tr("Apply", "Zastosuj"))
-        duplicate_action = menu.addAction(tr("Duplicate", "Duplikuj"))
-        remove_action = menu.addAction(tr("Remove", "Usuń"))
-        chosen = menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
-        if chosen == edit_action:
-            self._library_select_theme(theme_name, theme_item)
-        elif chosen == preview_action:
-            self._open_theme_preview_dialog(theme_name, theme_item)
-        elif chosen == apply_action:
-            self._apply_runtime_theme_card(theme_name)
-        elif chosen == duplicate_action:
-            self._duplicate_theme_card(theme_name, theme_item)
-        elif chosen == remove_action:
-            self._remove_runtime_theme_card(theme_name)
-
-    def _duplicate_theme_card(self, theme_name: str, theme_item: dict[str, Any]) -> None:
-        theme_type = str(theme_item.get("type", "")).strip()
-        path = str(theme_item.get("path", "")).strip()
-        if theme_type != "theme-doc" or not path:
-            QMessageBox.information(
-                self,
-                self._tr("Duplicate theme", "Duplikowanie motywu"),
-                self._tr(
-                    "Duplication is only available for saved editable theme documents.",
-                    "Duplikowanie jest dostępne tylko dla zapisanych motywów edytowalnych.",
-                ),
-            )
-            return
-        try:
-            src_path = self._resolve_theme_asset_path(path)
-            document = parse_theme_json_text(src_path.read_text(encoding="utf-8"))
-            if not isinstance(document, dict):
-                raise ValueError("Plik motywu nie zawiera poprawnego dokumentu.")
-            new_name = f"{theme_name} Kopia"
-            document.setdefault("meta", {})
-            document["meta"]["name"] = new_name
-            out_path = src_path.with_name(f"{src_path.stem}_kopia{src_path.suffix}")
-            idx = 2
-            while out_path.exists():
-                out_path = src_path.with_name(f"{src_path.stem}_kopia_{idx}{src_path.suffix}")
-                idx += 1
-            out_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            self.api_call(
-                "theme-add",
-                "POST",
-                "/v1/themes/add",
-                {"name": new_name, "path": str(out_path), "raw_jpeg_passthrough": False},
-                timeout=10.0,
-            )
-        except Exception as exc:
-            QMessageBox.warning(self, self._tr("Duplicate theme", "Duplikowanie motywu"), str(exc))
+        current = self.theme_combo.currentText().strip() if hasattr(self, "theme_combo") else ""
+        self.theme_gallery_browser.rebuild(
+            theme_items=self.theme_items,
+            current_name=current,
+            startup_theme_name=self._startup_theme_name,
+        )
 
     def _rebuild_theme_asset_gallery(self) -> None:
-        if not hasattr(self, "asset_gallery_layout"):
+        if not hasattr(self, "theme_asset_gallery_panel"):
             return
-        while self.asset_gallery_layout.count():
-            child = self.asset_gallery_layout.takeAt(0)
-            widget = child.widget()
-            if widget is not None:
-                widget.deleteLater()
-        asset_root = self._theme_assets_dir().parent
-        if not asset_root.exists():
-            empty = QLabel("Brak assetów dla bieżącego motywu. Zaimportuj tło albo obraz do motywu, aby zbudować bibliotekę.")
-            empty.setObjectName("selectionSummaryLabel")
-            empty.setWordWrap(True)
-            self.asset_gallery_layout.addWidget(empty, 0, 0)
-            return
-        files = sorted(
-            [p for p in asset_root.rglob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}],
-            key=lambda p: str(p),
-        )
-        if not files:
-            empty = QLabel("Brak obrazów w katalogu assetów tego motywu.")
-            empty.setObjectName("selectionSummaryLabel")
-            empty.setWordWrap(True)
-            self.asset_gallery_layout.addWidget(empty, 0, 0)
-            return
-        container_width = max(720, self.asset_gallery_container.width() if hasattr(self, "asset_gallery_container") else 960)
-        columns = max(1, min(4, container_width // 320))
-        for idx, path in enumerate(files[:40]):
-            card = AnimatedCardFrame("assetCard")
-            card.setObjectName("assetCard")
-            layout = QVBoxLayout(card)
-            layout.setContentsMargins(12, 12, 12, 12)
-            layout.setSpacing(10)
-            thumb = QLabel()
-            thumb.setObjectName("templateCardThumb")
-            thumb.setMinimumSize(240, 92)
-            thumb.setMaximumHeight(92)
-            thumb.setAlignment(Qt.AlignCenter)
-            pixmap = QPixmap(str(path))
-            if not pixmap.isNull():
-                thumb.setPixmap(pixmap.scaled(thumb.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            layout.addWidget(thumb)
-            title = QLabel(path.name)
-            title.setObjectName("libraryCardTitle")
-            title.setWordWrap(True)
-            meta = QLabel(str(path.relative_to(asset_root)))
-            meta.setObjectName("libraryCardMeta")
-            meta.setWordWrap(True)
-            desc = QLabel("Zasób gotowy do użycia jako tło albo warstwa obrazu.")
-            desc.setObjectName("libraryCardDesc")
-            desc.setWordWrap(True)
-            layout.addWidget(title)
-            layout.addWidget(meta)
-            layout.addWidget(desc)
-            layout.addStretch(1)
-            actions = QHBoxLayout()
-            actions.setSpacing(8)
-            bg_btn = QPushButton("Ustaw jako tło")
-            img_btn = QPushButton("Dodaj jako obraz")
-            bg_btn.setObjectName("secondaryAccentButton")
-            bg_btn.clicked.connect(lambda _checked=False, p=path: self._use_gallery_asset_as_background(p))
-            img_btn.clicked.connect(lambda _checked=False, p=path: self._use_gallery_asset_as_image(p))
-            actions.addWidget(bg_btn)
-            actions.addWidget(img_btn)
-            layout.addLayout(actions)
-            row = idx // columns
-            col = idx % columns
-            self.asset_gallery_layout.addWidget(card, row, col)
-        for col in range(columns):
-            self.asset_gallery_layout.setColumnStretch(col, 1)
-
-    def _use_gallery_asset_as_background(self, path: Path) -> None:
-        self.bg_path_edit.setText(self._theme_display_path(path))
-        self.bg_kind_combo.setCurrentText("image")
-        animation = self._current_animation_effect()
-        animation["enabled"] = False
-        self._refresh_animation_controls()
-        self._set_image_preview_label(self.background_preview_label, self.bg_path_edit.text(), empty_text=self._empty_background_preview_caption())
-        self.on_background_field_changed()
+        self.theme_asset_gallery_panel.rebuild(self._theme_assets_dir().parent)
 
     def _load_ttcr_stat_rules(self) -> dict[str, str]:
         try:
@@ -11828,28 +9328,6 @@ class TrofeoGui(QMainWindow):
             ),
         )
 
-    def _use_gallery_asset_as_image(self, path: Path) -> None:
-        combo_index = self.designer_kind_combo.findData("images")
-        if combo_index >= 0:
-            self.designer_kind_combo.setCurrentIndex(combo_index)
-        if self.theme_doc_model is None:
-            self.reload_designer_from_json()
-            if self.theme_doc_model is None:
-                return
-        items = self._current_theme_items()
-        self.push_designer_history()
-        new_item = self._make_default_element("images")
-        new_item["path"] = self._theme_display_path(path)
-        new_item["fit"] = "cover"
-        canvas = self.theme_doc_model.get("canvas", {}) if self.theme_doc_model is not None else {}
-        new_item["rect"] = [0, 0, int(canvas.get("width", 1920)), int(canvas.get("height", 462))]
-        items.append(new_item)
-        self.write_designer_to_json()
-        self.refresh_designer_element_list()
-        self.designer_element_list.setCurrentRow(len(items) - 1)
-        self._set_image_preview_label(self.designer_image_preview_label, new_item["path"], empty_text=self._empty_image_preview_caption())
-        self.schedule_preview_theme_doc()
-
     def _apply_runtime_theme_card(self, theme_name: str) -> None:
         self.theme_combo.setCurrentText(theme_name)
         self.apply_theme()
@@ -11884,7 +9362,7 @@ class TrofeoGui(QMainWindow):
                         Qt.SmoothTransformation,
                     )
                 )
-        if render_theme_file is None:
+        if not self.theme_gallery_preview.has_local_theme_renderer:
             self._request_template_previews()
 
     def _request_template_previews(self) -> None:
@@ -11920,17 +9398,13 @@ class TrofeoGui(QMainWindow):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def _sanitize_theme_name_for_filename(self, name: str) -> str:
-        sanitized = "".join(ch.lower() if ch.isalnum() else "_" for ch in name).strip("_")
-        return sanitized or "nowy_motyw"
-
     def _default_new_theme_path(self) -> Path:
-        base_name = self._sanitize_theme_name_for_filename(self.new_theme_name_edit.text().strip())
         template_path = str(self.new_theme_template_combo.currentData() or "themes/nowy_motyw.json")
-        template_stem = Path(template_path).stem.replace("_monitor", "")
-        suffix = template_stem if template_stem and template_stem not in {"nowy_motyw", base_name} else ""
-        filename = f"{base_name}.json" if not suffix else f"{base_name}_{suffix}.json"
-        return self._default_new_theme_dir() / filename
+        return default_new_theme_path(
+            self._default_new_theme_dir(),
+            self.new_theme_name_edit.text().strip(),
+            template_path,
+        )
 
     def _mark_new_theme_path_customized(self, _text: str) -> None:
         self._new_theme_path_user_edited = True
@@ -11996,10 +9470,13 @@ class TrofeoGui(QMainWindow):
         self._load_background_fields()
         self._sync_designer_preview_policy()
         self.load_selected_designer_item()
+        self._mark_theme_doc_clean()
         if preview_after:
             self.preview_theme_doc()
 
     def browse_theme_doc_path(self) -> None:
+        if not self._confirm_discard_unsaved_theme_changes(self._tr("browse another theme", "wybór innego motywu")):
+            return
         selected, _ = QFileDialog.getOpenFileName(
             self,
             "Wybierz plik motywu",
@@ -12010,6 +9487,8 @@ class TrofeoGui(QMainWindow):
             self.theme_doc_path_edit.setText(selected)
 
     def use_selected_theme_doc(self) -> None:
+        if not self._confirm_discard_unsaved_theme_changes(self._tr("use selected theme", "użycie wybranego motywu")):
+            return
         name = self.theme_combo.currentText().strip()
         if not name:
             QMessageBox.information(self, "Info", "Najpierw wybierz motyw z listy.")
@@ -12049,7 +9528,30 @@ class TrofeoGui(QMainWindow):
         return document
 
     def _set_theme_doc_editor_document(self, document: dict[str, Any]) -> None:
-        self.theme_doc_editor.setPlainText(json.dumps(document, ensure_ascii=False, indent=2))
+        text = json.dumps(document, ensure_ascii=False, indent=2)
+        if self.theme_doc_editor.toPlainText() == text:
+            self._theme_doc_model_newer_than_editor = False
+            return
+        self._theme_doc_editor_syncing = True
+        try:
+            self.theme_doc_editor.setPlainText(text)
+        finally:
+            self._theme_doc_editor_syncing = False
+            self._theme_doc_model_newer_than_editor = False
+
+    def _schedule_theme_doc_editor_sync(self) -> None:
+        if self.theme_doc_model is None:
+            return
+        self._theme_doc_model_newer_than_editor = True
+        self.theme_doc_editor_sync_debounce.start(350)
+
+    def _flush_theme_doc_editor_sync(self) -> None:
+        if not getattr(self, "_theme_doc_model_newer_than_editor", False):
+            return
+        if self.theme_doc_model is None:
+            self._theme_doc_model_newer_than_editor = False
+            return
+        self._set_theme_doc_editor_document(self.theme_doc_model)
 
     def open_current_theme_json_externally(self, *, from_animation_studio: bool = False) -> None:
         if self.theme_doc_model is None:
@@ -12078,7 +9580,7 @@ class TrofeoGui(QMainWindow):
             self.theme_doc_model = normalized
             save_theme_document(resolved, normalized, include_doc_header=True)
             self._set_theme_doc_editor_document(normalized)
-            self._schedule_theme_autosave()
+            self._mark_theme_doc_clean()
         except Exception as exc:
             QMessageBox.warning(
                 self,
@@ -12127,6 +9629,8 @@ class TrofeoGui(QMainWindow):
     def _theme_doc_editor_differs_from_model(self) -> bool:
         if not isinstance(self.theme_doc_model, dict):
             return bool(self.theme_doc_editor.toPlainText().strip())
+        if getattr(self, "_theme_doc_model_newer_than_editor", False):
+            return False
         try:
             model_text = json.dumps(self.theme_doc_model, ensure_ascii=False, indent=2).strip()
         except Exception:
@@ -12158,8 +9662,12 @@ class TrofeoGui(QMainWindow):
         return deepcopy(normalized)
 
     def load_theme_doc(self) -> None:
+        if not self._confirm_discard_unsaved_theme_changes(self._tr("load theme", "wczytanie motywu")):
+            self._set_designer_toolbar_busy("theme-doc-load", False)
+            return
         theme_path = self.theme_doc_path_edit.text().strip()
         if not theme_path:
+            self._set_designer_toolbar_busy("theme-doc-load", False)
             QMessageBox.information(self, "Info", "Podaj ścieżkę do pliku motywu.")
             return
         self.api_call("theme-doc-load", "POST", "/v1/theme-doc/load", {"path": theme_path}, timeout=15.0)
@@ -12324,10 +9832,12 @@ class TrofeoGui(QMainWindow):
     def save_current_theme_to_library(self) -> None:
         theme_path = self.theme_doc_path_edit.text().strip()
         if not theme_path:
+            self._set_designer_toolbar_busy("studio-theme-save", False)
             QMessageBox.information(self, "Info", "Najpierw wybierz lub utwórz motyw.")
             return
         document = self._current_theme_document()
         if document is None:
+            self._set_designer_toolbar_busy("studio-theme-save", False)
             return
         self._run_theme_library_workflow(
             action="studio-theme-save",
@@ -12367,14 +9877,20 @@ class TrofeoGui(QMainWindow):
             return
         if self._preview_request_in_flight:
             self._preview_request_queued = True
+            if hasattr(self, "preview_label"):
+                self.preview_label.set_render_pending(True, "Render oczekuje...")
             if self._designer_is_heavy_preview() and hasattr(self, "preview_info_label"):
                 self.preview_info_label.setText("Szybki podgląd aktywny. Pełny render czeka na zakończenie poprzedniego.")
             return
+        # Keep the normal preview path lightweight. Backend writes previews into
+        # the app runtime directory now, so GUI can load the PNG directly.
         payload = {"path": self.theme_doc_path_edit.text().strip(), "document": document}
         self._preview_request_in_flight = True
         self._preview_request_queued = False
         self._preview_request_seq += 1
         self._preview_request_active_seq = self._preview_request_seq
+        if hasattr(self, "preview_label"):
+            self.preview_label.set_render_pending(True)
         self.api_call(
             f"theme-doc-preview::{self._preview_request_active_seq}",
             "POST",
@@ -12410,7 +9926,7 @@ class TrofeoGui(QMainWindow):
         return len(frame_paths)
 
     def _designer_is_heavy_preview(self) -> bool:
-        return self._designer_animation_frame_count() >= 40
+        return self._designer_animation_frame_count() >= ANIMATION_FRAMES_SOFT_WARN
 
     def _animation_edit_mode_enabled(self) -> bool:
         return bool(hasattr(self, "designer_animation_mode_btn") and self.designer_animation_mode_btn.isChecked())
@@ -12444,21 +9960,21 @@ class TrofeoGui(QMainWindow):
 
     def _designer_preview_delay_ms(self) -> int:
         frame_count = self._designer_animation_frame_count()
-        if frame_count >= 200:
+        if frame_count >= ANIMATION_FRAMES_EXTREME_WARN:
             return 2200
-        if frame_count >= 80:
+        if frame_count >= ANIMATION_FRAMES_STRONG_WARN:
             return 1600
-        if frame_count >= 40:
+        if frame_count >= ANIMATION_FRAMES_SOFT_WARN:
             return 1000
         return 300
 
     def _designer_preview_timeout_s(self) -> float:
         frame_count = self._designer_animation_frame_count()
-        if frame_count >= 200:
+        if frame_count >= ANIMATION_FRAMES_EXTREME_WARN:
             return 180.0
-        if frame_count >= 80:
+        if frame_count >= ANIMATION_FRAMES_STRONG_WARN:
             return 120.0
-        if frame_count >= 40:
+        if frame_count >= ANIMATION_FRAMES_SOFT_WARN:
             return 75.0
         return 45.0
 
@@ -12528,6 +10044,8 @@ class TrofeoGui(QMainWindow):
                 "opacity": 1.0,
                 "z_index": 50,
             }
+        if collection == "widgets":
+            return self._make_weather_widget("weather_current", "compact")
         return {
             "id": f"image_{index}",
             "path": "reference_frame_trcc.jpg",
@@ -12536,6 +10054,70 @@ class TrofeoGui(QMainWindow):
             "opacity": 1.0,
             "rotation": 0,
             "z_index": 100,
+        }
+
+    def _make_weather_widget(self, kind: str, style: str = "compact") -> dict[str, Any]:
+        style_key = str(style or "compact").strip().lower()
+        if kind == "weather_forecast_7d":
+            rect = [246, 316, 1088, 112]
+            prefix = "widget_weather_forecast"
+        else:
+            prefix = "widget_weather_current"
+            rect = {
+                "compact": [1360, 270, 500, 152],
+                "wide": [980, 300, 820, 112],
+                "hero": [1160, 42, 650, 170],
+            }.get(style_key, [1360, 270, 500, 152])
+        return {
+            "id": self._next_item_id("widgets", prefix),
+            "kind": kind,
+            "style": style_key,
+            "rect": rect,
+            "settings": {
+                "panel_enabled": True,
+                "animate_icons": True,
+            },
+            "opacity": 1.0,
+            "z_index": 210,
+            "visible": True,
+            "locked": False,
+        }
+
+    def _make_media_widget(self, style: str = "standard") -> dict[str, Any]:
+        style_key = str(style or "standard").strip().lower()
+        rect = {
+            "standard": [40, 320, 760, 128],
+            "hero": [36, 250, 932, 176],
+            "mini": [1520, 24, 360, 96],
+        }.get(style_key, [40, 320, 760, 128])
+        return {
+            "id": self._next_item_id("widgets", "widget_media_now_playing"),
+            "kind": "media_now_playing",
+            "style": style_key,
+            "rect": rect,
+            "settings": {
+                "panel_enabled": True,
+                "backdrop_enabled": True,
+                "backdrop_opacity": 0.30,
+                "cover_enabled": True,
+                "cover_placeholder_enabled": True,
+                "title_marquee": True,
+                "title_marquee_speed": 55.0,
+                "equalizer_enabled": True,
+                "equalizer_bars": 20,
+                "equalizer_gap": 4,
+                "equalizer_mirror": False,
+                "equalizer_color": [102, 226, 120, 255],
+                "equalizer_accent_color": [246, 231, 152, 255],
+                "equalizer_track_color": [0, 0, 0, 0],
+                "equalizer_color_preset": "neon",
+                "equalizer_threshold": 0.78,
+                "equalizer_threshold_color": [255, 86, 96, 255],
+            },
+            "opacity": 1.0,
+            "z_index": 210,
+            "visible": True,
+            "locked": False,
         }
 
     def _next_item_id(self, collection: str, prefix: str) -> str:
@@ -12559,76 +10141,15 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         self.push_designer_history()
-        background = self.theme_doc_model.setdefault("background", {})
-        panels = background.setdefault("panels", [])
-        panel_id = self._next_item_id("panels", "panel_media")
-        panels.append(
-            {
-                "id": panel_id,
-                "rect": [40, 320, 760, 128],
-                "radius": 16,
-                "fill": [10, 16, 26, 210],
-                "z_index": 95,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        images = self.theme_doc_model.setdefault("images", [])
-        images.append(
-            {
-                "id": self._next_item_id("images", "img_media_cover"),
-                "path": "",
-                "source": "media_cover",
-                "rect": [52, 332, 104, 104],
-                "fit": "cover",
-                "opacity": 1.0,
-                "radius": 18,
-                "border_width": 2,
-                "border_color": [235, 246, 255, 170],
-                "glow_radius": 16,
-                "glow_opacity": 0.42,
-                "rotation": 0,
-                "z_index": 208,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        stats = self.theme_doc_model.setdefault("stats", [])
-        items = [
-            ("media_title", "", 176, 336, 586, 32, 28, True),
-            ("media_artist", "", 176, 374, 586, 28, 22, False),
-            ("media_app", "App", 176, 406, 240, 24, 18, False),
-            ("media_state", "State", 434, 406, 328, 24, 18, False),
-        ]
-        for source, label, x, y, w, h, size, bold in items:
-            stats.append(
-                {
-                    "id": self._next_item_id("stats", f"stat_{source}"),
-                    "label": label,
-                    "source": source,
-                    "format": "Now Playing: {value}" if source == "media_title" else "{value}",
-                    "x": x,
-                    "y": y,
-                    "box_width": w,
-                    "box_height": h,
-                    "font_family": "DejaVu Sans",
-                    "font_size": size,
-                    "font_bold": bold,
-                    "font_italic": False,
-                    "font_underline": False,
-                    "marquee": source == "media_title",
-                    "marquee_speed": 60.0,
-                    "label_color": [160, 196, 232],
-                    "value_color": [235, 246, 255],
-                    "align": "left",
-                    "z_index": 210 if source == "media_title" else 209,
-                    "visible": True,
-                    "locked": False,
-                }
-            )
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+        widgets.append(self._make_media_widget("standard"))
         self.write_designer_to_json()
         self.refresh_designer_element_list()
-        self.preview_info_label.setText("Dodano widget Now Playing (MPRIS): cover, title, artist, app, state.")
+        combo_index = self.designer_kind_combo.findData("widgets")
+        if combo_index >= 0:
+            self.designer_kind_combo.setCurrentIndex(combo_index)
+            self.designer_element_list.setCurrentRow(len(widgets) - 1)
+        self.preview_info_label.setText("Dodano kompletny widget Now Playing.")
         self.schedule_preview_theme_doc()
 
     def add_now_playing_widget_hero(self) -> None:
@@ -12637,96 +10158,15 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         self.push_designer_history()
-        background = self.theme_doc_model.setdefault("background", {})
-        panels = background.setdefault("panels", [])
-        panels.append(
-            {
-                "id": self._next_item_id("panels", "panel_media_hero"),
-                "rect": [36, 250, 932, 176],
-                "radius": 26,
-                "fill": [6, 10, 18, 220],
-                "z_index": 94,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        images = self.theme_doc_model.setdefault("images", [])
-        images.append(
-            {
-                "id": self._next_item_id("images", "img_media_video_backdrop"),
-                "path": "",
-                "source": "media_video_frame",
-                "rect": [44, 258, 916, 160],
-                "fit": "cover",
-                "opacity": 0.22,
-                "radius": 24,
-                "border_width": 0,
-                "border_color": [0, 0, 0, 0],
-                "glow_radius": 22,
-                "glow_opacity": 0.24,
-                "rotation": 0,
-                "z_index": 205,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        images.append(
-            {
-                "id": self._next_item_id("images", "img_media_cover_hero"),
-                "path": "",
-                "source": "media_cover",
-                "rect": [64, 270, 136, 136],
-                "fit": "cover",
-                "opacity": 1.0,
-                "radius": 24,
-                "border_width": 2,
-                "border_color": [235, 246, 255, 170],
-                "glow_radius": 18,
-                "glow_opacity": 0.42,
-                "rotation": 0,
-                "z_index": 208,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        stats = self.theme_doc_model.setdefault("stats", [])
-        items = [
-            ("media_title", "", 224, 278, 700, 38, 32, True, "Now Playing: {value}"),
-            ("media_artist", "", 224, 320, 700, 30, 24, False, "{value}"),
-            ("media_app", "App", 224, 358, 260, 24, 18, False, "{value}"),
-            ("media_state", "State", 508, 358, 240, 24, 18, False, "{value}"),
-        ]
-        for source, label, x, y, w, h, size, bold, fmt in items:
-            stats.append(
-                {
-                    "id": self._next_item_id("stats", f"stat_{source}_hero"),
-                    "label": label,
-                    "source": source,
-                    "format": fmt,
-                    "x": x,
-                    "y": y,
-                    "box_width": w,
-                    "box_height": h,
-                    "font_family": "DejaVu Sans",
-                    "font_size": size,
-                    "font_bold": bold,
-                    "font_italic": False,
-                    "font_underline": False,
-                    "marquee": source == "media_title",
-                    "marquee_speed": 64.0,
-                    "label_color": [160, 196, 232],
-                    "value_color": [244, 248, 255],
-                    "align": "left",
-                    "z_index": 210 if source == "media_title" else 209,
-                    "visible": True,
-                    "locked": False,
-                }
-            )
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+        widgets.append(self._make_media_widget("hero"))
         self.write_designer_to_json()
         self.refresh_designer_element_list()
-        self.preview_info_label.setText(
-            "Dodano widget Now Playing Hero: duża okładka + szeroki media-backdrop. Dla lokalnych playerów wideo tło użyje realnej klatki, a w pozostałych przypadkach fallbacku do okładki."
-        )
+        combo_index = self.designer_kind_combo.findData("widgets")
+        if combo_index >= 0:
+            self.designer_kind_combo.setCurrentIndex(combo_index)
+            self.designer_element_list.setCurrentRow(len(widgets) - 1)
+        self.preview_info_label.setText("Dodano kompletny widget Now Playing Hero.")
         self.schedule_preview_theme_doc()
 
     def add_now_playing_widget_mini(self) -> None:
@@ -12735,73 +10175,15 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         self.push_designer_history()
-        background = self.theme_doc_model.setdefault("background", {})
-        panels = background.setdefault("panels", [])
-        panels.append(
-            {
-                "id": self._next_item_id("panels", "panel_media_mini"),
-                "rect": [1520, 24, 360, 96],
-                "radius": 14,
-                "fill": [8, 14, 24, 200],
-                "z_index": 96,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        stats = self.theme_doc_model.setdefault("stats", [])
-        stats.append(
-            {
-                "id": self._next_item_id("stats", "stat_media_title_mini"),
-                "label": "",
-                "source": "media_title",
-                "format": "♫ {value}",
-                "x": 1540,
-                "y": 42,
-                "box_width": 320,
-                "box_height": 26,
-                "font_family": "DejaVu Sans",
-                "font_size": 20,
-                "font_bold": True,
-                "font_italic": False,
-                "font_underline": False,
-                "marquee": True,
-                "marquee_speed": 68.0,
-                "label_color": [160, 196, 232],
-                "value_color": [235, 246, 255],
-                "align": "left",
-                "z_index": 211,
-                "visible": True,
-                "locked": False,
-            }
-        )
-        stats.append(
-            {
-                "id": self._next_item_id("stats", "stat_media_artist_mini"),
-                "label": "",
-                "source": "media_artist",
-                "format": "{value}",
-                "x": 1540,
-                "y": 74,
-                "box_width": 320,
-                "box_height": 22,
-                "font_family": "DejaVu Sans",
-                "font_size": 16,
-                "font_bold": False,
-                "font_italic": False,
-                "font_underline": False,
-                "marquee": False,
-                "marquee_speed": 55.0,
-                "label_color": [160, 196, 232],
-                "value_color": [210, 224, 240],
-                "align": "left",
-                "z_index": 210,
-                "visible": True,
-                "locked": False,
-            }
-        )
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+        widgets.append(self._make_media_widget("mini"))
         self.write_designer_to_json()
         self.refresh_designer_element_list()
-        self.preview_info_label.setText("Dodano widget Now Playing Mini.")
+        combo_index = self.designer_kind_combo.findData("widgets")
+        if combo_index >= 0:
+            self.designer_kind_combo.setCurrentIndex(combo_index)
+            self.designer_element_list.setCurrentRow(len(widgets) - 1)
+        self.preview_info_label.setText("Dodano kompletny widget Now Playing Mini.")
         self.schedule_preview_theme_doc()
 
     def add_volume_widget(self) -> None:
@@ -12886,30 +10268,16 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         self.push_designer_history()
-        background = self.theme_doc_model.setdefault("background", {})
-        panels = background.setdefault("panels", [])
-        panels.append(
-            {
-                "id": self._next_item_id("panels", "panel_music_eq"),
-                "rect": [860, 276, 520, 108],
-                "radius": 18,
-                "fill": [8, 14, 24, 186],
-                "opacity": 1.0,
-                "z_index": 95,
-                "visible": True,
-                "locked": False,
-            }
-        )
         stats = self.theme_doc_model.setdefault("stats", [])
         stats.append(
             {
                 "id": self._next_item_id("stats", "stat_music_equalizer"),
-                "label": "EQ",
+                "label": "",
                 "source": "volume_percent",
                 "format": "{value}",
-                "x": 882,
-                "y": 294,
-                "box_width": 476,
+                "x": 1560,
+                "y": 356,
+                "box_width": 320,
                 "box_height": 72,
                 "font_family": "DejaVu Sans",
                 "font_size": 22,
@@ -12926,10 +10294,13 @@ class TrofeoGui(QMainWindow):
                 "track_color": [0, 0, 0, 0],
                 "fill_color": [102, 226, 120, 255],
                 "stroke_width": 0,
-                "show_value_text": True,
+                "show_value_text": False,
                 "equalizer_bars": 20,
                 "equalizer_gap": 4,
                 "equalizer_mirror": False,
+                "equalizer_color_preset": "neon",
+                "equalizer_threshold": 0.78,
+                "equalizer_threshold_color": [255, 86, 96, 255],
                 "align": "left",
                 "z_index": 214,
                 "visible": True,
@@ -12940,6 +10311,235 @@ class TrofeoGui(QMainWindow):
         self.refresh_designer_element_list()
         self.preview_info_label.setText(
             "Dodano widget Graphic EQ: animowany pasek muzyczny sterowany głośnością i stanem odtwarzania."
+        )
+        self.schedule_preview_theme_doc()
+
+    def add_game_fps_widget(self) -> None:
+        if self.theme_doc_model is None:
+            self.reload_designer_from_json()
+        if self.theme_doc_model is None:
+            return
+        self.push_designer_history()
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+        widgets.append(
+            {
+                "id": self._next_item_id("widgets", "widget_gaming_performance"),
+                "kind": "gaming_performance",
+                "style": "dashboard",
+                "rect": [1028, 222, 820, 196],
+                "settings": {
+                    "panel_fill": [5, 10, 18, 218],
+                    "cell_fill": [12, 20, 32, 190],
+                    "accent_color": [66, 220, 255, 255],
+                    "good_color": [102, 226, 120, 255],
+                    "warn_color": [246, 231, 152, 255],
+                    "bad_color": [255, 86, 96, 255],
+                    "text_color": [238, 246, 255, 255],
+                    "muted_color": [150, 174, 204, 255],
+                    "title_font_size": 24,
+                    "fps_font_size": 72,
+                    "label_font_size": 15,
+                    "value_font_size": 24,
+                    "small_font_size": 15,
+                },
+                "opacity": 1.0,
+                "z_index": 220,
+                "visible": True,
+                "locked": False,
+            }
+        )
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        self.preview_info_label.setText("Dodano widget Gaming Performance: FPS, AVG, MIN/MAX, 1% low, frametime i stutter.")
+        self.schedule_preview_theme_doc()
+
+    def _weather_stat_item(
+        self,
+        source: str,
+        label: str,
+        fmt: str,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        size: int,
+        bold: bool,
+        value_color: list[int] | None = None,
+        align: str = "left",
+    ) -> dict[str, Any]:
+        return {
+            "id": self._next_item_id("stats", f"stat_{source}"),
+            "label": label,
+            "source": source,
+            "format": fmt,
+            "x": x,
+            "y": y,
+            "box_width": w,
+            "box_height": h,
+            "font_family": "DejaVu Sans",
+            "font_size": size,
+            "font_bold": bold,
+            "font_italic": False,
+            "font_underline": False,
+            "label_color": [160, 196, 232],
+            "value_color": value_color or [235, 246, 255],
+            "align": align,
+            "z_index": 211,
+            "visible": True,
+            "locked": False,
+        }
+
+    def add_weather_current_widget(self, style: str = "compact") -> None:
+        if self.theme_doc_model is None:
+            self.reload_designer_from_json()
+        if self.theme_doc_model is None:
+            return
+        self.push_designer_history()
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+        widgets.append(self._make_weather_widget("weather_current", style))
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        combo_index = self.designer_kind_combo.findData("widgets")
+        if combo_index >= 0:
+            self.designer_kind_combo.setCurrentIndex(combo_index)
+            self.designer_element_list.setCurrentRow(len(widgets) - 1)
+        self.preview_info_label.setText(f"Dodano kompletny widget Weather Current ({style}).")
+        self.schedule_preview_theme_doc()
+
+    def add_weather_forecast_widget(self) -> None:
+        if self.theme_doc_model is None:
+            self.reload_designer_from_json()
+        if self.theme_doc_model is None:
+            return
+        self.push_designer_history()
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+        widgets.append(self._make_weather_widget("weather_forecast_7d", "forecast"))
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        combo_index = self.designer_kind_combo.findData("widgets")
+        if combo_index >= 0:
+            self.designer_kind_combo.setCurrentIndex(combo_index)
+            self.designer_element_list.setCurrentRow(len(widgets) - 1)
+        self.preview_info_label.setText("Dodano kompletny widget Weather 7D Forecast.")
+        self.schedule_preview_theme_doc()
+
+    @staticmethod
+    def _item_rect_bounds(item: dict[str, Any], collection: str) -> tuple[int, int, int, int] | None:
+        try:
+            if collection in {"images", "widgets"}:
+                x, y, w, h = [int(v) for v in item.get("rect", [])]
+                return x, y, x + w, y + h
+            if collection == "panels":
+                x, y, w, h = [int(v) for v in item.get("rect", [])]
+                return x, y, x + w, y + h
+            if collection == "stats":
+                x = int(item.get("x", 0))
+                y = int(item.get("y", 0))
+                w = max(1, int(item.get("box_width", 0) or 180))
+                h = max(1, int(item.get("box_height", 0) or int(item.get("font_size", 18)) + 8))
+                return x, y, x + w, y + h
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def _union_bounds(bounds: list[tuple[int, int, int, int]]) -> list[int]:
+        x1 = min(b[0] for b in bounds)
+        y1 = min(b[1] for b in bounds)
+        x2 = max(b[2] for b in bounds)
+        y2 = max(b[3] for b in bounds)
+        pad = 16
+        x1 = max(0, x1 - pad)
+        y1 = max(0, y1 - pad)
+        return [x1, y1, max(120, x2 - x1 + pad), max(60, y2 - y1 + pad)]
+
+    def _legacy_weather_groups(self) -> tuple[list[tuple[str, int, dict[str, Any]]], list[tuple[str, int, dict[str, Any]]]]:
+        current: list[tuple[str, int, dict[str, Any]]] = []
+        forecast: list[tuple[str, int, dict[str, Any]]] = []
+        if self.theme_doc_model is None:
+            return current, forecast
+        panels = self.theme_doc_model.get("background", {}).get("panels", [])
+        for idx, item in enumerate(panels if isinstance(panels, list) else []):
+            if not isinstance(item, dict):
+                continue
+            ident = str(item.get("id", "")).strip().lower()
+            if any(ident.startswith(prefix) for prefix in WEATHER_RELATED_PANEL_ID_PREFIXES):
+                current.append(("panels", idx, item))
+        for collection in ("images", "stats"):
+            items = self.theme_doc_model.get(collection, [])
+            for idx, item in enumerate(items if isinstance(items, list) else []):
+                if not isinstance(item, dict):
+                    continue
+                source = str(item.get("source", "")).strip()
+                ident = str(item.get("id", "")).strip().lower()
+                label = str(item.get("label", "")).strip().lower()
+                if source.startswith("weather_day_"):
+                    forecast.append((collection, idx, item))
+                elif source in WEATHER_STAT_SOURCES or source in WEATHER_RELATED_IMAGE_SOURCES or "weather" in ident or "pogoda" in label:
+                    current.append((collection, idx, item))
+        return current, forecast
+
+    def convert_legacy_weather_widgets(self) -> None:
+        if self.theme_doc_model is None:
+            self.reload_designer_from_json()
+        if self.theme_doc_model is None:
+            return
+        current, forecast = self._legacy_weather_groups()
+        if not current and not forecast:
+            QMessageBox.information(
+                self,
+                self._tr("Weather", "Pogoda"),
+                self._tr("No split weather elements found in this theme.", "Nie znaleziono rozbitych elementów pogody w tym motywie."),
+            )
+            return
+        self.push_designer_history()
+        widgets = self.theme_doc_model.setdefault("widgets", [])
+
+        def first_panel_fill(items: list[tuple[str, int, dict[str, Any]]], fallback: list[int]) -> list[int]:
+            for collection, _idx, item in items:
+                if collection == "panels" and isinstance(item.get("fill"), list):
+                    return list(item.get("fill", fallback))
+            return fallback
+
+        if current:
+            bounds = [b for collection, _idx, item in current if (b := self._item_rect_bounds(item, collection)) is not None]
+            widget = self._make_weather_widget("weather_current", "wide")
+            if bounds:
+                widget["rect"] = self._union_bounds(bounds)
+            widget.setdefault("settings", {})["panel_fill"] = first_panel_fill(current, [8, 14, 24, 205])
+            widget["id"] = self._next_item_id("widgets", "widget_weather_current_migrated")
+            widgets.append(widget)
+        if forecast:
+            bounds = [b for collection, _idx, item in forecast if (b := self._item_rect_bounds(item, collection)) is not None]
+            widget = self._make_weather_widget("weather_forecast_7d", "forecast")
+            if bounds:
+                widget["rect"] = self._union_bounds(bounds)
+            widget.setdefault("settings", {})["panel_fill"] = first_panel_fill(forecast, [8, 14, 24, 190])
+            widget["id"] = self._next_item_id("widgets", "widget_weather_forecast_migrated")
+            widgets.append(widget)
+
+        remove_by_collection: dict[str, set[int]] = {"images": set(), "stats": set(), "panels": set()}
+        for collection, idx, _item in current + forecast:
+            remove_by_collection.setdefault(collection, set()).add(idx)
+        for collection in ("images", "stats"):
+            items = self.theme_doc_model.get(collection, [])
+            if isinstance(items, list) and remove_by_collection.get(collection):
+                self.theme_doc_model[collection] = [item for idx, item in enumerate(items) if idx not in remove_by_collection[collection]]
+        panels = self.theme_doc_model.get("background", {}).get("panels", [])
+        if isinstance(panels, list) and remove_by_collection.get("panels"):
+            self.theme_doc_model.setdefault("background", {})["panels"] = [item for idx, item in enumerate(panels) if idx not in remove_by_collection["panels"]]
+
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        combo_index = self.designer_kind_combo.findData("widgets")
+        if combo_index >= 0:
+            self.designer_kind_combo.setCurrentIndex(combo_index)
+            self.designer_element_list.setCurrentRow(max(0, len(widgets) - 1))
+        self.preview_info_label.setText(
+            self._tr(
+                f"Converted split weather elements into {int(bool(current)) + int(bool(forecast))} composite widget(s).",
+                f"Przekonwertowano rozbite elementy pogody na {int(bool(current)) + int(bool(forecast))} kompletne widgety.",
+            )
         )
         self.schedule_preview_theme_doc()
 
@@ -13136,11 +10736,61 @@ class TrofeoGui(QMainWindow):
             f"Dodano nowy element: {collection_name}. Lista po lewej pokazuje wszystkie elementy tej kategorii."
         )
 
+    def add_stat_visual_widget(self, display: str = "progress") -> None:
+        if self.theme_doc_model is None:
+            self.reload_designer_from_json()
+        if self.theme_doc_model is None:
+            return
+        mode = str(display or "progress").strip().lower()
+        if mode not in {"progress", "sparkline"}:
+            mode = "progress"
+        self.push_designer_history()
+        stats = self.theme_doc_model.setdefault("stats", [])
+        is_sparkline = mode == "sparkline"
+        stats.append(
+            {
+                "id": self._next_item_id("stats", f"stat_{mode}"),
+                "label": "CPU" if not is_sparkline else "CPU HISTORY",
+                "source": "cpu_core_avg_percent",
+                "format": "{value}%",
+                "display": mode,
+                "min_value": 0.0,
+                "max_value": 100.0,
+                "x": 100,
+                "y": 330 if not is_sparkline else 290,
+                "box_width": 360 if not is_sparkline else 420,
+                "box_height": 48 if not is_sparkline else 92,
+                "font_family": "DejaVu Sans",
+                "font_size": 22,
+                "font_bold": True,
+                "font_italic": False,
+                "font_underline": False,
+                "label_color": [235, 246, 255],
+                "value_color": [255, 206, 88],
+                "track_color": [15, 24, 36, 190],
+                "fill_color": [90, 220, 132, 255],
+                "stroke_width": 4 if is_sparkline else 12,
+                "show_value_text": True,
+                "sparkline_points": 42,
+                "sparkline_fill_opacity": 0.18,
+                "sparkline_show_points": True,
+                "align": "left",
+                "z_index": 220,
+                "visible": True,
+                "locked": False,
+            }
+        )
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        self.preview_info_label.setText(
+            "Dodano Sparkline z zakresem 0-100%." if is_sparkline else "Dodano pasek postępu z zakresem 0-100%."
+        )
+        self.schedule_preview_theme_doc()
+
     def clear_designer_selection(self) -> None:
         self.designer_cross_selection = []
         self._designer_selection_group_label = ""
-        self.designer_element_list.clearSelection()
-        self.designer_element_list.setCurrentRow(-1)
+        self.designer_element_list.select_rows([], current_row=-1)
         self.load_selected_designer_item()
         self._update_preview_canvas_overlay()
 
@@ -13176,13 +10826,7 @@ class TrofeoGui(QMainWindow):
         return str(self.designer_kind_combo.currentData())
 
     def _theme_items_for_collection(self, collection: str) -> list[dict[str, Any]]:
-        if self.theme_doc_model is None:
-            return []
-        if collection == "panels":
-            items = self.theme_doc_model.get("background", {}).get("panels", [])
-        else:
-            items = self.theme_doc_model.get(collection, [])
-        return items if isinstance(items, list) else []
+        return theme_items_for_collection(self.theme_doc_model, collection)
 
     def _current_theme_items(self) -> list[dict[str, Any]]:
         return self._theme_items_for_collection(self._selected_collection())
@@ -13195,106 +10839,43 @@ class TrofeoGui(QMainWindow):
         return items, row, items[row]
 
     def _selected_rows(self) -> list[int]:
-        rows = sorted({idx.row() for idx in self.designer_element_list.selectedIndexes()})
-        if rows:
-            return rows
-        row = self.designer_element_list.currentRow()
-        return [row] if row >= 0 else []
+        return self.designer_element_list.selected_rows_or_current()
 
     def _normalize_designer_selection(self, entries: list[tuple[str, int]] | None) -> list[tuple[str, int]]:
-        if self.theme_doc_model is None or not entries:
-            return []
-        normalized: list[tuple[str, int]] = []
-        seen: set[tuple[str, int]] = set()
-        for collection, row in entries:
-            key = (str(collection), int(row))
-            if key in seen:
-                continue
-            items = self._theme_items_for_collection(key[0])
-            if 0 <= key[1] < len(items):
-                normalized.append(key)
-                seen.add(key)
-        return normalized
+        return normalize_selection(self.theme_doc_model, entries)
 
     def _set_designer_selection_group(self, entries: list[tuple[str, int]], *, group_label: str = "") -> None:
         self.designer_cross_selection = self._normalize_designer_selection(entries)
         self._designer_selection_group_label = group_label if len(self.designer_cross_selection) > 1 else ""
 
     def _selected_entries_any(self) -> list[tuple[str, int]]:
-        selected = self._normalize_designer_selection(self.designer_cross_selection)
+        selected = normalize_selection(self.theme_doc_model, self.designer_cross_selection)
         if selected:
             if selected != self.designer_cross_selection:
                 self.designer_cross_selection = list(selected)
             return selected
-        current = self._selected_collection()
-        return self._normalize_designer_selection([(current, row) for row in self._selected_rows()])
+        return selection_entries(
+            self.theme_doc_model,
+            None,
+            self._selected_collection(),
+            self._selected_rows(),
+        )
 
     def _selected_items_multi_any(self) -> list[tuple[str, int, dict[str, Any]]]:
-        out: list[tuple[str, int, dict[str, Any]]] = []
-        for collection, row in self._selected_entries_any():
-            items = self._theme_items_for_collection(collection)
-            if 0 <= row < len(items):
-                out.append((collection, row, items[row]))
-        return out
+        return selected_items(self.theme_doc_model, self._selected_entries_any())
 
     def _selected_items_multi(self) -> list[tuple[int, dict[str, Any]]]:
-        items = self._current_theme_items()
-        out: list[tuple[int, dict[str, Any]]] = []
-        for row in self._selected_rows():
-            if 0 <= row < len(items):
-                out.append((row, items[row]))
-        return out
+        return current_selected_items(self._current_theme_items(), self._selected_rows())
 
     def _selection_group_label_for_entries(self, entries: list[tuple[str, int]]) -> str:
-        normalized = self._normalize_designer_selection(entries)
-        if len(normalized) <= 1:
-            return ""
-        if all(
-            self._is_media_related_item(self._theme_items_for_collection(collection)[row], collection)
-            for collection, row in normalized
-        ):
-            return "Media Player"
-        return "Grupa warstw" if len({collection for collection, _row in normalized}) > 1 else ""
+        return selection_group_label(
+            self.theme_doc_model,
+            entries,
+            media_predicate=self._is_media_related_item,
+        )
 
     def _all_canvas_elements(self) -> list[dict[str, Any]]:
-        if self.theme_doc_model is None:
-            return []
-        out: list[dict[str, Any]] = []
-        for collection in ("panels", "images", "texts", "stats"):
-            if collection == "panels":
-                items = self.theme_doc_model.get("background", {}).get("panels", [])
-            else:
-                items = self.theme_doc_model.get(collection, [])
-            if not isinstance(items, list):
-                continue
-            for idx, item in enumerate(items):
-                if not isinstance(item, dict):
-                    continue
-                if collection in {"images", "panels"}:
-                    rect = item.get("rect", [0, 0, 1, 1])
-                    if not isinstance(rect, list) or len(rect) != 4:
-                        continue
-                    rect_tuple = (int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]))
-                    label = str(item.get("id", f"{collection}_{idx}"))
-                else:
-                    x = int(item.get("x", 0))
-                    y = int(item.get("y", 0))
-                    width = max(1, int(item.get("box_width", 320)))
-                    height = max(1, int(item.get("box_height", 48)))
-                    rect_tuple = (x, y, width, height)
-                    label = str(item.get("id", f"{collection}_{idx}"))
-                out.append(
-                    {
-                        "collection": collection,
-                        "index": idx,
-                        "rect": rect_tuple,
-                        "label": label,
-                        "z_index": int(item.get("z_index", 0)),
-                        "visible": bool(item.get("visible", True)),
-                        "locked": bool(item.get("locked", False)),
-                    }
-                )
-        return sorted(out, key=lambda item: int(item.get("z_index", 0)))
+        return canvas_elements(self.theme_doc_model)
 
     def _update_preview_canvas_overlay(self) -> None:
         if self.theme_doc_model is None:
@@ -13319,6 +10900,7 @@ class TrofeoGui(QMainWindow):
             canvas_height=height,
             elements=elements,
             selected=selected_entries,
+            preserve_temporary_guides=getattr(self, "_designer_drag_active", False),
         )
 
     def _ensure_theme_doc_model(self) -> bool:
@@ -13487,54 +11069,23 @@ class TrofeoGui(QMainWindow):
         self._sync_designer_theme_gauge_from_model()
         self.refresh_designer_element_list()
         self._update_preview_canvas_overlay()
+        self._mark_theme_doc_dirty("json-to-designer")
         self.preview_theme_doc()
 
     def write_designer_to_json(self) -> None:
         if self.theme_doc_model is None:
             QMessageBox.information(self, "Info", "Designer nie ma jeszcze wczytanego theme.")
             return
-        self._set_theme_doc_editor_document(self.theme_doc_model)
-        self._schedule_theme_autosave()
+        self._schedule_theme_doc_editor_sync()
+        self._mark_theme_doc_dirty("designer-change")
 
     def _display_name_for_item(self, item: dict[str, Any], collection: str, idx: int) -> str:
-        ident = str(item.get("id", f"{collection}_{idx}")).strip() or f"{collection}_{idx}"
-        flags = []
-        if not bool(item.get("visible", True)):
-            flags.append("H")
-        if bool(item.get("locked", False)):
-            flags.append("L")
-        type_tag = {
-            "texts": "TXT",
-            "stats": "STA",
-            "images": "IMG",
-            "panels": "PNL",
-        }.get(collection, collection[:3].upper())
-        prefix = f"[{type_tag}{':' + ''.join(flags) if flags else ''}] "
-        if collection == "texts":
-            text = str(item.get("text", "")).strip() or "Tekst"
-            return f"{prefix}{text[:30]}"
-        if collection == "stats":
-            label = str(item.get("label", "")).strip()
-            source = str(item.get("source", "")).strip() or "stat"
-            display = str(item.get("display", "text")).strip().lower()
-            if display == "equalizer":
-                return f"{prefix}{(label or 'Graphic EQ')[:40]}"
-            title = label or self._humanize_stat_source(source)
-            return f"{prefix}{title[:40]}"
-        if collection == "panels":
-            rect = item.get("rect", [0, 0, 0, 0])
-            size = f"{rect[2]}x{rect[3]}" if isinstance(rect, list) and len(rect) == 4 else "panel"
-            return f"{prefix}Panel {idx + 1} [{size}]"
-        source = str(item.get("source", "")).strip()
-        if source == "media_cover":
-            return f"{prefix}Okładka Now Playing"
-        if source == "media_video_frame":
-            return f"{prefix}Kadr Media / Video"
-        if source == "analog_clock":
-            style = str(item.get("clock_style", "classic")).strip().title() or "Classic"
-            return f"{prefix}Zegar analogowy {style}"
-        name = Path(str(item.get("path", ""))).name or ident
-        return f"{prefix}{name[:34]}"
+        return designer_item_display_name(
+            item,
+            collection,
+            idx,
+            humanize_stat_source=self._humanize_stat_source,
+        )
 
     def _icon_for_collection(self, collection: str):
         style = self.style()
@@ -13594,10 +11145,10 @@ class TrofeoGui(QMainWindow):
         self.designer_element_list.blockSignals(True)
         self.designer_element_list.clear()
         collection = self._selected_collection()
-        selected_rows_for_collection = [
-            row for selected_collection, row in self._normalize_designer_selection(self.designer_cross_selection)
-            if selected_collection == collection
-        ]
+        selected_rows_for_collection = rows_for_collection(
+            self._normalize_designer_selection(self.designer_cross_selection),
+            collection,
+        )
         selected_row = -1
         for idx, item in enumerate(items):
             display = self._display_name_for_item(item, collection, idx)
@@ -13670,38 +11221,14 @@ class TrofeoGui(QMainWindow):
         self.filter_designer_element_list()
         self.update_layer_row_visuals()
 
+    def _refresh_designer_list_rows_for_entries(self, entries: list[tuple[str, int]]) -> None:
+        current_collection = self._selected_collection()
+        rows = sorted({row for collection, row in entries if collection == current_collection})
+        for row in rows:
+            self._refresh_designer_list_row(row)
+
     def _subtitle_for_item(self, item: dict[str, Any], collection: str) -> str:
-        if collection == "stats":
-            source = str(item.get("source", "")).strip()
-            label = str(item.get("label", "")).strip()
-            display = str(item.get("display", "text")).strip().lower()
-            if display == "equalizer":
-                return f"music equalizer • {int(item.get('equalizer_bars', 18))} bars"
-            source_text = label or source or "Statystyka"
-            return f"{source_text} • {int(item.get('font_size', 22))} px"
-        if collection == "images":
-            rect = item.get("rect", [0, 0, 0, 0])
-            fit = str(item.get("fit", "contain")).strip()
-            source = str(item.get("source", "")).strip()
-            if source == "media_cover":
-                if isinstance(rect, list) and len(rect) == 4:
-                    return f"dynamiczna okładka • {rect[2]}×{rect[3]}"
-                return "dynamiczna okładka"
-            if source == "media_video_frame":
-                if isinstance(rect, list) and len(rect) == 4:
-                    return f"dynamiczny media-backdrop • {rect[2]}×{rect[3]}"
-                return "dynamiczny media-backdrop"
-            if isinstance(rect, list) and len(rect) == 4:
-                return f"{rect[2]}×{rect[3]} • {fit}"
-            return fit
-        if collection == "panels":
-            rect = item.get("rect", [0, 0, 0, 0])
-            if isinstance(rect, list) and len(rect) == 4:
-                return f"{rect[2]}×{rect[3]} • radius {int(item.get('radius', 0))}"
-        if collection == "texts":
-            text = str(item.get("text", "")).strip()
-            return f"{int(item.get('font_size', 24))} px • {str(item.get('align', 'left'))} • {text[:24]}"
-        return ""
+        return designer_item_subtitle(item, collection)
 
     def update_layer_row_visuals(self) -> None:
         current = self.designer_element_list.currentRow()
@@ -13713,15 +11240,7 @@ class TrofeoGui(QMainWindow):
 
     def _select_designer_rows(self, rows: list[int]) -> None:
         rows = sorted(set(rows))
-        self.designer_element_list.blockSignals(True)
-        self.designer_element_list.clearSelection()
-        first_row = min(rows) if rows else -1
-        for row in rows:
-            item = self.designer_element_list.item(row)
-            if item is not None and not item.isHidden():
-                item.setSelected(True)
-        self.designer_element_list.setCurrentRow(first_row)
-        self.designer_element_list.blockSignals(False)
+        self.designer_element_list.select_rows(rows)
         collection = self._selected_collection()
         self._set_designer_selection_group([(collection, row) for row in rows], group_label="")
         self.update_layer_row_visuals()
@@ -13731,27 +11250,16 @@ class TrofeoGui(QMainWindow):
     def _activate_designer_list_row(self, row: int, modifiers: object) -> None:
         if not (0 <= row < self.designer_element_list.count()):
             return
-        item = self.designer_element_list.item(row)
-        if item is None:
-            return
         mods = modifiers if isinstance(modifiers, Qt.KeyboardModifiers) else Qt.NoModifier
-        self.designer_element_list.blockSignals(True)
-        if mods & (Qt.ControlModifier | Qt.MetaModifier):
-            item.setSelected(not item.isSelected())
-            self.designer_element_list.setCurrentRow(row)
-        elif mods & Qt.ShiftModifier and self.designer_element_list.currentRow() >= 0:
-            anchor = self.designer_element_list.currentRow()
-            self.designer_element_list.clearSelection()
-            for current_row in range(min(anchor, row), max(anchor, row) + 1):
-                current_item = self.designer_element_list.item(current_row)
-                if current_item is not None:
-                    current_item.setSelected(True)
-            self.designer_element_list.setCurrentRow(row)
-        else:
-            self.designer_element_list.clearSelection()
-            item.setSelected(True)
-            self.designer_element_list.setCurrentRow(row)
-        self.designer_element_list.blockSignals(False)
+        rows, current_row = row_activation_selection(
+            row=row,
+            count=self.designer_element_list.count(),
+            current_row=self.designer_element_list.currentRow(),
+            selected_rows=self._selected_rows(),
+            ctrl=bool(mods & (Qt.ControlModifier | Qt.MetaModifier)),
+            shift=bool(mods & Qt.ShiftModifier),
+        )
+        self.designer_element_list.select_rows(rows, current_row=current_row, skip_hidden=False)
         rows = self._selected_rows()
         self._set_designer_selection_group(
             [(self._selected_collection(), current_row) for current_row in rows],
@@ -13762,40 +11270,40 @@ class TrofeoGui(QMainWindow):
         self._update_preview_canvas_overlay()
 
     def _is_media_related_item(self, item: dict[str, Any], collection: str) -> bool:
-        ident = str(item.get("id", "")).strip().lower()
-        source = str(item.get("source", "")).strip().lower()
-        label = str(item.get("label", "")).strip().lower()
-        display = str(item.get("display", "")).strip().lower()
-        if source.startswith("media_") or source == "media_cover" or self._is_music_stat_source(source):
-            return True
-        if display in MUSIC_VISUAL_STAT_DISPLAYS:
-            return True
-        if ident.startswith("panel_media") or ident.startswith("stat_media") or ident.startswith("img_media"):
-            return True
-        if ident.startswith("panel_volume") or ident.startswith("stat_volume") or ident.startswith("panel_music_eq"):
-            return True
-        return "media" in ident or "now playing" in label or "equalizer" in ident or "graphic eq" in label
+        return is_media_related_layer(
+            item,
+            collection,
+            is_music_stat_source=self._is_music_stat_source,
+            music_visual_displays=MUSIC_VISUAL_STAT_DISPLAYS,
+        )
+
+    def _is_weather_related_item(self, item: dict[str, Any], collection: str) -> bool:
+        return is_weather_related_layer(
+            item,
+            collection,
+            is_weather_stat_source=self._is_weather_stat_source,
+            weather_image_sources=WEATHER_RELATED_IMAGE_SOURCES,
+            weather_panel_prefixes=WEATHER_RELATED_PANEL_ID_PREFIXES,
+        )
 
     def _item_matches_designer_domain(self, item: dict[str, Any], collection: str, domain: str) -> bool:
-        domain_key = str(domain).strip().lower() or "all"
-        if domain_key == "all":
-            return True
-        is_music = self._is_media_related_item(item, collection)
-        return is_music if domain_key == "music" else not is_music
+        return designer_item_matches_domain(
+            item,
+            collection,
+            domain,
+            is_music_stat_source=self._is_music_stat_source,
+            is_weather_stat_source=self._is_weather_stat_source,
+            music_visual_displays=MUSIC_VISUAL_STAT_DISPLAYS,
+            weather_image_sources=WEATHER_RELATED_IMAGE_SOURCES,
+            weather_panel_prefixes=WEATHER_RELATED_PANEL_ID_PREFIXES,
+        )
 
     def select_all_designer_elements(self) -> None:
-        rows = [row for row in range(self.designer_element_list.count()) if not self.designer_element_list.item(row).isHidden()]
-        self._select_designer_rows(rows)
+        self._select_designer_rows(self.designer_element_list.visible_rows())
 
     def invert_designer_selection(self) -> None:
         current = set(self._selected_rows())
-        rows: list[int] = []
-        for row in range(self.designer_element_list.count()):
-            item = self.designer_element_list.item(row)
-            if item is None or item.isHidden():
-                continue
-            if row not in current:
-                rows.append(row)
+        rows = [row for row in self.designer_element_list.visible_rows() if row not in current]
         self._select_designer_rows(rows)
 
     def select_media_designer_group(self) -> None:
@@ -13820,15 +11328,8 @@ class TrofeoGui(QMainWindow):
             target_collection = first_collection
             current_rows = [row for collection, row in entries if collection == target_collection]
         self._set_designer_selection_group(entries, group_label="Media Player")
-        self.designer_element_list.blockSignals(True)
-        self.designer_element_list.clearSelection()
         first_row = min(current_rows) if current_rows else -1
-        for row in current_rows:
-            item = self.designer_element_list.item(row)
-            if item is not None and not item.isHidden():
-                item.setSelected(True)
-        self.designer_element_list.setCurrentRow(first_row)
-        self.designer_element_list.blockSignals(False)
+        self.designer_element_list.select_rows(current_rows, current_row=first_row)
         self.update_layer_row_visuals()
         self.load_selected_designer_item()
         self._update_preview_canvas_overlay()
@@ -13838,35 +11339,21 @@ class TrofeoGui(QMainWindow):
         domain = self._designer_domain_mode()
         collection = self._selected_collection()
         items = self._current_theme_items() if self.theme_doc_model is not None else []
+        hidden_rows: set[int] = set()
         for row in range(self.designer_element_list.count()):
             item = self.designer_element_list.item(row)
-            widget = self.designer_element_list.itemWidget(item)
-            hay = ""
-            if isinstance(widget, LayerRowWidget):
-                hay = " ".join(
-                    [
-                        widget.title_label.text(),
-                        widget.subtitle_label.text(),
-                        widget.badge_label.text(),
-                    ]
-                ).lower()
-            else:
-                hay = (item.text() or "").lower()
+            hay = self.designer_element_list.row_search_text(row)
             model_item = items[row] if 0 <= row < len(items) else {}
             domain_hidden = not self._item_matches_designer_domain(model_item, collection, domain)
             text_hidden = bool(needle) and needle not in hay
-            item.setHidden(domain_hidden or text_hidden)
+            hidden = domain_hidden or text_hidden
+            if hidden:
+                hidden_rows.add(row)
+            item.setHidden(hidden)
         current_row = self.designer_element_list.currentRow()
-        if 0 <= current_row < self.designer_element_list.count():
-            current_item = self.designer_element_list.item(current_row)
-            if current_item is not None and current_item.isHidden():
-                replacement = -1
-                for row in range(self.designer_element_list.count()):
-                    candidate = self.designer_element_list.item(row)
-                    if candidate is not None and not candidate.isHidden():
-                        replacement = row
-                        break
-                self.designer_element_list.setCurrentRow(replacement)
+        replacement = replacement_visible_row(current_row, hidden_rows, self.designer_element_list.count())
+        if replacement != current_row:
+            self.designer_element_list.setCurrentRow(replacement)
         self._update_designer_element_list_height()
 
     def _update_designer_element_list_height(self) -> None:
@@ -13891,11 +11378,12 @@ class TrofeoGui(QMainWindow):
         top_splitter = getattr(self, "designer_top_splitter", None)
         if top_splitter is not None:
             if preset_name == "canvas":
-                top_splitter.setSizes([1040, 300])
+                top_splitter.setSizes([1040, 240])
             elif preset_name == "compact":
-                top_splitter.setSizes([900, 250])
+                top_splitter.setSizes([900, 220])
             else:
-                top_splitter.setSizes([980, 320])
+                top_splitter.setSizes([980, 260])
+            self._clamp_designer_splitter_later()
 
     def apply_designer_mode(self, mode: str) -> None:
         simple = str(mode).lower() == "simple"
@@ -13936,6 +11424,94 @@ class TrofeoGui(QMainWindow):
                 current_collection = self._selected_collection() if hasattr(self, "designer_kind_combo") else ""
                 self.inspector_tabs.setTabVisible(image_idx, (not simple) or current_collection == "images")
         self._refresh_inspector_music_layout()
+        self._refresh_inspector_weather_layout()
+        self._clamp_designer_splitter_later()
+
+    def _designer_splitter_limits(self) -> tuple[int, int]:
+        return designer_splitter_limits(int(self.height() or 0))
+
+    def _designer_inspector_min_height(self) -> int:
+        return designer_inspector_min_height(int(self.height() or 0))
+
+    def _designer_canvas_content_height(self) -> int:
+        preview_scroll = getattr(self, "designer_preview_scroll", None)
+        if preview_scroll is None:
+            return 0
+        preview_h = max(int(preview_scroll.minimumHeight()), int(preview_scroll.maximumHeight()))
+        toolbar_h = 34
+        status_bar = getattr(self, "preview_status_bar", None)
+        status_h = int(status_bar.maximumHeight()) if status_bar is not None else 30
+        return preview_h + toolbar_h + status_h + 8
+
+    def _clamp_designer_splitter_later(self) -> None:
+        if getattr(self, "_designer_drag_active", False):
+            self._designer_splitter_clamp_after_drag = True
+            return
+        if getattr(self, "_designer_layout_update_depth", 0) > 0:
+            self._designer_splitter_clamp_after_layout_update = True
+            return
+        self._designer_splitter_clamp_pending = True
+        timer = getattr(self, "designer_splitter_clamp_timer", None)
+        if timer is None:
+            QTimer.singleShot(16, self._run_pending_designer_splitter_clamp)
+            return
+        if not timer.isActive():
+            timer.start(16)
+
+    def _begin_designer_layout_update(self) -> None:
+        self._designer_layout_update_depth = int(getattr(self, "_designer_layout_update_depth", 0)) + 1
+
+    def _end_designer_layout_update(self) -> None:
+        depth = max(0, int(getattr(self, "_designer_layout_update_depth", 0)) - 1)
+        self._designer_layout_update_depth = depth
+        if depth > 0:
+            return
+        if getattr(self, "_designer_splitter_clamp_after_layout_update", False):
+            self._designer_splitter_clamp_after_layout_update = False
+            self._clamp_designer_splitter_later()
+
+    def _run_pending_designer_splitter_clamp(self) -> None:
+        if not getattr(self, "_designer_splitter_clamp_pending", False):
+            return
+        if getattr(self, "_designer_drag_active", False):
+            self._designer_splitter_clamp_pending = False
+            self._designer_splitter_clamp_after_drag = True
+            return
+        self._designer_splitter_clamp_pending = False
+        self._clamp_designer_splitter()
+
+    def _clamp_designer_splitter(self) -> None:
+        splitter = getattr(self, "designer_top_splitter", None)
+        inspector = getattr(self, "designer_inspector_container", None)
+        canvas = getattr(self, "designer_canvas_workbench", None)
+        if splitter is None or inspector is None or canvas is None or splitter.count() < 2:
+            return
+        min_canvas, max_inspector = self._designer_splitter_limits()
+        min_inspector = min(max_inspector, self._designer_inspector_min_height())
+        max_canvas = designer_canvas_max_height(
+            int(self.height() or 0),
+            self._designer_canvas_content_height(),
+            min_canvas,
+        )
+        canvas.setMinimumHeight(min_canvas)
+        canvas.setMaximumHeight(max_canvas)
+        inspector.setMinimumHeight(min_inspector)
+        inspector.setMaximumHeight(max_inspector)
+        sizes = splitter.sizes()
+        next_sizes = clamp_designer_splitter_sizes(
+            sizes,
+            min_canvas=min_canvas,
+            max_canvas=max_canvas,
+            max_inspector=max_inspector,
+            min_inspector=min_inspector,
+        )
+        if next_sizes is None:
+            return
+        splitter.blockSignals(True)
+        try:
+            splitter.setSizes(next_sizes)
+        finally:
+            splitter.blockSignals(False)
 
     def _set_designer_inspector_docked_bottom(self, dock_bottom: bool) -> None:
         container = getattr(self, "designer_inspector_container", None)
@@ -13978,6 +11554,14 @@ class TrofeoGui(QMainWindow):
         self._designer_drag_active = True
         if hasattr(self, "preview_debounce"):
             self.preview_debounce.stop()
+        # A render request started before the drag can return after the model
+        # has moved. Invalidate it so the preview cannot jump back visually.
+        self._preview_request_seq += 1
+        self._preview_request_active_seq = self._preview_request_seq
+        clamp_timer = getattr(self, "designer_splitter_clamp_timer", None)
+        if clamp_timer is not None and clamp_timer.isActive():
+            clamp_timer.stop()
+        self._designer_splitter_clamp_pending = False
         self.push_designer_history()
 
     def _restore_history_snapshot(self, snapshot: dict[str, Any]) -> None:
@@ -14024,17 +11608,37 @@ class TrofeoGui(QMainWindow):
         return True
 
     def _selected_item_rect(self, item: dict[str, Any], collection: str) -> tuple[int, int, int, int]:
-        if collection in {"images", "panels"}:
-            rect = item.get("rect", [0, 0, 1, 1])
-            if isinstance(rect, list) and len(rect) == 4:
-                return int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])
-            return 0, 0, 1, 1
-        return (
-            int(item.get("x", 0)),
-            int(item.get("y", 0)),
-            max(1, int(item.get("box_width", 320))),
-            max(1, int(item.get("box_height", 48))),
-        )
+        return item_rect(item, collection)
+
+    def _selected_group_bounds(self, selected: list[tuple[str, int, dict[str, Any]]]) -> tuple[int, int, int, int] | None:
+        return group_bounds(selected)
+
+    def _apply_item_rect(self, collection: str, item: dict[str, Any], rect: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        return apply_item_rect(item, collection, rect, snap=self._snap_value)
+
+    def _apply_item_position(self, collection: str, item: dict[str, Any], x: int, y: int) -> tuple[int, int, int, int]:
+        return apply_item_position(item, collection, x, y, snap=self._snap_value)
+
+    def _set_spin_value_if_changed(self, spin: QSpinBox | QDoubleSpinBox, value: int | float) -> bool:
+        if isinstance(spin, QDoubleSpinBox):
+            next_value = float(value)
+            if abs(float(spin.value()) - next_value) < 0.0001:
+                return False
+            spin.setValue(next_value)
+            return True
+        next_value = int(value)
+        if int(spin.value()) == next_value:
+            return False
+        spin.setValue(next_value)
+        return True
+
+    def _set_geometry_spin_values(self, rect: tuple[int, int, int, int]) -> bool:
+        changed = False
+        changed |= self._set_spin_value_if_changed(self.designer_x_spin, int(rect[0]))
+        changed |= self._set_spin_value_if_changed(self.designer_y_spin, int(rect[1]))
+        changed |= self._set_spin_value_if_changed(self.designer_w_spin, int(rect[2]))
+        changed |= self._set_spin_value_if_changed(self.designer_h_spin, int(rect[3]))
+        return changed
 
     def _selected_nudge_step(self) -> int:
         combo = getattr(self, "designer_nudge_step_combo", None)
@@ -14071,7 +11675,7 @@ class TrofeoGui(QMainWindow):
         for selected_collection, _row, item in selected:
             if bool(item.get("locked", False)):
                 continue
-            if selected_collection in {"images", "panels"}:
+            if selected_collection in {"images", "panels", "widgets"}:
                 rect = item.get("rect", [0, 0, 1, 1])
                 if isinstance(rect, list) and len(rect) == 4:
                     item["rect"] = [
@@ -14088,11 +11692,13 @@ class TrofeoGui(QMainWindow):
         actual_dy = int(first_after[1] - first_before[1])
         self.preview_delta_label.setText(f"Δx: {actual_dx:+d}, Δy: {actual_dy:+d}")
         self.write_designer_to_json()
-        self.refresh_designer_element_list()
         if first_collection != self._selected_collection():
             combo_index = self.designer_kind_combo.findData(first_collection)
             if combo_index >= 0 and combo_index != self.designer_kind_combo.currentIndex():
                 self.designer_kind_combo.setCurrentIndex(combo_index)
+        self._refresh_designer_list_rows_for_entries(
+            [(collection, row) for collection, row, _item in selected]
+        )
         if 0 <= first_row < self.designer_element_list.count():
             self.designer_element_list.setCurrentRow(first_row)
         self._update_preview_canvas_overlay()
@@ -14111,11 +11717,10 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         items = self._current_theme_items()
-        if not (0 <= row < len(items)):
+        if not toggle_item_bool(items, row, "visible", True):
             return
-        items[row]["visible"] = not bool(items[row].get("visible", True))
         self.write_designer_to_json()
-        self.refresh_designer_element_list()
+        self._refresh_designer_list_row(row)
         self.designer_element_list.setCurrentRow(row)
         self._update_preview_canvas_overlay()
         self.schedule_preview_theme_doc()
@@ -14124,11 +11729,10 @@ class TrofeoGui(QMainWindow):
         if self.theme_doc_model is None:
             return
         items = self._current_theme_items()
-        if not (0 <= row < len(items)):
+        if not toggle_item_bool(items, row, "locked", False):
             return
-        items[row]["locked"] = not bool(items[row].get("locked", False))
         self.write_designer_to_json()
-        self.refresh_designer_element_list()
+        self._refresh_designer_list_row(row)
         self.designer_element_list.setCurrentRow(row)
         self._update_preview_canvas_overlay()
         self.schedule_preview_theme_doc()
@@ -14140,23 +11744,15 @@ class TrofeoGui(QMainWindow):
         if not items:
             return
         self.push_designer_history()
-        by_id = {str(item.get("id", "")): item for item in items}
-        reordered: list[dict[str, Any]] = []
-        for row in range(self.designer_element_list.count()):
-            list_item = self.designer_element_list.item(row)
-            ident = str(list_item.data(Qt.UserRole) or "")
-            target = by_id.get(ident)
-            if target is not None:
-                reordered.append(target)
-        if len(reordered) != len(items):
+        ordered_ids = self.designer_element_list.row_ids()
+        reordered = reorder_items_by_ids(items, ordered_ids)
+        if reordered is None:
             return
         collection = self._selected_collection()
         if collection == "panels":
             self.theme_doc_model.setdefault("background", {})["panels"] = reordered
         else:
             self.theme_doc_model[collection] = reordered
-        for idx, item in enumerate(reordered):
-            item["z_index"] = idx
         current = self.designer_element_list.currentRow()
         self.write_designer_to_json()
         self.refresh_designer_element_list()
@@ -14199,12 +11795,35 @@ class TrofeoGui(QMainWindow):
         if idx >= 0:
             self.inspector_tabs.setTabVisible(idx, enabled)
 
+    def _inspector_tab_is_visible(self, widget: QWidget | None) -> bool:
+        tabs = getattr(self, "inspector_tabs", None)
+        if tabs is None or widget is None:
+            return False
+        idx = tabs.indexOf(widget)
+        return bool(idx >= 0 and tabs.isTabVisible(idx))
+
+    def _set_inspector_context_tab(self, preferred_widget: QWidget | None, *, force: bool = False) -> None:
+        tabs = getattr(self, "inspector_tabs", None)
+        if tabs is None or preferred_widget is None:
+            return
+        if getattr(self, "_designer_drag_active", False) and not force:
+            return
+        if should_switch_inspector_tab(
+            current_visible=self._inspector_tab_is_visible(tabs.currentWidget()),
+            preferred_visible=self._inspector_tab_is_visible(preferred_widget),
+            force=force,
+        ):
+            tabs.setCurrentWidget(preferred_widget)
+
     def _set_form_row_visible(self, layout: QFormLayout, label_widget: QWidget, field_widget: QWidget, visible: bool) -> None:
+        changed = False
         if label_widget is not None:
+            changed = changed or label_widget.isVisible() != visible
             label_widget.setVisible(visible)
         if field_widget is not None:
+            changed = changed or field_widget.isVisible() != visible
             field_widget.setVisible(visible)
-        if layout is not None:
+        if layout is not None and changed:
             layout.invalidate()
 
     def _set_field_enabled(self, widget: QWidget, enabled: bool) -> None:
@@ -14299,6 +11918,8 @@ class TrofeoGui(QMainWindow):
             want_music_tab = any(pid.startswith(p) for p in MUSIC_RELATED_PANEL_ID_PREFIXES)
         elif coll == "images" and item is not None:
             want_music_tab = str(item.get("source", "")).strip() in MUSIC_RELATED_IMAGE_SOURCES
+        elif coll == "widgets" and item is not None:
+            want_music_tab = str(item.get("kind", "")).strip().lower().startswith("media_")
 
         if coll == "stats" and show_music_stat_rows and not simple_mode:
             self._move_stat_binding_rows_to_music()
@@ -14319,6 +11940,11 @@ class TrofeoGui(QMainWindow):
             and item is not None
             and str(item.get("source", "")).strip() in MUSIC_RELATED_IMAGE_SOURCES
         )
+        hint_widget = (
+            coll == "widgets"
+            and item is not None
+            and str(item.get("kind", "")).strip().lower().startswith("media_")
+        )
         if hasattr(self, "inspector_music_hint"):
             if hint_panel:
                 self.inspector_music_hint.setText(
@@ -14334,6 +11960,13 @@ class TrofeoGui(QMainWindow):
                         "Okładka / tło mediów: kadrowanie i przezroczystość w zakładce Obraz; zsynchronizowany korektor widma pojawi się tu później.",
                     )
                 )
+            elif hint_widget:
+                self.inspector_music_hint.setText(
+                    self._tr(
+                        "Composite Now Playing widget: move and scale it as one element; tune title, artist, details and panel styling here.",
+                        "Złożony widget Now Playing: przesuwasz i skalujesz go jako jeden element; tutaj ustawiasz tytuł, wykonawcę, detale i panel.",
+                    )
+                )
             elif coll == "stats" and item is not None and str(item.get("display", "")).strip().lower() == "equalizer":
                 self.inspector_music_hint.setText(
                     self._tr(
@@ -14343,7 +11976,7 @@ class TrofeoGui(QMainWindow):
                 )
             else:
                 self.inspector_music_hint.clear()
-            show_music_hint = bool(tab_shown and (hint_panel or hint_image))
+            show_music_hint = bool(tab_shown and (hint_panel or hint_image or hint_widget))
             if coll == "stats" and item is not None and str(item.get("display", "")).strip().lower() == "equalizer":
                 show_music_hint = bool(tab_shown)
             self.inspector_music_hint.setVisible(show_music_hint)
@@ -14361,7 +11994,88 @@ class TrofeoGui(QMainWindow):
             )
             self.inspector_music_spectrum_placeholder.setVisible(bool(tab_shown and not show_eq_placeholder))
 
+        show_media_widget_fields = bool(tab_shown and coll == "widgets" and item is not None and str(item.get("kind", "")).strip().lower().startswith("media_"))
+        music_layout = self.inspector_music_layout
+        for row_label, widget in (
+            (self.row_music_widget_options, self.music_widget_options_row),
+            (self.row_music_widget_title_font, self.widget_title_font_spin),
+            (self.row_music_widget_artist_font, self.widget_body_font_spin),
+            (self.row_music_widget_detail_font, self.widget_detail_font_spin),
+            (self.row_music_widget_title_color, self.widget_title_color_row),
+            (self.row_music_widget_artist_color, self.widget_body_color_row),
+            (self.row_music_widget_detail_color, self.widget_detail_color_row),
+            (self.row_music_widget_panel_color, self.widget_panel_color_row),
+        ):
+            self._set_form_row_visible(music_layout, row_label, widget, show_media_widget_fields)
+
         self._sync_stat_binding_row_visibility(coll)
+
+    def _refresh_inspector_weather_layout(self) -> None:
+        if not hasattr(self, "inspector_weather"):
+            return
+        weather_idx = self.inspector_tabs.indexOf(self.inspector_weather)
+        multi = self._selected_items_multi_any()
+        coll = self._selected_collection()
+        want_weather_tab = False
+        weather_source = ""
+        weather_format = "{value}"
+        if len(multi) == 1:
+            _c, _r, item = multi[0]
+            if coll == "stats":
+                src = str(item.get("source", "")).strip()
+                want_weather_tab = src in WEATHER_STAT_SOURCES
+                weather_source = src
+                weather_format = str(item.get("format", "{value}") or "{value}")
+            elif coll == "images":
+                src = str(item.get("source", "")).strip()
+                want_weather_tab = src in WEATHER_RELATED_IMAGE_SOURCES or (src.startswith("weather_day_") and src.endswith("_icon"))
+            elif coll == "panels":
+                pid = str(item.get("id", "")).strip()
+                want_weather_tab = any(pid.startswith(prefix) for prefix in WEATHER_RELATED_PANEL_ID_PREFIXES)
+            elif coll == "widgets":
+                want_weather_tab = str(item.get("kind", "")).strip().lower().startswith("weather_")
+        if weather_idx >= 0:
+            self.inspector_tabs.setTabVisible(weather_idx, bool(want_weather_tab))
+        show_stat_fields = bool(want_weather_tab and coll == "stats")
+        show_city_fields = bool(want_weather_tab and coll == "widgets")
+        show_weather_widget_fields = show_city_fields
+        for row_widget in (
+            getattr(self, "row_weather_city", None),
+            getattr(self, "weather_city_row", None),
+        ):
+            if row_widget is not None:
+                row_widget.setVisible(show_city_fields)
+        weather_layout = getattr(self, "inspector_weather_layout", None)
+        self._set_form_row_visible(
+            weather_layout,
+            getattr(self, "row_weather_source", None),
+            getattr(self, "weather_binding_row", None),
+            show_stat_fields,
+        )
+        self._set_form_row_visible(
+            weather_layout,
+            getattr(self, "row_weather_tools", None),
+            getattr(self, "weather_tools_row", None),
+            bool(want_weather_tab and not show_weather_widget_fields),
+        )
+        for row_label, widget in (
+            (self.row_weather_widget_fonts, self.weather_widget_fonts_row),
+            (self.row_weather_widget_colors, self.weather_widget_colors_row),
+            (self.row_weather_widget_transparent_bg, self.weather_widget_transparent_bg_chk),
+            (self.row_weather_widget_animate_icons, self.weather_widget_animate_icons_chk),
+        ):
+            self._set_form_row_visible(weather_layout, row_label, widget, show_weather_widget_fields)
+        if show_stat_fields and hasattr(self, "weather_source_combo"):
+            self._designer_updating = True
+            try:
+                self._populate_weather_source_combo(weather_source)
+                idx = self.weather_format_combo.findData(weather_format)
+                if idx < 0 and weather_format:
+                    self.weather_format_combo.addItem(weather_format, weather_format)
+                    idx = self.weather_format_combo.findData(weather_format)
+                self.weather_format_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            finally:
+                self._designer_updating = False
 
     def preview_zoom_fit(self) -> None:
         self.preview_label.set_zoom_mode("fit")
@@ -14370,27 +12084,36 @@ class TrofeoGui(QMainWindow):
         self.preview_label.set_zoom_percent(percent)
 
     def _apply_visibility_for_collection(self, collection: str) -> None:
+        self._begin_designer_layout_update()
+        try:
+            self._apply_visibility_for_collection_now(collection)
+        finally:
+            self._end_designer_layout_update()
+
+    def _apply_visibility_for_collection_now(self, collection: str) -> None:
         is_text = collection == "texts"
         is_stat = collection == "stats"
         is_image = collection == "images"
         is_panel = collection == "panels"
-        supports_motion = collection in {"texts", "stats", "images", "panels"}
+        is_widget = collection == "widgets"
+        supports_motion = collection in {"texts", "stats", "images", "panels", "widgets"}
 
         self._set_tab_enabled_if_present(self.inspector_general, True)
         self._set_tab_enabled_if_present(self.inspector_content, is_text or is_stat)
-        self._set_tab_enabled_if_present(self.inspector_appearance, is_text or is_stat or is_image or is_panel)
+        self._set_tab_enabled_if_present(self.inspector_appearance, is_text or is_stat or is_image or is_panel or is_widget)
         self._set_tab_enabled_if_present(self.inspector_gauge, is_stat)
         self._set_tab_enabled_if_present(self.inspector_geometry, True)
         self._set_tab_enabled_if_present(self.inspector_image, is_image)
+        self._set_tab_enabled_if_present(self.inspector_weather, is_widget)
 
-        self._set_form_row_visible(inspector_content_layout := self.inspector_content.layout(), self.row_content_text, self.designer_text_edit, is_text)
+        self._set_form_row_visible(inspector_content_layout := self.inspector_content_layout, self.row_content_text, self.designer_text_edit, is_text)
         self._set_form_row_visible(inspector_content_layout, self.row_content_label, self.designer_label_edit, is_stat)
         # Stat binding rows (source, format, …) live on Content or Music tab — visibility via _refresh_inspector_music_layout().
         self.designer_source_combo.setToolTip("Źródło danych dla tej statystyki.")
         self.designer_format_edit.setPlaceholderText("{value}")
         self.designer_label_edit.setPlaceholderText("Np. CPU, RAM, Temp")
 
-        appearance_layout = self.inspector_appearance.layout()
+        appearance_layout = self.inspector_appearance_layout
         self._set_form_row_visible(appearance_layout, self.row_appearance_font, self.font_row, is_text or is_stat)
         self._set_form_row_visible(appearance_layout, self.row_appearance_font_style, self.font_style_row, is_text or is_stat)
         self._set_form_row_visible(appearance_layout, self.row_appearance_align, self.designer_align_combo, is_text or is_stat)
@@ -14402,26 +12125,36 @@ class TrofeoGui(QMainWindow):
         self._set_form_row_visible(appearance_layout, self.row_sparkline_points, self.designer_sparkline_points_spin, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_sparkline_fill_opacity, self.designer_sparkline_fill_opacity_spin, is_stat)
         self._set_form_row_visible(appearance_layout, self.row_sparkline_show_points, self.designer_sparkline_show_points_chk, is_stat)
-        self._set_form_row_visible(appearance_layout, self.row_panel_fill, self.panel_fill_row, is_panel)
-        self._set_form_row_visible(appearance_layout, self.row_panel_opacity, self.panel_opacity_spin, is_panel)
-        self._set_form_row_visible(appearance_layout, self.row_panel_radius, self.panel_radius_spin, is_panel)
+        self._set_form_row_visible(appearance_layout, self.row_panel_fill, self.panel_style_row, is_panel or is_widget)
+        if hasattr(self, "panel_fill_compact_label"):
+            self.panel_fill_compact_label.setVisible(is_panel)
+        if hasattr(self, "panel_fill_row"):
+            self.panel_fill_row.setVisible(is_panel)
+        if hasattr(self, "panel_radius_compact_label"):
+            self.panel_radius_compact_label.setVisible(is_panel)
+        if hasattr(self, "panel_radius_spin"):
+            self.panel_radius_spin.setVisible(is_panel)
 
-        geometry_layout = self.inspector_geometry.layout()
+        geometry_layout = self.inspector_geometry_layout
         self._set_form_row_visible(geometry_layout, self.row_geometry_x, self.designer_x_spin, True)
         self._set_form_row_visible(geometry_layout, self.row_geometry_y, self.designer_y_spin, True)
         self._set_form_row_visible(geometry_layout, self.row_geometry_w, self.designer_w_spin, True)
         self._set_form_row_visible(geometry_layout, self.row_geometry_h, self.designer_h_spin, True)
+        self._set_form_row_visible(
+            geometry_layout,
+            getattr(self, "row_geometry_group_bounds", None),
+            getattr(self, "geometry_group_bounds_label", None),
+            False,
+        )
         self._set_form_row_visible(geometry_layout, self.row_motion_enabled, self.motion_enabled_chk, supports_motion)
         self._set_form_row_visible(geometry_layout, self.row_motion_range, self.motion_range_row, supports_motion)
         self._set_form_row_visible(geometry_layout, self.row_motion_target_x, self.motion_target_x_spin, supports_motion)
         self._set_form_row_visible(geometry_layout, self.row_motion_target_y, self.motion_target_y_spin, supports_motion)
         self._set_form_row_visible(geometry_layout, self.row_motion_target_opacity, self.motion_target_opacity_spin, supports_motion)
         self._set_form_row_visible(geometry_layout, self.row_motion_actions, self.motion_actions_row, supports_motion)
-        image_layout = self.inspector_image.layout()
+        image_layout = self.inspector_image_layout
         self._set_form_row_visible(image_layout, self.row_image_path, self.designer_path_row, is_image)
-        self._set_form_row_visible(image_layout, self.row_image_fit, self.designer_fit_combo, is_image)
-        self._set_form_row_visible(image_layout, self.row_image_opacity, self.designer_opacity_spin, is_image)
-        self._set_form_row_visible(image_layout, self.row_image_rotation, self.designer_rotation_spin, is_image)
+        self._set_form_row_visible(image_layout, self.row_image_fit, self.image_transform_row, is_image)
         self._set_form_row_visible(image_layout, self.row_image_import, self.designer_import_image_btn, is_image)
         self._set_form_row_visible(image_layout, self.row_image_actions, self.designer_image_actions_row, is_image)
         self._set_form_row_visible(image_layout, self.row_image_preview, self.designer_image_preview_label, is_image)
@@ -14432,21 +12165,44 @@ class TrofeoGui(QMainWindow):
 
         if collection == "texts":
             self.preview_info_label.setText("Tekst: kliknij na podglądzie, aby ustawić pozycję napisu.")
-            self.inspector_tabs.setCurrentWidget(self.inspector_content)
+            self._set_inspector_context_tab(self.inspector_content)
         elif collection == "stats":
             self.preview_info_label.setText("Statystyka: wybierz źródło danych i ustaw pozycję klikając na podglądzie.")
-            self.inspector_tabs.setCurrentWidget(self.inspector_content)
+            self._set_inspector_context_tab(self.inspector_content)
         elif collection == "panels":
             self.preview_info_label.setText("Panel: przeciągnij, aby przesunąć. Uchwyt w rogu zmienia rozmiar.")
-            self.inspector_tabs.setCurrentWidget(self.inspector_appearance)
+            self._set_inspector_context_tab(self.inspector_appearance)
+        elif collection == "widgets":
+            selected = self._selected_items_multi_any()
+            kind = str(selected[0][2].get("kind", "")).strip().lower() if len(selected) == 1 else ""
+            if kind.startswith("weather_"):
+                self.preview_info_label.setText("Widget pogody: przesuwasz i skalujesz całość, szczegóły ustawiasz w zakładce Weather.")
+                self._set_inspector_context_tab(self.inspector_weather)
+            elif kind.startswith("media_"):
+                self.preview_info_label.setText("Widget muzyki: przesuwasz i skalujesz całość, szczegóły ustawiasz w zakładce Music.")
+                self._set_inspector_context_tab(self.inspector_music)
+            else:
+                self.preview_info_label.setText("Widget: przesuwasz i skalujesz całość jako jeden komponent.")
+                self._set_inspector_context_tab(self.inspector_geometry)
         else:
             self.preview_info_label.setText("Obraz: kliknij na podglądzie, aby ustawić pozycję albo zmień parametry w zakładce Obraz.")
-            self.inspector_tabs.setCurrentWidget(self.inspector_image)
+            self._set_inspector_context_tab(self.inspector_image)
 
         if collection == "stats":
             self._update_gauge_stat_inspector_visibility()
+        self._clamp_designer_splitter_later()
 
     def load_selected_designer_item(self) -> None:
+        if getattr(self, "_designer_drag_active", False):
+            drag_target = getattr(self, "_designer_drag_target", None)
+            if drag_target is not None:
+                self._update_preview_canvas_overlay()
+            return
+        if getattr(self, "_designer_selection_refresh_pending", False):
+            self._designer_selection_refresh_pending = False
+            timer = getattr(self, "designer_selection_refresh_timer", None)
+            if timer is not None and timer.isActive():
+                timer.stop()
         collection = self._selected_collection()
         self._apply_visibility_for_collection(collection)
         self.preview_delta_label.setText("Δx: 0, Δy: 0")
@@ -14474,6 +12230,16 @@ class TrofeoGui(QMainWindow):
                 self.inspector_selection_summary.setText(
                     "Dostępne są wspólne ustawienia: widoczność, blokada, warstwa i przesuwanie całej grupy."
                 )
+                bounds = self._selected_group_bounds(selected_multi_any)
+                if bounds is not None and hasattr(self, "geometry_group_bounds_label"):
+                    bx, by, bw, bh = bounds
+                    self.geometry_group_bounds_label.setText(f"x: {bx}, y: {by}, w: {bw}, h: {bh}")
+                    self._set_form_row_visible(
+                        self.inspector_geometry_layout,
+                        self.row_geometry_group_bounds,
+                        self.geometry_group_bounds_label,
+                        True,
+                    )
                 common_z = {int(sel_item.get('z_index', 0)) for _sel_collection, _sel_row, sel_item in selected_multi_any}
                 self.designer_id_edit.clear()
                 self.designer_text_edit.clear()
@@ -14489,7 +12255,7 @@ class TrofeoGui(QMainWindow):
                 self._clear_stat_sparkline_fields()
                 self._clear_stat_equalizer_fields()
                 self._load_motion_track_fields(None, collection)
-                self.inspector_tabs.setCurrentWidget(self.inspector_general)
+                self._set_inspector_context_tab(self.inspector_general)
                 self._update_designer_mouse_tools_availability()
                 return
 
@@ -14621,6 +12387,16 @@ class TrofeoGui(QMainWindow):
                 self.designer_equalizer_bars_spin.setValue(int(active_item.get("equalizer_bars", 18)))
                 self.designer_equalizer_gap_spin.setValue(int(active_item.get("equalizer_gap", 4)))
                 self.designer_equalizer_mirror_chk.setChecked(bool(active_item.get("equalizer_mirror", False)))
+                eq_preset = str(active_item.get("equalizer_color_preset", "custom")).strip().lower() or "custom"
+                eq_idx = self.designer_equalizer_preset_combo.findData(eq_preset)
+                self.designer_equalizer_preset_combo.setCurrentIndex(eq_idx if eq_idx >= 0 else 0)
+                track_color = active_item.get("track_color", [34, 44, 58, 210])
+                track_alpha = track_color[3] if isinstance(track_color, list) and len(track_color) > 3 else 255
+                self.designer_equalizer_transparent_bg_chk.setChecked(int(track_alpha) <= 0)
+                self.designer_equalizer_threshold_spin.setValue(float(active_item.get("equalizer_threshold", 1.0)) * 100.0)
+                self.designer_equalizer_threshold_color_edit.setText(
+                    json.dumps(active_item.get("equalizer_threshold_color", [255, 86, 96, 255]), ensure_ascii=False)
+                )
             else:
                 self.designer_stat_stroke_width_spin.setValue(12)
                 self._clear_stat_gauge_fields()
@@ -14644,14 +12420,20 @@ class TrofeoGui(QMainWindow):
                 self.panel_fill_edit.setText(json.dumps(active_item.get("fill", [0, 0, 0]), ensure_ascii=False))
                 self.panel_opacity_spin.setValue(float(active_item.get("opacity", 1.0)))
                 self.panel_radius_spin.setValue(int(active_item.get("radius", 0)))
+            elif active_collection == "widgets":
+                self.panel_fill_edit.clear()
+                self.panel_opacity_spin.setValue(float(active_item.get("opacity", 1.0)))
+                self.panel_radius_spin.setValue(0)
             else:
                 self.panel_fill_edit.clear()
                 self.panel_opacity_spin.setValue(1.0)
                 self.panel_radius_spin.setValue(0)
+            self._load_widget_style_fields(active_item if active_collection == "widgets" else None)
             self._load_motion_track_fields(active_item, active_collection)
         finally:
             self._designer_updating = False
         self._refresh_inspector_music_layout()
+        self._refresh_inspector_weather_layout()
         self._refresh_all_color_previews()
         preview_image_path = ""
         if active_item is not None:
@@ -14759,9 +12541,92 @@ class TrofeoGui(QMainWindow):
         self.designer_equalizer_bars_spin.setValue(18)
         self.designer_equalizer_gap_spin.setValue(4)
         self.designer_equalizer_mirror_chk.setChecked(False)
+        self.designer_equalizer_transparent_bg_chk.setChecked(True)
+        self.designer_equalizer_preset_combo.setCurrentIndex(0)
+        self.designer_equalizer_threshold_spin.setValue(100.0)
+        self.designer_equalizer_threshold_color_edit.setText(json.dumps([255, 86, 96, 255], ensure_ascii=False))
+
+    def _load_widget_style_fields(self, item: dict[str, Any] | None) -> None:
+        if item is None or str(item.get("kind", "")).strip().lower() not in {"weather_current", "weather_forecast_7d", "media_now_playing"}:
+            return
+        settings = item.get("settings", {}) if isinstance(item.get("settings", {}), dict) else {}
+        kind = str(item.get("kind", "")).strip().lower()
+        self._designer_updating = True
+        try:
+            if kind.startswith("weather_"):
+                self.weather_widget_title_font_spin.setValue(int(settings.get("location_font_size", settings.get("day_font_size", 18))))
+                self.weather_widget_body_font_spin.setValue(int(settings.get("temp_font_size", settings.get("temp_max_font_size", 38))))
+                self.weather_widget_detail_font_spin.setValue(int(settings.get("detail_font_size", settings.get("condition_font_size", 18))))
+                self.weather_widget_title_color_edit.setText(json.dumps(settings.get("location_color", settings.get("day_color", [235, 246, 255])), ensure_ascii=False))
+                self.weather_widget_body_color_edit.setText(json.dumps(settings.get("temp_color", settings.get("temp_max_color", [246, 231, 152])), ensure_ascii=False))
+                self.weather_widget_detail_color_edit.setText(json.dumps(settings.get("detail_color", settings.get("condition_color", [210, 224, 240])), ensure_ascii=False))
+                self.weather_widget_panel_color_edit.setText(json.dumps(settings.get("panel_fill", [8, 14, 24, 205]), ensure_ascii=False))
+                panel_fill = settings.get("panel_fill", [8, 14, 24, 205])
+                panel_alpha = panel_fill[3] if isinstance(panel_fill, list) and len(panel_fill) > 3 else 255
+                self.weather_widget_transparent_bg_chk.setChecked(not bool(settings.get("panel_enabled", panel_alpha > 0)))
+                self.weather_widget_animate_icons_chk.setChecked(bool(settings.get("animate_icons", True)))
+            elif kind == "media_now_playing":
+                style = str(item.get("style", "standard")).strip().lower()
+                self.widget_title_font_spin.setValue(int(settings.get("title_font_size", 32 if style == "hero" else 20 if style == "mini" else 28)))
+                self.widget_body_font_spin.setValue(int(settings.get("artist_font_size", 24 if style == "hero" else 16 if style == "mini" else 22)))
+                self.widget_detail_font_spin.setValue(int(settings.get("detail_font_size", 18)))
+                self.widget_title_color_edit.setText(json.dumps(settings.get("title_color", [244, 248, 255]), ensure_ascii=False))
+                self.widget_body_color_edit.setText(json.dumps(settings.get("artist_color", [210, 224, 240]), ensure_ascii=False))
+                self.widget_detail_color_edit.setText(json.dumps(settings.get("detail_color", [160, 196, 232]), ensure_ascii=False))
+                self.widget_panel_color_edit.setText(json.dumps(settings.get("panel_fill", [8, 14, 24, 210]), ensure_ascii=False))
+                self.widget_cover_enabled_chk.setChecked(bool(settings.get("cover_enabled", True)))
+                self.widget_backdrop_enabled_chk.setChecked(bool(settings.get("backdrop_enabled", True)))
+                self.widget_title_marquee_chk.setChecked(bool(settings.get("title_marquee", True)))
+                self.widget_equalizer_enabled_chk.setChecked(bool(settings.get("equalizer_enabled", True)))
+        finally:
+            self._designer_updating = False
+
+    def _apply_widget_style_fields(self, item: dict[str, Any]) -> None:
+        kind = str(item.get("kind", "")).strip().lower()
+        settings = item.setdefault("settings", {})
+        if not isinstance(settings, dict):
+            settings = {}
+            item["settings"] = settings
+        if kind.startswith("weather_"):
+            settings["panel_fill"] = self._parse_color_line(self.weather_widget_panel_color_edit.text(), settings.get("panel_fill", [8, 14, 24, 205]))
+            settings["panel_enabled"] = not bool(self.weather_widget_transparent_bg_chk.isChecked())
+            settings["animate_icons"] = bool(self.weather_widget_animate_icons_chk.isChecked())
+            if kind == "weather_forecast_7d":
+                settings["location_font_size"] = int(self.weather_widget_title_font_spin.value())
+                settings["day_font_size"] = int(self.weather_widget_title_font_spin.value())
+                settings["temp_max_font_size"] = int(self.weather_widget_body_font_spin.value())
+                settings["temp_min_font_size"] = max(6, int(self.weather_widget_body_font_spin.value() * 0.76))
+                settings["condition_font_size"] = int(self.weather_widget_detail_font_spin.value())
+                settings["location_color"] = self._parse_color_line(self.weather_widget_title_color_edit.text(), settings.get("location_color", [235, 246, 255]))
+                settings["day_color"] = self._parse_color_line(self.weather_widget_title_color_edit.text(), settings.get("day_color", [160, 196, 232]))
+                settings["temp_max_color"] = self._parse_color_line(self.weather_widget_body_color_edit.text(), settings.get("temp_max_color", [246, 231, 152]))
+                settings["temp_min_color"] = self._parse_color_line(self.weather_widget_detail_color_edit.text(), settings.get("temp_min_color", [180, 206, 232]))
+                settings["condition_color"] = self._parse_color_line(self.weather_widget_detail_color_edit.text(), settings.get("condition_color", [210, 224, 240]))
+            else:
+                settings["location_font_size"] = int(self.weather_widget_title_font_spin.value())
+                settings["temp_font_size"] = int(self.weather_widget_body_font_spin.value())
+                settings["condition_font_size"] = int(self.weather_widget_detail_font_spin.value())
+                settings["detail_font_size"] = int(self.weather_widget_detail_font_spin.value())
+                settings["location_color"] = self._parse_color_line(self.weather_widget_title_color_edit.text(), settings.get("location_color", [235, 246, 255]))
+                settings["temp_color"] = self._parse_color_line(self.weather_widget_body_color_edit.text(), settings.get("temp_color", [246, 231, 152]))
+                settings["condition_color"] = self._parse_color_line(self.weather_widget_detail_color_edit.text(), settings.get("condition_color", [210, 224, 240]))
+                settings["detail_color"] = self._parse_color_line(self.weather_widget_detail_color_edit.text(), settings.get("detail_color", [210, 224, 240]))
+        elif kind == "media_now_playing":
+            settings["title_font_size"] = int(self.widget_title_font_spin.value())
+            settings["artist_font_size"] = int(self.widget_body_font_spin.value())
+            settings["detail_font_size"] = int(self.widget_detail_font_spin.value())
+            settings["title_color"] = self._parse_color_line(self.widget_title_color_edit.text(), settings.get("title_color", [244, 248, 255]))
+            settings["artist_color"] = self._parse_color_line(self.widget_body_color_edit.text(), settings.get("artist_color", [210, 224, 240]))
+            settings["detail_color"] = self._parse_color_line(self.widget_detail_color_edit.text(), settings.get("detail_color", [160, 196, 232]))
+            settings["panel_fill"] = self._parse_color_line(self.widget_panel_color_edit.text(), settings.get("panel_fill", [8, 14, 24, 210]))
+            settings["cover_enabled"] = bool(self.widget_cover_enabled_chk.isChecked())
+            settings["backdrop_enabled"] = bool(self.widget_backdrop_enabled_chk.isChecked())
+            settings["title_marquee"] = bool(self.widget_title_marquee_chk.isChecked())
+            settings["equalizer_enabled"] = bool(self.widget_equalizer_enabled_chk.isChecked())
+            settings["cover_placeholder_enabled"] = True
 
     def _update_gauge_stat_inspector_visibility(self) -> None:
-        gauge_layout = self.inspector_gauge.layout()
+        gauge_layout = self.inspector_gauge_layout
         gauge_tab_idx = self.inspector_tabs.indexOf(getattr(self, "inspector_gauge", None))
         selected_multi = self._selected_items_multi_any()
         show_gauge = False
@@ -14790,7 +12655,7 @@ class TrofeoGui(QMainWindow):
         )
         for row_label, widget in gauge_rows:
             self._set_form_row_visible(gauge_layout, row_label, widget, show_gauge)
-        appearance_layout = self.inspector_appearance.layout()
+        appearance_layout = self.inspector_appearance_layout
         sparkline_rows = (
             (self.row_sparkline_points, self.designer_sparkline_points_spin),
             (self.row_sparkline_fill_opacity, self.designer_sparkline_fill_opacity_spin),
@@ -14798,7 +12663,13 @@ class TrofeoGui(QMainWindow):
         )
         for row_label, widget in sparkline_rows:
             self._set_form_row_visible(appearance_layout, row_label, widget, show_sparkline)
-        music_layout = self.inspector_music.layout()
+        equalizer_style_rows = (
+            (self.row_equalizer_style, self.equalizer_style_row),
+            (self.row_equalizer_threshold_color, self.designer_equalizer_threshold_color_row),
+        )
+        for row_label, widget in equalizer_style_rows:
+            self._set_form_row_visible(appearance_layout, row_label, widget, show_equalizer)
+        music_layout = self.inspector_music_layout
         equalizer_rows = (
             (self.row_music_equalizer_bars, self.designer_equalizer_bars_spin),
             (self.row_music_equalizer_gap, self.designer_equalizer_gap_spin),
@@ -14806,6 +12677,24 @@ class TrofeoGui(QMainWindow):
         )
         for row_label, widget in equalizer_rows:
             self._set_form_row_visible(music_layout, row_label, widget, show_equalizer)
+        self._clamp_designer_splitter_later()
+
+    def _schedule_designer_selection_refresh(self) -> None:
+        self._designer_selection_refresh_pending = True
+        timer = getattr(self, "designer_selection_refresh_timer", None)
+        if timer is None:
+            QTimer.singleShot(12, self._run_pending_designer_selection_refresh)
+            return
+        if not timer.isActive():
+            timer.start(12)
+
+    def _run_pending_designer_selection_refresh(self) -> None:
+        if not getattr(self, "_designer_selection_refresh_pending", False):
+            return
+        self._designer_selection_refresh_pending = False
+        self.update_layer_row_visuals()
+        self.load_selected_designer_item()
+        self._update_preview_canvas_overlay()
 
     def _parse_color_line(self, value: str, fallback: list[int]) -> list[int]:
         raw = value.strip()
@@ -14845,7 +12734,7 @@ class TrofeoGui(QMainWindow):
         tracks[:] = [track for track in tracks if not (isinstance(track, dict) and str(track.get("item_id", "")).strip() == item_id)]
 
     def _load_motion_track_fields(self, item: dict[str, Any] | None, collection: str) -> None:
-        enabled_types = {"texts", "stats", "images", "panels"}
+        enabled_types = {"texts", "stats", "images", "panels", "widgets"}
         item_id = "" if item is None else str(item.get("id", "")).strip()
         track = self._motion_track_for_item(item_id) if item_id else None
         base_x = 0 if item is None else int(item.get("x", item.get("rect", [0, 0, 1, 1])[0]))
@@ -14882,7 +12771,7 @@ class TrofeoGui(QMainWindow):
         if item is None:
             return
         collection = self._selected_collection()
-        if collection not in {"texts", "stats", "images", "panels"}:
+        if collection not in {"texts", "stats", "images", "panels", "widgets"}:
             return
         item_id = str(item.get("id", "")).strip()
         if not item_id:
@@ -15040,6 +12929,12 @@ class TrofeoGui(QMainWindow):
                 item["equalizer_bars"] = int(self.designer_equalizer_bars_spin.value())
                 item["equalizer_gap"] = int(self.designer_equalizer_gap_spin.value())
                 item["equalizer_mirror"] = bool(self.designer_equalizer_mirror_chk.isChecked())
+                item["equalizer_color_preset"] = str(self.designer_equalizer_preset_combo.currentData() or "custom")
+                item["equalizer_threshold"] = max(0.0, min(1.0, float(self.designer_equalizer_threshold_spin.value()) / 100.0))
+                item["equalizer_threshold_color"] = self._parse_color_line(
+                    self.designer_equalizer_threshold_color_edit.text(),
+                    item.get("equalizer_threshold_color", [255, 86, 96, 255]),
+                )
                 self._designer_updating = True
                 try:
                     self.designer_w_spin.setValue(ew)
@@ -15057,10 +12952,19 @@ class TrofeoGui(QMainWindow):
                 self.designer_value_color_edit.text(),
                 item.get("value_color", [220, 220, 220]),
             )
-            item["track_color"] = self._parse_color_line(
-                self.designer_track_color_edit.text(),
-                item.get("track_color", [34, 44, 58, 210]),
-            )
+            if item.get("display") == "equalizer" and bool(self.designer_equalizer_transparent_bg_chk.isChecked()):
+                item["track_color"] = [0, 0, 0, 0]
+                if self.designer_track_color_edit.text().strip() != "[0, 0, 0, 0]":
+                    self._designer_updating = True
+                    try:
+                        self.designer_track_color_edit.setText(json.dumps(item["track_color"], ensure_ascii=False))
+                    finally:
+                        self._designer_updating = False
+            else:
+                item["track_color"] = self._parse_color_line(
+                    self.designer_track_color_edit.text(),
+                    item.get("track_color", [34, 44, 58, 210]),
+                )
             item["fill_color"] = self._parse_color_line(
                 self.designer_fill_color_edit.text(),
                 item.get("fill_color", item.get("value_color", [220, 220, 220])),
@@ -15107,8 +13011,18 @@ class TrofeoGui(QMainWindow):
             item["fill"] = self._parse_color_line(self.panel_fill_edit.text(), item.get("fill", [0, 0, 0]))
             item["opacity"] = float(self.panel_opacity_spin.value())
             item["radius"] = int(self.panel_radius_spin.value())
+        elif collection == "widgets":
+            item["rect"] = [
+                self._snap_value(int(self.designer_x_spin.value())),
+                self._snap_value(int(self.designer_y_spin.value())),
+                self._snap_value(int(self.designer_w_spin.value())),
+                self._snap_value(int(self.designer_h_spin.value())),
+            ]
+            item["opacity"] = float(self.panel_opacity_spin.value())
+            self._apply_widget_style_fields(item)
 
         self._refresh_inspector_music_layout()
+        self._refresh_inspector_weather_layout()
         self.write_designer_to_json()
         self._refresh_designer_list_row(row)
         if 0 <= row < self.designer_element_list.count() and self.designer_element_list.currentRow() != row:
@@ -15367,9 +13281,9 @@ class TrofeoGui(QMainWindow):
     def browse_background_path(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
             self,
-            "Wybierz obraz tła",
+            "Wybierz obraz lub wideo tła",
             str(Path.cwd()),
-            "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif);;All files (*)",
+            "Background media (*.png *.jpg *.jpeg *.bmp *.webp *.gif *.mp4 *.webm *.mov *.mkv *.avi *.m4v);;Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif);;Video (*.mp4 *.webm *.mov *.mkv *.avi *.m4v);;All files (*)",
         )
         if selected:
             source = Path(selected).expanduser()
@@ -15381,6 +13295,12 @@ class TrofeoGui(QMainWindow):
                     self._tr("Theme error", "Błąd motywu"),
                     self._tr("Load a valid theme in the designer first.", "Najpierw wczytaj poprawny motyw w projektancie."),
                 )
+                return
+            if source.suffix.lower() in VIDEO_BACKGROUND_EXTENSIONS:
+                self._start_animation_frame_import([source], mode="replace")
+                self.bg_animation_enabled_chk.setChecked(True)
+                self.bg_animation_use_bg_chk.setChecked(True)
+                self.preview_info_label.setText(self._tr("Importing video background frames...", "Importuję klatki tła wideo..."))
                 return
             if source.exists() and self._image_tools_available():
                 prepared_path = self._run_theme_image_import(source, asset_kind="background", button_text="Importuj tło")
@@ -15452,13 +13372,7 @@ class TrofeoGui(QMainWindow):
         if combo_index >= 0 and combo_index != self.designer_kind_combo.currentIndex():
             self.designer_kind_combo.setCurrentIndex(combo_index)
         if 0 <= index < self.designer_element_list.count():
-            self.designer_element_list.blockSignals(True)
-            self.designer_element_list.clearSelection()
-            self.designer_element_list.setCurrentRow(index)
-            item = self.designer_element_list.item(index)
-            if item is not None:
-                item.setSelected(True)
-            self.designer_element_list.blockSignals(False)
+            self.designer_element_list.select_rows([index], current_row=index, skip_hidden=False)
         self.update_layer_row_visuals()
         self.load_selected_designer_item()
         self._update_preview_canvas_overlay()
@@ -15496,15 +13410,8 @@ class TrofeoGui(QMainWindow):
                 self.designer_kind_combo.setCurrentIndex(combo_index)
             current_collection = target_collection
             filtered = [index for collection, index in normalized if collection == current_collection]
-        self.designer_element_list.blockSignals(True)
-        self.designer_element_list.clearSelection()
         first_row = filtered[0]
-        for row in filtered:
-            item = self.designer_element_list.item(row)
-            if item is not None:
-                item.setSelected(True)
-        self.designer_element_list.setCurrentRow(first_row)
-        self.designer_element_list.blockSignals(False)
+        self.designer_element_list.select_rows(filtered, current_row=first_row, skip_hidden=False)
         self.load_selected_designer_item()
         self._update_preview_canvas_overlay()
 
@@ -15518,99 +13425,147 @@ class TrofeoGui(QMainWindow):
         if bool(item.get("locked", False)):
             return
         selected = self._selected_items_multi_any()
-        selected_keys = {(selected_collection, selected_row) for selected_collection, selected_row, _selected_item in selected}
-        if len(selected) > 1 and (collection, index) in selected_keys:
-            current_rect = self._selected_item_rect(item, collection)
-            snapped_x, snapped_y, guides = self._apply_canvas_element_snap(
-                int(x),
-                int(y),
-                int(current_rect[2]),
-                int(current_rect[3]),
-                collection,
-                index,
-            )
-            delta_x = int(snapped_x) - int(current_rect[0])
-            delta_y = int(snapped_y) - int(current_rect[1])
-            if delta_x or delta_y:
-                for selected_collection, _row, selected_item in selected:
-                    if bool(selected_item.get("locked", False)):
-                        continue
-                    if selected_collection in {"images", "panels"}:
-                        rect = selected_item.get("rect", [0, 0, 1, 1])
-                        if isinstance(rect, list) and len(rect) == 4:
-                            selected_item["rect"] = [
-                                self._snap_value(int(rect[0]) + delta_x),
-                                self._snap_value(int(rect[1]) + delta_y),
-                                int(rect[2]),
-                                int(rect[3]),
-                            ]
-                    else:
-                        selected_item["x"] = self._snap_value(int(selected_item.get("x", 0)) + delta_x)
-                        selected_item["y"] = self._snap_value(int(selected_item.get("y", 0)) + delta_y)
-            self.preview_label.set_temporary_guides(guides, f"Δx {delta_x:+d}  Δy {delta_y:+d}")
-            self._sync_drag_editor_state(collection, index)
-            return
-        if collection in {"images", "panels"}:
-            rect = item.get("rect", [0, 0, 1, 1])
-            if isinstance(rect, list) and len(rect) == 4:
-                snapped_x, snapped_y, guides = self._apply_canvas_element_snap(
-                    int(x),
-                    int(y),
-                    int(rect[2]),
-                    int(rect[3]),
-                    collection,
-                    index,
-                )
-                item["rect"] = [self._snap_value(int(snapped_x)), self._snap_value(int(snapped_y)), int(rect[2]), int(rect[3])]
-                self.preview_label.set_temporary_guides(
-                    guides,
-                    f"Δx {int(item['rect'][0]) - int(rect[0]):+d}  Δy {int(item['rect'][1]) - int(rect[1]):+d}",
-                )
-        else:
-            current_rect = self._selected_item_rect(item, collection)
-            snapped_x, snapped_y, guides = self._apply_canvas_element_snap(
-                int(x),
-                int(y),
-                int(current_rect[2]),
-                int(current_rect[3]),
-                collection,
-                index,
-            )
-            item["x"] = self._snap_value(int(snapped_x))
-            item["y"] = self._snap_value(int(snapped_y))
-            self.preview_label.set_temporary_guides(
-                guides,
-                f"Δx {int(item['x']) - int(current_rect[0]):+d}  Δy {int(item['y']) - int(current_rect[1]):+d}",
-            )
+        current_rect = self._selected_item_rect(item, collection)
+        snapped_x, snapped_y, guides = self._apply_canvas_element_snap(
+            int(x),
+            int(y),
+            int(current_rect[2]),
+            int(current_rect[3]),
+            collection,
+            index,
+        )
+        result = move_drag_target(
+            selected=selected,
+            target_collection=collection,
+            target_index=index,
+            target_item=item,
+            target_x=int(snapped_x),
+            target_y=int(snapped_y),
+            snap=self._snap_value,
+        )
+        self.preview_label.set_temporary_guides(
+            guides,
+            f"Δx {result.delta_x:+d}  Δy {result.delta_y:+d}",
+        )
         self._sync_drag_editor_state(collection, index)
+
+    def apply_geometry_rect_preset(self, preset: str) -> None:
+        if self.theme_doc_model is None:
+            return
+        selected = self._selected_items_multi_any()
+        if not selected:
+            QMessageBox.information(self, "Info", self._tr("Select one or more elements first.", "Najpierw zaznacz jeden lub więcej elementów."))
+            return
+        editable = [(collection, row, item) for collection, row, item in selected if not bool(item.get("locked", False))]
+        if not editable:
+            return
+        canvas = self.theme_doc_model.get("canvas", {}) if isinstance(self.theme_doc_model, dict) else {}
+        canvas_width = max(1, int(canvas.get("width", 1920)))
+        canvas_height = max(1, int(canvas.get("height", 462)))
+        margin_x = 48
+        margin_y = 24
+        gap_y = 18
+        current_bounds = self._selected_group_bounds(editable)
+        if current_bounds is None:
+            return
+        current_x, current_y, current_w, current_h = current_bounds
+        if preset == "top":
+            next_rect = [margin_x, margin_y, max(1, canvas_width - margin_x * 2), max(1, min(current_h, 82))]
+        elif preset == "bottom":
+            height = max(1, min(current_h, 92))
+            next_rect = [margin_x, max(0, canvas_height - margin_y - height), max(1, canvas_width - margin_x * 2), height]
+        elif preset == "left":
+            width = max(1, min(max(current_w, 360), (canvas_width // 2) - margin_x - 16))
+            next_rect = [margin_x, margin_y + gap_y, width, max(1, canvas_height - (margin_y + gap_y) * 2)]
+        elif preset == "right":
+            width = max(1, min(max(current_w, 360), (canvas_width // 2) - margin_x - 16))
+            next_rect = [max(0, canvas_width - margin_x - width), margin_y + gap_y, width, max(1, canvas_height - (margin_y + gap_y) * 2)]
+        else:
+            width = max(1, min(max(current_w, 520), canvas_width - margin_x * 2))
+            height = max(1, min(max(current_h, 150), canvas_height - margin_y * 2))
+            next_rect = [(canvas_width - width) // 2, (canvas_height - height) // 2, width, height]
+        self.push_designer_history()
+        x, y, width, height = [self._snap_value(int(v)) for v in next_rect]
+        width = max(1, width)
+        height = max(1, height)
+        scale_x = width / max(1, current_w)
+        scale_y = height / max(1, current_h)
+        for collection, _row, item in editable:
+            item_x, item_y, item_w, item_h = self._selected_item_rect(item, collection)
+            rel_x = item_x - current_x
+            rel_y = item_y - current_y
+            next_item_rect = (
+                x + int(round(rel_x * scale_x)),
+                y + int(round(rel_y * scale_y)),
+                max(1, int(round(item_w * scale_x))),
+                max(1, int(round(item_h * scale_y))),
+            )
+            self._apply_item_rect(collection, item, next_item_rect)
+        first_collection, first_row, _first_item = selected[0]
+        self._designer_updating = True
+        try:
+            self.designer_x_spin.setValue(x)
+            self.designer_y_spin.setValue(y)
+            self.designer_w_spin.setValue(width)
+            self.designer_h_spin.setValue(height)
+        finally:
+            self._designer_updating = False
+        self.write_designer_to_json()
+        if len(selected) == 1:
+            self._refresh_designer_list_row(first_row)
+        else:
+            self.refresh_designer_element_list()
+            self._set_designer_selection_group(
+                [(collection, row) for collection, row, _item in selected],
+                group_label=self._selection_group_label_for_entries([(collection, row) for collection, row, _item in selected]),
+            )
+        if first_collection != self._selected_collection():
+            combo_index = self.designer_kind_combo.findData(first_collection)
+            if combo_index >= 0 and combo_index != self.designer_kind_combo.currentIndex():
+                self.designer_kind_combo.setCurrentIndex(combo_index)
+        if 0 <= first_row < self.designer_element_list.count():
+            self.designer_element_list.setCurrentRow(first_row)
+        self._update_preview_canvas_overlay()
+        self.schedule_preview_theme_doc()
 
     def resize_designer_element(self, collection: str, index: int, x: int, y: int, width: int, height: int) -> None:
         if self.theme_doc_model is None:
             return
-        if collection == "panels":
-            items = self.theme_doc_model.get("background", {}).get("panels", [])
-        else:
-            items = self.theme_doc_model.get(collection, [])
+        items = self._theme_items_for_collection(collection)
         if not isinstance(items, list) or index < 0 or index >= len(items):
             return
         item = items[index]
-        if bool(item.get("locked", False)):
+        result = resize_item_rect(
+            item,
+            collection,
+            (int(x), int(y), int(width), int(height)),
+            snap=self._snap_value,
+        )
+        if not result.applied:
             return
-        if collection in {"images", "panels"}:
-            item["rect"] = [
-                self._snap_value(int(x)),
-                self._snap_value(int(y)),
-                max(1, self._snap_value(int(width))),
-                max(1, self._snap_value(int(height))),
-            ]
-        else:
-            item["x"] = self._snap_value(int(x))
-            item["y"] = self._snap_value(int(y))
-            item["box_width"] = max(1, self._snap_value(int(width)))
-            item["box_height"] = max(1, self._snap_value(int(height)))
         self._sync_drag_editor_state(collection, index)
 
+    def _sync_drag_geometry_fields(self, collection: str, index: int) -> bool:
+        items = theme_items_for_collection(self.theme_doc_model or {}, collection)
+        if not (0 <= index < len(items)):
+            return False
+        item = items[index]
+        rect = self._selected_item_rect(item, collection)
+        changed = False
+        self._designer_updating = True
+        try:
+            changed = self._set_geometry_spin_values(rect)
+        finally:
+            self._designer_updating = False
+        if changed:
+            self._update_preview_canvas_overlay()
+        return True
+
     def _sync_drag_editor_state(self, collection: str, index: int) -> None:
+        if getattr(self, "_designer_drag_active", False):
+            self._designer_drag_target = (collection, index)
+            self._update_preview_canvas_overlay()
+            return
         combo_index = self.designer_kind_combo.findData(collection)
         if combo_index >= 0 and combo_index != self.designer_kind_combo.currentIndex():
             self.designer_kind_combo.setCurrentIndex(combo_index)
@@ -15623,13 +13578,10 @@ class TrofeoGui(QMainWindow):
         rect = self._selected_item_rect(item, collection)
         self._designer_updating = True
         try:
-            self.designer_x_spin.setValue(int(rect[0]))
-            self.designer_y_spin.setValue(int(rect[1]))
-            self.designer_w_spin.setValue(int(rect[2]))
-            self.designer_h_spin.setValue(int(rect[3]))
+            self._set_geometry_spin_values(rect)
             if collection == "images":
-                self.designer_opacity_spin.setValue(float(item.get("opacity", 1.0)))
-                self.designer_rotation_spin.setValue(int(item.get("rotation", 0)))
+                self._set_spin_value_if_changed(self.designer_opacity_spin, float(item.get("opacity", 1.0)))
+                self._set_spin_value_if_changed(self.designer_rotation_spin, int(item.get("rotation", 0)))
             elif collection == "texts":
                 self.designer_text_edit.setText(str(item.get("text", "")))
             elif collection == "stats":
@@ -15641,17 +13593,55 @@ class TrofeoGui(QMainWindow):
     def finish_designer_drag(self) -> None:
         if self.theme_doc_model is None:
             self._designer_drag_active = False
+            self._designer_drag_target = None
             return
+        drag_target = self._designer_drag_target
         self._designer_drag_active = False
+        self._designer_drag_target = None
+        if drag_target is not None:
+            self._sync_drag_editor_state(*drag_target)
         self.write_designer_to_json()
         self._update_preview_canvas_overlay()
-        self.schedule_preview_theme_doc()
+        if hasattr(self, "preview_debounce"):
+            self.preview_debounce.stop()
+        self.preview_theme_doc()
+        if getattr(self, "_designer_splitter_clamp_after_drag", False):
+            self._designer_splitter_clamp_after_drag = False
+            self._clamp_designer_splitter_later()
 
     def raise_designer_layer(self) -> None:
         self._adjust_designer_layer(1)
 
     def lower_designer_layer(self) -> None:
         self._adjust_designer_layer(-1)
+
+    def move_designer_layer_to_edge(self, edge: str) -> None:
+        if self.theme_doc_model is None:
+            return
+        selected = self._selected_items_multi_any()
+        if not selected:
+            return
+        all_items = self._all_canvas_elements()
+        if not all_items:
+            return
+        self.push_designer_history()
+        first_collection, first_row, _first_item = selected[0]
+        if not move_selected_z_to_edge(selected, all_items, edge):
+            return
+        self.write_designer_to_json()
+        self.refresh_designer_element_list()
+        if first_collection != self._selected_collection():
+            combo_index = self.designer_kind_combo.findData(first_collection)
+            if combo_index >= 0 and combo_index != self.designer_kind_combo.currentIndex():
+                self.designer_kind_combo.setCurrentIndex(combo_index)
+        self._set_designer_selection_group(
+            [(collection, row) for collection, row, _item in selected],
+            group_label=self._selection_group_label_for_entries([(collection, row) for collection, row, _item in selected]),
+        )
+        if 0 <= first_row < self.designer_element_list.count():
+            self.designer_element_list.setCurrentRow(first_row)
+        self._update_preview_canvas_overlay()
+        self.schedule_preview_theme_doc()
 
     def _adjust_designer_layer(self, delta: int) -> None:
         if self.theme_doc_model is None:
@@ -15661,8 +13651,8 @@ class TrofeoGui(QMainWindow):
             return
         self.push_designer_history()
         first_collection, first_row, _first_item = selected[0]
-        for _collection, _row, item in selected:
-            item["z_index"] = int(item.get("z_index", 0)) + int(delta)
+        if not adjust_selected_z(selected, delta):
+            return
         self.write_designer_to_json()
         self.refresh_designer_element_list()
         if first_collection != self._selected_collection():
@@ -15689,7 +13679,7 @@ class TrofeoGui(QMainWindow):
         for selected_collection, _row, item in selected:
             if bool(item.get("locked", False)):
                 continue
-            if selected_collection in {"images", "panels"}:
+            if selected_collection in {"images", "panels", "widgets"}:
                 rect = item.get("rect", [0, 0, 1, 1])
                 item["rect"] = [
                     self._snap_value(int(rect[0]) + delta_x),
@@ -15752,6 +13742,14 @@ class TrofeoGui(QMainWindow):
                 }
                 for item in data.get("images", [])
             ],
+            "widgets": [
+                {
+                    "id": item.get("id"),
+                    "rect": deepcopy(item.get("rect")),
+                    "z_index": item.get("z_index"),
+                }
+                for item in data.get("widgets", [])
+            ],
         }
 
     def _apply_layout_snapshot(self, snapshot: dict[str, Any]) -> None:
@@ -15767,7 +13765,7 @@ class TrofeoGui(QMainWindow):
                     bg[key] = deepcopy(snapshot["background"][key])
         if "effects" in snapshot and isinstance(snapshot["effects"], dict):
             data.setdefault("effects", {}).update(snapshot["effects"])
-        for collection in ("texts", "stats", "images"):
+        for collection in ("texts", "stats", "images", "widgets"):
             items = data.get(collection, [])
             by_id = {str(item.get("id", "")): item for item in items if isinstance(item, dict)}
             for snap_item in snapshot.get(collection, []):
@@ -16057,6 +14055,7 @@ class TrofeoGui(QMainWindow):
                 preview_image = render_theme_document(
                     ThemeDocument(normalize_theme_document(deepcopy(remapped))),
                     base_dir=Path.cwd(),
+                    stats_provider=self._preview_stats_provider,
                 )
                 preview_image.thumbnail((920, 240))
                 buffer = io.BytesIO()
@@ -16133,8 +14132,15 @@ def main() -> None:
     parser.add_argument("--url", default="http://127.0.0.1:18777", help="Backend base URL")
     args = parser.parse_args()
 
+    # Fractional desktop scaling (125%, 150%...) otherwise rounds the device
+    # pixel ratio and makes the app jump between sizes.
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
     app = QApplication([])
     app.setApplicationName("Open Trofeo LCD")
+    app.setDesktopFileName("io.github.abigordiy.open-trofeo-lcd")
+    app.setWindowIcon(QIcon.fromTheme("io.github.abigordiy.open-trofeo-lcd"))
     win = TrofeoGui(base_url=args.url)
     win.show()
     app.exec()

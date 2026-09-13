@@ -4,15 +4,25 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import signal
+import threading
 import time
 from pathlib import Path
 
 
 def main() -> int:
+    stop_requested = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop_requested.set())
     parser = argparse.ArgumentParser(description="Play animated frames on TRCC LCD")
     parser.add_argument("manifest")
     parser.add_argument("--device", default=None)
+    parser.add_argument("--ready-file", default=None)
     parser.add_argument("--verbose-frames", action="store_true", help="Log every rendered frame path")
+    parser.add_argument(
+        "--no-drop-late-frames",
+        action="store_true",
+        help="Disable adaptive frame skipping when USB sends fall behind animation timing",
+    )
     args = parser.parse_args()
 
     try:
@@ -47,8 +57,17 @@ def main() -> int:
     frame_paths = manifest.get("frame_paths", [])
     durations_ms = manifest.get("frame_durations_ms", [])
     frame_roles = manifest.get("frame_roles", [])
+    static_overlay_path_raw = str(manifest.get("static_overlay_path", "")).strip()
+    static_overlay_path = Path(static_overlay_path_raw).expanduser() if static_overlay_path_raw else None
     overlay_path_raw = str(manifest.get("overlay_path", "")).strip()
     overlay_path = Path(overlay_path_raw).expanduser() if overlay_path_raw else None
+    overlay_position_raw = manifest.get("overlay_position", [0, 0])
+    overlay_position = (0, 0)
+    if isinstance(overlay_position_raw, list) and len(overlay_position_raw) >= 2:
+        try:
+            overlay_position = (int(overlay_position_raw[0]), int(overlay_position_raw[1]))
+        except Exception:
+            overlay_position = (0, 0)
     try:
         overlay_min_interval_s = max(0.0, float(manifest.get("overlay_min_interval_s", 0.0)))
     except Exception:
@@ -77,6 +96,27 @@ def main() -> int:
         print("Error: no LCD device", flush=True)
         return 1
 
+    renderer = ImageService._r()
+    static_overlay_image = None
+    if static_overlay_path is not None:
+        if not static_overlay_path.exists():
+            print(f"Error: static overlay not found: {static_overlay_path}", flush=True)
+            return 1
+        result = lcd.load_image(str(static_overlay_path))
+        if not result.get("success"):
+            print(f"Error: failed to load static overlay: {result.get('error', 'unknown error')}", flush=True)
+            return 1
+        static_overlay_image = result.get("image")
+        if static_overlay_image is None:
+            print("Error: static overlay returned no image surface", flush=True)
+            return 1
+
+    def _composite(image, overlay, position: tuple[int, int]):
+        frame = renderer.copy_surface(image)
+        frame = renderer.convert_to_rgba(frame)
+        frame = renderer.composite(frame, overlay, position)
+        return renderer.convert_to_rgb(frame)
+
     loaded_frames = []
     for idx, raw in enumerate(frame_paths):
         frame_path = Path(str(raw)).expanduser()
@@ -101,6 +141,8 @@ def main() -> int:
         if image is None:
             print(f"Error: frame {idx} returned no image surface", flush=True)
             return 1
+        if static_overlay_image is not None:
+            image = _composite(image, static_overlay_image, (0, 0))
         duration_ms = 83
         if idx < len(durations_ms):
             try:
@@ -108,6 +150,8 @@ def main() -> int:
             except Exception:
                 duration_ms = 83
         loaded_frames.append((image, duration_ms, str(frame_path)))
+        if stop_requested.is_set():
+            return 0
 
     if overlay_path is not None and overlay_min_interval_s <= 0.0:
         try:
@@ -118,9 +162,11 @@ def main() -> int:
 
     overlay_image = None
     overlay_mtime_ns = None
+    overlay_revision = 0
+    composed_cache: dict[int, tuple[int, object]] = {}
 
     def _load_overlay() -> bool:
-        nonlocal overlay_image, overlay_mtime_ns
+        nonlocal overlay_image, overlay_mtime_ns, overlay_revision, composed_cache
         if overlay_path is None or not overlay_path.exists():
             return False
         stat = overlay_path.stat()
@@ -130,17 +176,20 @@ def main() -> int:
         if result.get("success"):
             overlay_image = result.get("image")
             overlay_mtime_ns = stat.st_mtime_ns
+            overlay_revision += 1
+            composed_cache = {}
             return True
         return False
 
-    def _compose_frame(image):
+    def _compose_frame(image, frame_index: int):
         if overlay_image is None:
             return image
-        renderer = ImageService._r()
-        frame = renderer.copy_surface(image)
-        frame = renderer.convert_to_rgba(frame)
-        frame = renderer.composite(frame, overlay_image, (0, 0))
-        return renderer.convert_to_rgb(frame)
+        cached = composed_cache.get(frame_index)
+        if cached is not None and cached[0] == overlay_revision:
+            return cached[1]
+        composed = _composite(image, overlay_image, overlay_position)
+        composed_cache[frame_index] = (overlay_revision, composed)
+        return composed
 
     _load_overlay()
 
@@ -153,11 +202,21 @@ def main() -> int:
         slow_send_threshold_s = 0.8
         overlay_send_guard_s = 0.12
         next_frame_at = 0.0
+        drop_late_frames = not args.no_drop_late_frames
+        dropped_since_log = 0
+        ready_announced = False
+        last_drop_log_at = 0.0
 
         def _send_image(image, label: str, frame_index: int) -> float:
-            nonlocal send_ema_s
+            nonlocal send_ema_s, ready_announced
             started = time.monotonic()
-            lcd.send(image)
+            # Finish the USB transfer before acknowledging readiness or shutdown.
+            if not lcd.send_frame(image):
+                raise RuntimeError("LCD frame transfer failed")
+            if not ready_announced:
+                if args.ready_file:
+                    Path(args.ready_file).write_text("ready\n", encoding="utf-8")
+                ready_announced = True
             elapsed = time.monotonic() - started
             send_ema_s = elapsed if send_ema_s <= 0.0 else (send_ema_s * 0.75) + (elapsed * 0.25)
             if elapsed >= slow_send_threshold_s:
@@ -173,7 +232,7 @@ def main() -> int:
             nonlocal last_overlay_send_at, next_frame_at
 
             next_frame_at += duration_s
-            while True:
+            while not stop_requested.is_set():
                 delay_s = next_frame_at - time.monotonic()
                 if delay_s <= 0:
                     break
@@ -184,22 +243,43 @@ def main() -> int:
                         effective_overlay_min_interval_s = overlay_min_interval_s
                         enough_time_before_next_frame = delay_s > max(0.20, send_ema_s + overlay_send_guard_s)
                         if now - last_overlay_send_at >= effective_overlay_min_interval_s and enough_time_before_next_frame:
-                            _send_image(_compose_frame(composed_frame), "overlay", frame_index)
+                            _send_image(_compose_frame(composed_frame, frame_index), "overlay", frame_index)
                             last_overlay_send_at = now
                 time.sleep(min(0.05, delay_s))
-            if next_frame_at < time.monotonic():
+            if not drop_late_frames and next_frame_at < time.monotonic():
                 next_frame_at = time.monotonic()
 
-        while True:
+        while not stop_requested.is_set():
             # Resync schedule each cycle so timing does not drift across loop wraps.
             next_frame_at = time.monotonic()
             frame_index = 0
-            while frame_index < len(loaded_frames):
+            while frame_index < len(loaded_frames) and not stop_requested.is_set():
                 frame, duration_ms, frame_path = loaded_frames[frame_index]
                 role = str(frame_roles[frame_index]).strip().lower() if frame_index < len(frame_roles) else ""
                 duration_s = max(0.001, duration_ms / 1000.0)
+                if drop_late_frames and len(loaded_frames) > 1:
+                    late_s = time.monotonic() - next_frame_at
+                    if late_s > max(duration_s * 1.25, send_ema_s * 0.35):
+                        skip_count = min(
+                            len(loaded_frames) - frame_index - 1,
+                            max(1, int(late_s / duration_s)),
+                        )
+                        if skip_count > 0:
+                            frame_index += skip_count
+                            next_frame_at += duration_s * skip_count
+                            dropped_since_log += skip_count
+                            now = time.monotonic()
+                            if now - last_drop_log_at >= 5.0:
+                                print(
+                                    f"Info: dropped {dropped_since_log} late animation frames"
+                                    f" send_ema_ms={int(send_ema_s * 1000)}",
+                                    flush=True,
+                                )
+                                dropped_since_log = 0
+                                last_drop_log_at = now
+                            continue
                 _load_overlay()
-                _send_image(_compose_frame(frame), role or "frame", frame_index)
+                _send_image(_compose_frame(frame, frame_index), role or "frame", frame_index)
                 if args.verbose_frames:
                     print(f"Frame: {frame_path}", flush=True)
                 _wait_frame_gap(
@@ -221,9 +301,9 @@ def main() -> int:
                     f"Animation sequence done (loop disabled). Holding last frame ({hold_path}) — quit with Ctrl+C.",
                     flush=True,
                 )
-                while True:
+                while not stop_requested.is_set():
                     _load_overlay()
-                    _send_image(_compose_frame(hold_frame), "hold", last_idx)
+                    _send_image(_compose_frame(hold_frame, last_idx), "hold", last_idx)
                     _wait_frame_gap(
                         duration_s=hold_s,
                         frame_index=last_idx,
@@ -232,6 +312,7 @@ def main() -> int:
     except KeyboardInterrupt:
         print("Stopped.", flush=True)
         return 0
+    return 0
 
 
 if __name__ == "__main__":
