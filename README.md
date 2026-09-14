@@ -1,122 +1,130 @@
-# Thermalright Trofeo LCD — Linux Open Driver
+# Open Trofeo LCD
 
-An independent, open-source Linux driver and visual theme editor for the Thermalright Trofeo LCD cooler display. Turn the display into a system monitor, media panel or external gaming dashboard.
+Linux dashboard, theme studio and gaming telemetry companion for the
+**Thermalright Trofeo Vision 9.16-inch LCD** (`0416:5408`, 1920×462).
 
-![Valhalla Command gaming dashboard — illustrative preview, not a benchmark](docs/screenshots/theme-valhalla-command.png)
-
-*Illustrative preview with synthetic data. Not a game benchmark or a photograph of the physical display.*
-
-## September 2026 gaming update
-
-- **Gaming telemetry:** FPS, frametime, session minimum/average/maximum, rolling sample-based 1% and 0.1% lows, and session CSV logging. These lows use telemetry samples, not a full per-frame benchmark capture.
-- **Valhalla Command:** CPU/GPU gauges, RAM/VRAM, temperatures, recent-value charts and top processes by resident memory (RSS; shared pages may be counted in multiple processes).
-- **Automatic game themes:** switch when game telemetry is detected and optionally restore the previous theme afterwards.
-- **Customization:** seven themes, visual Theme Designer, Animation Studio and animated backgrounds.
-- **Desktop widgets:** media/Now Playing, audio visualization, volume, current weather and forecasts.
-- **KDE VRR controls:** Automatic/Always/Off for compatible outputs. These controls do not guarantee a fix for panel-specific flicker.
-- **USB handoff fixes:** complete frame transfers before switching workers and confirm the first animation frame before reporting startup success.
-
-### Tested scope and availability
-
-Hardware validation currently covers **one Trofeo on Ubuntu/Kubuntu 26.04**, including Space Marine 2 telemetry and Valhalla/Orbital switching. Other Thermalright models are **not validated**. Bazzite and SteamOS-style PCs are future test targets, not certified supported platforms.
-
-The `0.1.0~dev20260913+gaming2` DEB was built, installed and tested locally. Launchpad accepted its signed sources; check the [build status](https://launchpad.net/~abigor82/+archive/ubuntu/open-trofeo-lcd/+build/33593779) before assuming this version is available through APT. [Ubuntu PPA](https://launchpad.net/~abigor82/+archive/ubuntu/open-trofeo-lcd) · [Gaming setup](docs/gaming-fps.md) · [Packaging](docs/linux-packaging.md).
-
-FPS integration requires setup and depends on the game/rendering path. TRCC is an optional dependency for animated output. This remains a development preview, not official Thermalright software.
-
-### Hardware and development collaboration
-
-Additional display samples, protocol documentation and technical contacts would help expand compatibility. Sponsorship or funded milestones can support implementation, testing and maintenance. [Collaboration overview and screenshots](docs/thermalright-collaboration.md).
+Open Trofeo LCD turns the ultrawide USB display into a live system panel instead
+of leaving it dependent on the Windows-only Thermalright application. It can
+show hardware and process statistics, weather, music and audio visualization,
+and a dedicated gaming view with FPS and frame-time history.
 
 > **Development preview**
 >
-> Open Trofeo LCD is usable, but it is still in active development. The USB
-> driver, backend, theme gallery, Theme Designer, Animation Studio, MPRIS media
-> widgets, gauges and packaging flow are being improved quickly. Expect UI
-> changes, incomplete editor tools and occasional regressions while the project
-> is prepared for broader Linux distribution.
+> The application is usable on the author's machine, but it is still under
+> active development. Hardware validation is currently limited to one physical
+> Trofeo unit on Kubuntu. Expect UI changes and occasional regressions, and keep
+> the original Thermalright software available as a recovery path.
 
-## Project Status
+## Features
 
-Current focus:
-- Stable local backend for the Thermalright Trofeo LCD USB display.
-- Qt desktop GUI with Theme Gallery, Theme Designer and Animation Studio.
-- Live system stats, MPRIS/Now Playing widgets, volume/EQ widgets, gauges and animated backgrounds.
-- Safer single-backend runtime to avoid USB `Resource busy` conflicts.
-- Documentation and packaging for public testing.
+| Area | Current capabilities |
+|---|---|
+| Themes | Theme Gallery, JSON themes, previews, duplication, import/export and multiple bundled starter themes |
+| Creation tools | Qt Theme Designer, layer controls, quick-add tools, auto-layout and Animation Studio |
+| System telemetry | CPU/GPU/RAM/VRAM load, temperatures, frequency, storage, network activity, uptime and sparklines |
+| Processes | Top processes by resident memory, refreshed without blocking the live display path |
+| Media and audio | MPRIS now-playing metadata, album art, playback state, volume and CAVA spectrum/EQ bars |
+| Weather | Open-Meteo current conditions, city search, animated icons and a seven-day forecast; no API key required |
+| Gaming | Native Vulkan FPS probe, frame time, session min/average/max, 1% and 0.1% lows, stutter count and per-session CSV logs |
+| Automation | Automatic gaming-theme switching and restore plus KDE Wayland VRR controls |
+| Display runtime | Native PyUSB transfer path, optional `trcc-linux` integration, brightness control and USB recovery tooling |
 
-Known development areas:
-- Theme Designer layout and editor tooling are still being refined.
-- Animation Studio is functional, but timeline UX, stabilization and export workflow are still evolving.
-- Some advanced widgets may need tuning for LCD refresh performance.
-- Weather widgets are available, including current conditions, 7-day forecast, city search and animated icons.
-- Experimental Flatpak packaging is available for local testing, but source/venv launch is still the recommended path for now.
-- DEB packaging has been tested locally on Kubuntu 26.04. RPM/Flatpak and clean-distro validation remain development work.
+MangoHud log reading is available only as an explicit fallback. It is not on the
+critical path for backend status or normal live rendering.
 
-## Release Plan
+## Compatibility and limitations
 
-Short-term publication plan:
-1. Push the current development preview to GitHub with this README warning.
-2. Keep source installation as the primary supported method for early testers.
-3. Add a Flatpak manifest with explicit USB device access notes.
-4. Validate release inputs with `python3 scripts/check_linux_release.py`.
-5. Build test packages: Flatpak first, then portable `tar.gz`, then DEB/RPM skeleton packages.
-6. Publish downloadable artifacts on GitHub Releases after local install, udev and backend startup are verified.
+- Confirmed hardware: Thermalright Trofeo Vision 9.16-inch LCD, USB ID
+  `0416:5408`, native resolution 1920×462.
+- Confirmed operating system: Kubuntu on the author's desktop PC.
+- Ubuntu-family and Bazzite testers are welcome, but those combinations should
+  be treated as unverified until hardware reports are collected.
+- Gaming FPS capture currently targets Vulkan titles. Individual Proton games
+  may still require launch-option or compatibility-layer tuning.
+- KDE VRR controls use `kscreen-doctor`. The `Automatic` policy is recommended;
+  forcing VRR continuously can make some desktop/display combinations flicker.
+- This is an unofficial community project and is not affiliated with or
+  endorsed by Thermalright.
 
-Latest locally validated DEB: `0.1.0~dev20260913+gaming2` (September 13, 2026). The older stages below describe development history; see current availability above.
+## Project status
 
-Flatpak packaging checklist:
-- Bundle Python dependencies or use pinned modules from `requirements.txt`.
-- Include PySide6/Qt runtime dependencies.
-- Document USB access requirements for `0416:5408`.
-- Test whether direct USB access needs `--device=all` or a narrower udev/portal setup.
-- Persist app state under XDG paths, especially `~/.local/state/open-trofeo-lcd`.
-- Ship a `.desktop` entry and icon.
-- Ensure only one backend instance can own the LCD device.
+The public development preview includes the Valhalla Command gaming dashboard,
+Orbital Relay, Obsidian Pulse and other starter themes. Source/venv installation
+remains the primary route for early testers. The PPA currently publishes
+`0.1.0~dev20260913+gaming2` for Ubuntu 26.04 / Resolute; there is not yet a
+stable GitHub Release.
 
-Experimental Flatpak build instructions are available in `docs/flatpak.md`.
-DEB/RPM/portable packaging notes are available in `docs/linux-packaging.md`.
+- [Ubuntu PPA](https://launchpad.net/~abigor82/+archive/ubuntu/open-trofeo-lcd)
+- [Gaming setup](docs/gaming-fps.md)
+- [Experimental Flatpak notes](docs/flatpak.md)
+- [Distribution packaging notes](docs/linux-packaging.md)
 
-## Screenshots
+Before publishing a release, validate the tree with:
 
-Application UI (earlier development screenshots; current layouts may differ):
+```bash
+python3 scripts/check_linux_release.py
+python3 scripts/trofeo_smoke_test.py
+```
 
-![Open Trofeo LCD Theme Gallery](docs/screenshots/open-trofeo-lcd-theme-gallery.png)
+## Hardware photos
 
-![Open Trofeo LCD Theme Designer](docs/screenshots/open-trofeo-lcd-theme-designer.png)
+These are original photos of Open Trofeo LCD running on the physical test unit
+under Kubuntu, not product renders.
 
-![Open Trofeo LCD Animation Studio](docs/screenshots/open-trofeo-lcd-animation-studio.png)
+### Valhalla Command — gaming telemetry
 
-Theme previews with illustrative data, not hardware measurements:
+![Valhalla Command showing live Space Marine 2 FPS and hardware telemetry](docs/screenshots/hardware-valhalla-command.jpg)
 
-![Obsidian Pulse theme preview](docs/screenshots/theme-obsidian-pulse.png)
+### Orbital Relay — music, weather and system telemetry
 
-![Orbital Relay theme preview](docs/screenshots/theme-orbital-relay.png)
+![Orbital Relay showing MPRIS music, weather and system telemetry](docs/screenshots/hardware-orbital-relay.jpg)
 
-![Heritage Duality theme preview](docs/screenshots/theme-heritage-duality.png)
+### Obsidian Pulse — music and desktop monitoring
 
-![Verdant Bloom theme preview](docs/screenshots/theme-verdant-bloom.png)
+![Obsidian Pulse showing music, gauges and network activity](docs/screenshots/hardware-obsidian-pulse.jpg)
 
-![Matrix Green theme preview](docs/screenshots/theme-matrix-green.png)
+## Acknowledgements and project provenance
 
-![Wolfstorm Forge theme preview](docs/screenshots/theme-wolfstorm-forge.png)
+Open Trofeo LCD began by building on and integrating
+[`thermalright-trcc-linux`](https://github.com/Lexonight1/thermalright-trcc-linux)
+by **Lexonight1 and its contributors**. That project provided the initial Linux
+device-communication foundation and remains an important optional runtime path.
+
+Open Trofeo LCD adds a separate Trofeo-focused application: its own Qt user
+interface, 1920×462 renderer, theme library and creation tools, system/process
+telemetry, weather and MPRIS widgets, audio visualization, Vulkan gaming
+statistics, session logging and KDE gaming automation. The current code also
+contains a native PyUSB transfer path tailored to the tested Trofeo unit.
+
+This repository is not a GitHub fork of `thermalright-trcc-linux`; the wording
+above describes code/runtime provenance and gives credit to the upstream work.
 
 ## Support
 
 If this project is useful, you can support development here:
+
 - GitHub Sponsors: https://github.com/sponsors/Abigor-DIY
 - Repository: https://github.com/Abigor-DIY/Open-Trofeo-LCD
+
+Bug reports should include the distribution, desktop session, GPU, Steam type
+(native or Flatpak), `lsusb` ID and the relevant backend log excerpt.
 
 ## License
 
 Open Trofeo LCD project code is licensed under the GNU General Public License
 version 3.0 only (`GPL-3.0-only`). See `LICENSE`.
 
-Third-party dependencies keep their own licenses. The Flatpak build currently
-bundles Python/Qt dependencies, so review `docs/third-party-licenses.md` before
-publishing stable binary packages.
+`trcc-linux` is distributed under `GPL-3.0-or-later`. Other third-party
+dependencies keep their own licenses. Review `docs/third-party-licenses.md`
+before publishing binary packages, and preserve upstream copyright/license
+notices for any copied source material.
 
-## Discovered Protocol
+## Trofeo protocol notes
+
+The table and packet notes below document the tested `0416:5408` device. They
+combine observations from this project's USBPcap/Wireshark captures with
+implementation experience gained while integrating `trcc-linux`; they should
+not be read as a claim that all Thermalright protocol work originated here.
 
 | Parameter       | Value                                    |
 |-----------------|------------------------------------------|
@@ -209,7 +217,8 @@ Python packages are tracked in `requirements.txt`:
 - `pyusb` for USB communication
 - `Pillow` for image rendering
 - `opencv-python-headless` for animation stabilization tools
-- `trcc-linux` for TRCC-compatible LCD transfer helpers
+- [`trcc-linux`](https://github.com/Lexonight1/thermalright-trcc-linux)
+  for the optional TRCC-compatible device path
 
 ### USB Permissions
 
@@ -539,15 +548,22 @@ curl -s -X POST http://127.0.0.1:18777/v1/bundle/load \
 - Try `--quality 90` for better image quality
 - If you have a known-good TRCC JPEG, use `--raw-jpeg-passthrough` to test USB protocol separately from JPEG generation
 
-## How This Was Reverse-Engineered
+## Local capture work
 
-1. USBPcap + Wireshark on Windows, capturing while TRCC was running
-2. The device appeared on a separate USB root hub (USBPcap1) from where it was physically plugged in (USBPcap4) — the hub (Terminus Tech 1a40:0101) routed it there
-3. Analysis of 83,512 packets revealed 524 JPEG frames sent at ~6.3 FPS
-4. Each frame is a standard baseline JPEG, 1920×462, split into USB bulk transfers with a 16-byte proprietary header
-5. No separate complex init sequence was identified in the capture; the main remaining uncertainty is the exact meaning of a few header bytes and the final packet shape
+In addition to using the upstream `trcc-linux` work, this project performed its
+own interoperability testing against the author's physical Trofeo unit:
 
-## License
+1. USBPcap + Wireshark on Windows, capturing while the vendor TRCC application was running.
+2. The device appeared on a separate USB root hub (USBPcap1) from where it was physically plugged in (USBPcap4); the Terminus Tech `1a40:0101` hub routed it there.
+3. Analysis of 83,512 packets found 524 JPEG frames sent at approximately 6.3 FPS.
+4. Each observed frame was a 1920×462 baseline JPEG split into USB bulk transfers with a 16-byte header.
+5. No separate complex initialization sequence was identified in that capture. The exact meaning of several header bytes and the final-packet shape remains uncertain.
 
-This is an independent reverse-engineering effort for interoperability purposes.
-Use at your own risk.
+These observations describe the tested capture only and do not supersede or
+claim ownership of upstream protocol research.
+
+## Disclaimer
+
+This software and its local capture work are provided for interoperability and
+experimentation. Use it at your own risk; display firmware and USB behavior may
+differ between hardware revisions.
