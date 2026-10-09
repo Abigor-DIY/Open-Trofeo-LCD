@@ -15,10 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ID = "io.github.abigordiy.open-trofeo-lcd"
 
 EXPECTED_THEMES = {
-    "themes/heritage_duality.json": "Heritage Duality",
+    "themes/amber_hi_fi.json": "Amber Hi-Fi",
+    "themes/nordic_forecast.json": "Nordic Forecast",
+    "themes/crimson_telemetry.json": "Crimson Telemetry",
     "themes/linux_matrix_green.json": "Neon Frame Arena",
     "themes/verdant_bloom.json": "Verdant Bloom",
-    "themes/wolfstorm_forge.json": "Wolfstorm Forge",
     "themes/orbital_relay.json": "Orbital Relay",
     "themes/obsidian_pulse.json": "Obsidian Pulse",
     "themes/valhalla_command.json": "Valhalla Command",
@@ -88,6 +89,7 @@ REQUIRED_PACKAGE_FILES = {
     "designer/theme_workbench_labels.py",
     "designer/workspace_shell.py",
     "gauge_presets.py",
+    "game_power_profile.py",
     "gui_dialogs.py",
     "image_prep.py",
     "main.py",

@@ -1,3 +1,29 @@
+open-trofeo-lcd (0.1.0~dev20261009+pikaos1) pikaos; urgency=low
+
+  * Local preview from the working tree for PikaOS installation testing.
+  * Not yet validated on PikaOS or a physical Trofeo LCD.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Fri, 09 Oct 2026 20:37:43 +0200
+
+open-trofeo-lcd (0.1.0~dev20260914+ui5cpu2) resolute; urgency=medium
+
+  * Add an opt-in, session-scoped CPU performance profile hold when a game is
+    detected, without writing CPU governor settings directly.
+  * Reduce animated-theme memory use by decoding frames on demand and cap
+    temporary render caches left by interrupted sessions.
+  * Ignore Steam shader and runtime helpers such as fossilize_replay during
+    game detection while preserving real Steam game detection.
+  * Exclude shader-compilation warm-up samples from gameplay minimum FPS and
+    keep full session values in the CSV log.
+  * Improve responsive Qt layouts and refresh theme choices used by automatic
+    game switching.
+  * Ship the current eight-theme set, including Valhalla Command and the new
+    Amber Hi-Fi, Crimson Telemetry and Nordic Forecast themes.
+  * Document upstream thermalright-trcc-linux provenance and add physical
+    hardware screenshots.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Mon, 14 Sep 2026 20:14:39 +0200
+
 open-trofeo-lcd (0.1.0~dev20260520+resolute7) resolute; urgency=medium
 
   * Development preview package for Ubuntu testing.

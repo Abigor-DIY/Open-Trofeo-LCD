@@ -352,7 +352,8 @@ def build_config_appearance_box(theme_names: list[str]) -> ConfigAppearanceContr
     theme_combo = QComboBox()
     theme_combo.addItems(theme_names)
     mode_combo = QComboBox()
-    mode_combo.addItems(["Dark", "Light"])
+    mode_combo.addItems(["Dark", "Light", "System"])
+    mode_combo.setToolTip("Application theme: Dark, Light, or follow the desktop (System).")
     scale_combo = QComboBox()
     for value in (70, 80, 90, 100, 110, 125, 140):
         scale_combo.addItem(f"{value}%", value)

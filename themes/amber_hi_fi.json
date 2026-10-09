@@ -1,0 +1,441 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Amber Hi-Fi",
+    "author": "Open Trofeo LCD",
+    "description": "Static background with live Linux telemetry, music and weather.",
+    "tags": [
+      "static",
+      "starter-pack"
+    ]
+  },
+  "canvas": {
+    "width": 1920,
+    "height": 462,
+    "rotation": 180
+  },
+  "background": {
+    "kind": "generated",
+    "base_color": [
+      14,
+      12,
+      10
+    ],
+    "accent_color": [
+      31,
+      26,
+      21
+    ],
+    "texture_alpha": 0.04,
+    "panels": [
+      {
+        "rect": [
+          24,
+          91,
+          1150,
+          267
+        ],
+        "radius": 16,
+        "fill": [
+          29,
+          24,
+          19
+        ],
+        "opacity": 1
+      },
+      {
+        "rect": [
+          1194,
+          91,
+          702,
+          267
+        ],
+        "radius": 16,
+        "fill": [
+          25,
+          25,
+          24
+        ],
+        "opacity": 1
+      }
+    ]
+  },
+  "texts": [
+    {
+      "id": "t0",
+      "text": "AMBER / HI-FI",
+      "x": 30,
+      "y": 18,
+      "box_width": 600,
+      "box_height": 38,
+      "font_size": 28,
+      "font_bold": true,
+      "color": [
+        244,
+        186,
+        95,
+        255
+      ]
+    },
+    {
+      "id": "t1",
+      "text": "LISTEN  /  LIVE AUDIO & DESKTOP",
+      "x": 31,
+      "y": 55,
+      "box_width": 650,
+      "box_height": 23,
+      "font_size": 13,
+      "font_bold": true,
+      "color": [
+        156,
+        144,
+        126,
+        255
+      ]
+    },
+    {
+      "id": "t2",
+      "text": "CPU",
+      "x": 35,
+      "y": 381,
+      "box_width": 250,
+      "box_height": 23,
+      "font_size": 13,
+      "font_bold": true,
+      "color": [
+        244,
+        186,
+        95,
+        255
+      ]
+    },
+    {
+      "id": "t3",
+      "text": "GPU",
+      "x": 325,
+      "y": 381,
+      "box_width": 250,
+      "box_height": 23,
+      "font_size": 13,
+      "font_bold": true,
+      "color": [
+        244,
+        186,
+        95,
+        255
+      ]
+    },
+    {
+      "id": "t4",
+      "text": "RAM",
+      "x": 615,
+      "y": 381,
+      "box_width": 250,
+      "box_height": 23,
+      "font_size": 13,
+      "font_bold": true,
+      "color": [
+        244,
+        186,
+        95,
+        255
+      ]
+    },
+    {
+      "id": "t5",
+      "text": "VOLUME",
+      "x": 905,
+      "y": 381,
+      "box_width": 250,
+      "box_height": 23,
+      "font_size": 13,
+      "font_bold": true,
+      "color": [
+        244,
+        186,
+        95,
+        255
+      ]
+    },
+    {
+      "id": "t6",
+      "text": "UPTIME",
+      "x": 1250,
+      "y": 381,
+      "box_width": 250,
+      "box_height": 23,
+      "font_size": 13,
+      "font_bold": true,
+      "color": [
+        244,
+        186,
+        95,
+        255
+      ]
+    }
+  ],
+  "stats": [
+    {
+      "id": "s0",
+      "source": "time_hms",
+      "x": 1670,
+      "y": 20,
+      "box_width": 210,
+      "box_height": 42,
+      "font_size": 30,
+      "font_bold": true,
+      "value_color": [
+        244,
+        186,
+        95,
+        255
+      ]
+    },
+    {
+      "id": "s1",
+      "source": "cpu_usage_percent",
+      "x": 35,
+      "y": 405,
+      "box_width": 260,
+      "box_height": 38,
+      "font_size": 26,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s2",
+      "source": "gpu_load",
+      "x": 325,
+      "y": 405,
+      "box_width": 260,
+      "box_height": 38,
+      "font_size": 26,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s3",
+      "source": "mem_percent",
+      "x": 615,
+      "y": 405,
+      "box_width": 260,
+      "box_height": 38,
+      "font_size": 26,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s4",
+      "source": "volume_percent",
+      "x": 905,
+      "y": 405,
+      "box_width": 260,
+      "box_height": 38,
+      "font_size": 26,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s5",
+      "source": "uptime_human",
+      "x": 1250,
+      "y": 405,
+      "box_width": 260,
+      "box_height": 38,
+      "font_size": 26,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    }
+  ],
+  "images": [],
+  "widgets": [
+    {
+      "id": "media",
+      "kind": "media_now_playing",
+      "rect": [
+        44,
+        108,
+        1110,
+        227
+      ],
+      "style": "standard",
+      "settings": {
+        "panel_enabled": false,
+        "panel_fill": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "backdrop_enabled": false,
+        "backdrop_opacity": 0.26,
+        "cover_enabled": true,
+        "cover_placeholder_enabled": true,
+        "title_font_size": 37,
+        "artist_font_size": 25,
+        "detail_font_size": 17,
+        "title_color": [
+          235,
+          248,
+          255,
+          255
+        ],
+        "artist_color": [
+          210,
+          224,
+          240,
+          255
+        ],
+        "detail_color": [
+          150,
+          184,
+          208,
+          255
+        ],
+        "title_marquee": false,
+        "title_marquee_speed": 62.0,
+        "equalizer_enabled": true,
+        "equalizer_color": [
+          244,
+          186,
+          95,
+          255
+        ],
+        "equalizer_accent_color": [
+          246,
+          231,
+          152,
+          255
+        ],
+        "equalizer_track_color": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "equalizer_color_preset": "cyan",
+        "equalizer_threshold": 0.82,
+        "equalizer_threshold_color": [
+          255,
+          86,
+          96,
+          255
+        ],
+        "equalizer_bars": 42,
+        "equalizer_gap": 4,
+        "hide_title_prefix": true,
+        "animate_icons": false,
+        "day_color": [
+          244,
+          186,
+          95,
+          255
+        ]
+      },
+      "opacity": 1.0,
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "weather",
+      "kind": "weather_current",
+      "rect": [
+        1215,
+        112,
+        660,
+        210
+      ],
+      "style": "compact",
+      "settings": {
+        "panel_enabled": false,
+        "panel_fill": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "font_family": "DejaVu Sans",
+        "location_font_size": 18,
+        "temp_font_size": 36,
+        "condition_font_size": 18,
+        "detail_font_size": 15,
+        "location_color": [
+          235,
+          248,
+          255,
+          255
+        ],
+        "temp_color": [
+          160,
+          220,
+          255,
+          255
+        ],
+        "condition_color": [
+          210,
+          224,
+          240,
+          255
+        ],
+        "detail_color": [
+          182,
+          204,
+          220,
+          255
+        ],
+        "animate_icons": false,
+        "icon_animation_speed": 1.0,
+        "icon_frame_fps": 12.0,
+        "title_marquee": false,
+        "equalizer_color": [
+          244,
+          186,
+          95,
+          255
+        ],
+        "day_color": [
+          244,
+          186,
+          95,
+          255
+        ],
+        "backdrop_enabled": false
+      },
+      "opacity": 1.0,
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "effects": {
+    "animation": {
+      "enabled": false
+    }
+  }
+}

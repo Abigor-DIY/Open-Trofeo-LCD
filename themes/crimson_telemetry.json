@@ -1,0 +1,729 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Crimson Telemetry",
+    "author": "Open Trofeo LCD",
+    "description": "Static background with live Linux telemetry, music and weather.",
+    "tags": [
+      "static",
+      "starter-pack"
+    ]
+  },
+  "canvas": {
+    "width": 1920,
+    "height": 462,
+    "rotation": 180
+  },
+  "background": {
+    "kind": "generated",
+    "base_color": [
+      16,
+      10,
+      17
+    ],
+    "accent_color": [
+      32,
+      21,
+      33
+    ],
+    "texture_alpha": 0.04,
+    "panels": [
+      {
+        "rect": [
+          24,
+          76,
+          550,
+          359
+        ],
+        "radius": 16,
+        "fill": [
+          36,
+          21,
+          30
+        ],
+        "opacity": 1
+      },
+      {
+        "rect": [
+          594,
+          76,
+          760,
+          359
+        ],
+        "radius": 16,
+        "fill": [
+          27,
+          23,
+          35
+        ],
+        "opacity": 1
+      },
+      {
+        "rect": [
+          1374,
+          76,
+          522,
+          359
+        ],
+        "radius": 16,
+        "fill": [
+          27,
+          23,
+          35
+        ],
+        "opacity": 1
+      }
+    ]
+  },
+  "texts": [
+    {
+      "id": "t0",
+      "text": "CRIMSON / TELEMETRY",
+      "x": 30,
+      "y": 18,
+      "box_width": 560,
+      "box_height": 37,
+      "font_size": 27,
+      "font_bold": true,
+      "color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "t1",
+      "text": "FRAME RATE",
+      "x": 45,
+      "y": 96,
+      "box_width": 400,
+      "box_height": 27,
+      "font_size": 17,
+      "font_bold": true,
+      "color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "t2",
+      "text": "FPS",
+      "x": 356,
+      "y": 170,
+      "box_width": 150,
+      "box_height": 45,
+      "font_size": 35,
+      "font_bold": true,
+      "color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "t3",
+      "text": "MIN",
+      "x": 48,
+      "y": 266,
+      "box_width": 150,
+      "box_height": 24,
+      "font_size": 14,
+      "font_bold": true,
+      "color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "t4",
+      "text": "AVG",
+      "x": 220,
+      "y": 266,
+      "box_width": 150,
+      "box_height": 24,
+      "font_size": 14,
+      "font_bold": true,
+      "color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "t5",
+      "text": "MAX",
+      "x": 397,
+      "y": 266,
+      "box_width": 150,
+      "box_height": 24,
+      "font_size": 14,
+      "font_bold": true,
+      "color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "t6",
+      "text": "FRAME TIME",
+      "x": 46,
+      "y": 369,
+      "box_width": 190,
+      "box_height": 24,
+      "font_size": 14,
+      "font_bold": true,
+      "color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "t7",
+      "text": "GPU TEMP",
+      "x": 620,
+      "y": 322,
+      "box_width": 215,
+      "box_height": 24,
+      "font_size": 14,
+      "font_bold": true,
+      "color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "t8",
+      "text": "CPU TEMP",
+      "x": 870,
+      "y": 322,
+      "box_width": 215,
+      "box_height": 24,
+      "font_size": 14,
+      "font_bold": true,
+      "color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "t9",
+      "text": "VOLUME",
+      "x": 1120,
+      "y": 322,
+      "box_width": 215,
+      "box_height": 24,
+      "font_size": 14,
+      "font_bold": true,
+      "color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "t10",
+      "text": "PROCESS MEMORY / RSS",
+      "x": 1395,
+      "y": 98,
+      "box_width": 475,
+      "box_height": 30,
+      "font_size": 20,
+      "font_bold": true,
+      "color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "t11",
+      "text": "GiB / shared pages may be counted twice",
+      "x": 1395,
+      "y": 405,
+      "box_width": 478,
+      "box_height": 22,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        155,
+        145,
+        160,
+        255
+      ]
+    }
+  ],
+  "stats": [
+    {
+      "id": "s0",
+      "source": "game_name",
+      "x": 660,
+      "y": 20,
+      "box_width": 750,
+      "box_height": 36,
+      "font_size": 24,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s1",
+      "source": "time_hms",
+      "x": 1660,
+      "y": 20,
+      "box_width": 230,
+      "box_height": 40,
+      "font_size": 28,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s2",
+      "source": "game_fps",
+      "x": 43,
+      "y": 118,
+      "box_width": 310,
+      "box_height": 117,
+      "font_size": 105,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s3",
+      "source": "game_fps_min",
+      "x": 48,
+      "y": 292,
+      "box_width": 155,
+      "box_height": 44,
+      "font_size": 32,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s4",
+      "source": "game_fps_avg",
+      "x": 220,
+      "y": 292,
+      "box_width": 155,
+      "box_height": 44,
+      "font_size": 32,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s5",
+      "source": "game_fps_max",
+      "x": 397,
+      "y": 292,
+      "box_width": 155,
+      "box_height": 44,
+      "font_size": 32,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s6",
+      "source": "game_frametime_ms",
+      "x": 244,
+      "y": 359,
+      "box_width": 300,
+      "box_height": 42,
+      "font_size": 30,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "g7",
+      "source": "gpu_load",
+      "x": 611,
+      "y": 100,
+      "box_width": 170,
+      "box_height": 168,
+      "font_size": 30,
+      "value_color": [
+        255,
+        104,
+        109,
+        255
+      ],
+      "label_color": [
+        128,
+        150,
+        175,
+        255
+      ],
+      "font_bold": true,
+      "label": "GPU",
+      "display": "gauge",
+      "gauge_ring_size": 125,
+      "gauge_value_layout": "center",
+      "stroke_width": 9,
+      "fill_color": [
+        255,
+        104,
+        109,
+        255
+      ],
+      "track_color": [
+        28,
+        43,
+        60,
+        255
+      ],
+      "gauge_inner_alpha": 0.1
+    },
+    {
+      "id": "g8",
+      "source": "cpu_usage_percent",
+      "x": 795,
+      "y": 100,
+      "box_width": 170,
+      "box_height": 168,
+      "font_size": 30,
+      "value_color": [
+        255,
+        104,
+        109,
+        255
+      ],
+      "label_color": [
+        128,
+        150,
+        175,
+        255
+      ],
+      "font_bold": true,
+      "label": "CPU",
+      "display": "gauge",
+      "gauge_ring_size": 125,
+      "gauge_value_layout": "center",
+      "stroke_width": 9,
+      "fill_color": [
+        255,
+        104,
+        109,
+        255
+      ],
+      "track_color": [
+        28,
+        43,
+        60,
+        255
+      ],
+      "gauge_inner_alpha": 0.1
+    },
+    {
+      "id": "g9",
+      "source": "mem_percent",
+      "x": 979,
+      "y": 100,
+      "box_width": 170,
+      "box_height": 168,
+      "font_size": 30,
+      "value_color": [
+        255,
+        104,
+        109,
+        255
+      ],
+      "label_color": [
+        128,
+        150,
+        175,
+        255
+      ],
+      "font_bold": true,
+      "label": "RAM",
+      "display": "gauge",
+      "gauge_ring_size": 125,
+      "gauge_value_layout": "center",
+      "stroke_width": 9,
+      "fill_color": [
+        255,
+        104,
+        109,
+        255
+      ],
+      "track_color": [
+        28,
+        43,
+        60,
+        255
+      ],
+      "gauge_inner_alpha": 0.1
+    },
+    {
+      "id": "g10",
+      "source": "vram_percent",
+      "x": 1163,
+      "y": 100,
+      "box_width": 170,
+      "box_height": 168,
+      "font_size": 30,
+      "value_color": [
+        255,
+        104,
+        109,
+        255
+      ],
+      "label_color": [
+        128,
+        150,
+        175,
+        255
+      ],
+      "font_bold": true,
+      "label": "VRAM",
+      "display": "gauge",
+      "gauge_ring_size": 125,
+      "gauge_value_layout": "center",
+      "stroke_width": 9,
+      "fill_color": [
+        255,
+        104,
+        109,
+        255
+      ],
+      "track_color": [
+        28,
+        43,
+        60,
+        255
+      ],
+      "gauge_inner_alpha": 0.1
+    },
+    {
+      "id": "s11",
+      "source": "gpu_temp",
+      "x": 620,
+      "y": 355,
+      "box_width": 220,
+      "box_height": 42,
+      "font_size": 30,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s12",
+      "source": "cpu_temp_c",
+      "x": 870,
+      "y": 355,
+      "box_width": 220,
+      "box_height": 42,
+      "font_size": 30,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s13",
+      "source": "volume_percent",
+      "x": 1120,
+      "y": 355,
+      "box_width": 220,
+      "box_height": 42,
+      "font_size": 30,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s14",
+      "source": "process_ram_1_name",
+      "x": 1395,
+      "y": 152,
+      "box_width": 316,
+      "box_height": 32,
+      "font_size": 20,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s15",
+      "source": "process_ram_1_gib",
+      "x": 1732,
+      "y": 152,
+      "box_width": 140,
+      "box_height": 32,
+      "font_size": 20,
+      "font_bold": true,
+      "value_color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "s16",
+      "source": "process_ram_2_name",
+      "x": 1395,
+      "y": 210,
+      "box_width": 316,
+      "box_height": 32,
+      "font_size": 20,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s17",
+      "source": "process_ram_2_gib",
+      "x": 1732,
+      "y": 210,
+      "box_width": 140,
+      "box_height": 32,
+      "font_size": 20,
+      "font_bold": true,
+      "value_color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "s18",
+      "source": "process_ram_3_name",
+      "x": 1395,
+      "y": 268,
+      "box_width": 316,
+      "box_height": 32,
+      "font_size": 20,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s19",
+      "source": "process_ram_3_gib",
+      "x": 1732,
+      "y": 268,
+      "box_width": 140,
+      "box_height": 32,
+      "font_size": 20,
+      "font_bold": true,
+      "value_color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    },
+    {
+      "id": "s20",
+      "source": "process_ram_4_name",
+      "x": 1395,
+      "y": 326,
+      "box_width": 316,
+      "box_height": 32,
+      "font_size": 20,
+      "font_bold": true,
+      "value_color": [
+        230,
+        236,
+        244,
+        255
+      ]
+    },
+    {
+      "id": "s21",
+      "source": "process_ram_4_gib",
+      "x": 1732,
+      "y": 326,
+      "box_width": 140,
+      "box_height": 32,
+      "font_size": 20,
+      "font_bold": true,
+      "value_color": [
+        255,
+        104,
+        109,
+        255
+      ]
+    }
+  ],
+  "images": [],
+  "widgets": [],
+  "effects": {
+    "animation": {
+      "enabled": false
+    }
+  }
+}

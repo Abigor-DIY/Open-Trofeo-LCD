@@ -62,7 +62,7 @@ class StatsSnapshot:
 
 
 class StatsProvider:
-    def __init__(self) -> None:
+    def __init__(self, *, enable_fps_probe: bool = True) -> None:
         self._cpu_snapshot = None
         self._process_memory = ProcessMemoryCache()
         self._cpu_core_snapshot = None
@@ -125,6 +125,21 @@ class StatsProvider:
         self._fps_probe_session_frametime_count = 0
         self._fps_probe_session_frametime_max: float | None = None
         self._fps_probe_session_stutter_count = 0
+        # Warmup window: game start / shader compilation produces misleading
+        # 1-5 FPS spikes. Samples inside the window are logged but excluded from
+        # the session min/max/stutter and from the 1%/0.1% lows.
+        try:
+            self._fps_probe_session_warmup_s = max(0.0, float(os.environ.get("OPEN_TROFEO_FPS_WARMUP_S", "20")))
+        except (TypeError, ValueError):
+            self._fps_probe_session_warmup_s = 20.0
+        self._fps_probe_gameplay_sample_count = 0
+        self._fps_probe_gameplay_fps_sum = 0.0
+        self._fps_probe_gameplay_fps_min: float | None = None
+        self._fps_probe_gameplay_fps_max: float | None = None
+        self._fps_probe_gameplay_frametime_count = 0
+        self._fps_probe_gameplay_frametime_sum = 0.0
+        self._fps_probe_gameplay_frametime_max: float | None = None
+        self._fps_probe_gameplay_stutter_count = 0
         state_home = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
         self._fps_log_dir = os.path.join(state_home, "open-trofeo-lcd", "fps-sessions")
         self._fps_log_path = ""
@@ -191,7 +206,9 @@ class StatsProvider:
         self._last_weather_source = "none"
         self._weather_lock = threading.Lock()
         self._weather_refresh_inflight = False
-        self._start_fps_probe_server()
+        self._fps_probe_enabled = bool(enable_fps_probe)
+        if self._fps_probe_enabled:
+            self._start_fps_probe_server()
         if not self._audio_eq_enabled:
             self._audio_eq_status = "disabled"
         elif not self._audio_eq_cava_bin:
@@ -208,6 +225,20 @@ class StatsProvider:
             return os.path.expanduser(configured)
         runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
         return os.path.join(runtime_dir, "open-trofeo-lcd", "fps.sock")
+
+    @staticmethod
+    def _fps_probe_socket_is_live(path: str) -> bool:
+        """Return True when an existing socket path is served by a live process."""
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        try:
+            probe.settimeout(0.2)
+            probe.connect(path)
+            probe.send(b"")
+            return True
+        except OSError:
+            return False
+        finally:
+            probe.close()
 
     @staticmethod
     def _format_fps_value(value: object) -> str:
@@ -290,6 +321,14 @@ class StatsProvider:
         self._fps_probe_session_frametime_count = 0
         self._fps_probe_session_frametime_max = None
         self._fps_probe_session_stutter_count = 0
+        self._fps_probe_gameplay_sample_count = 0
+        self._fps_probe_gameplay_fps_sum = 0.0
+        self._fps_probe_gameplay_fps_min = None
+        self._fps_probe_gameplay_fps_max = None
+        self._fps_probe_gameplay_frametime_count = 0
+        self._fps_probe_gameplay_frametime_sum = 0.0
+        self._fps_probe_gameplay_frametime_max = None
+        self._fps_probe_gameplay_stutter_count = 0
         day = time.strftime("%Y-%m-%d", time.localtime(now))
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
         game_slug = self._fps_log_slug(snapshot.get("game_name"))
@@ -301,7 +340,13 @@ class StatsProvider:
         )
         self._fps_log_error = ""
 
-    def _update_fps_session_stats_locked(self, fps: float | None, frametime_ms: float | None) -> None:
+    def _fps_in_warmup(self, now: float) -> bool:
+        warmup = float(getattr(self, "_fps_probe_session_warmup_s", 0.0) or 0.0)
+        start = float(self._fps_probe_session_start_at or 0.0)
+        return warmup > 0.0 and start > 0.0 and (now - start) < warmup
+
+    def _update_fps_session_stats_locked(self, now: float, fps: float | None, frametime_ms: float | None) -> None:
+        in_warmup = self._fps_in_warmup(now)
         if fps is not None and math.isfinite(fps) and fps > 0.0:
             self._fps_probe_session_sample_count += 1
             self._fps_probe_session_fps_sum += fps
@@ -315,6 +360,19 @@ class StatsProvider:
                 if self._fps_probe_session_fps_max is None
                 else max(self._fps_probe_session_fps_max, fps)
             )
+            if not in_warmup:
+                self._fps_probe_gameplay_sample_count += 1
+                self._fps_probe_gameplay_fps_sum += fps
+                self._fps_probe_gameplay_fps_min = (
+                    fps
+                    if self._fps_probe_gameplay_fps_min is None
+                    else min(self._fps_probe_gameplay_fps_min, fps)
+                )
+                self._fps_probe_gameplay_fps_max = (
+                    fps
+                    if self._fps_probe_gameplay_fps_max is None
+                    else max(self._fps_probe_gameplay_fps_max, fps)
+                )
         if frametime_ms is not None and math.isfinite(frametime_ms) and frametime_ms > 0.0:
             self._fps_probe_session_frametime_count += 1
             self._fps_probe_session_frametime_sum += frametime_ms
@@ -325,6 +383,16 @@ class StatsProvider:
             )
             if frametime_ms >= 33.3:
                 self._fps_probe_session_stutter_count += 1
+            if not in_warmup:
+                self._fps_probe_gameplay_frametime_count += 1
+                self._fps_probe_gameplay_frametime_sum += frametime_ms
+                self._fps_probe_gameplay_frametime_max = (
+                    frametime_ms
+                    if self._fps_probe_gameplay_frametime_max is None
+                    else max(self._fps_probe_gameplay_frametime_max, frametime_ms)
+                )
+                if frametime_ms >= 33.3:
+                    self._fps_probe_gameplay_stutter_count += 1
 
     @staticmethod
     def _fps_log_number(value: object) -> object:
@@ -446,33 +514,57 @@ class StatsProvider:
         while self._fps_probe_history and now - float(self._fps_probe_history[0].get("at", 0.0)) > 120.0:
             self._fps_probe_history.popleft()
         recent = [sample for sample in self._fps_probe_history if now - float(sample.get("at", 0.0)) <= 60.0]
-        fps_values = [float(sample["fps"]) for sample in recent if float(sample.get("fps", 0.0)) > 0.0]
-        frame_values = [float(sample["frametime_ms"]) for sample in recent if float(sample.get("frametime_ms", 0.0)) > 0.0]
+        gameplay_recent = [sample for sample in recent if not sample.get("warmup")]
+        fps_values = [float(sample["fps"]) for sample in gameplay_recent if float(sample.get("fps", 0.0)) > 0.0]
+        use_gameplay = self._fps_probe_gameplay_sample_count > 0
         avg_fps = (
-            self._fps_probe_session_fps_sum / self._fps_probe_session_sample_count
-            if self._fps_probe_session_sample_count > 0
-            else None
+            (self._fps_probe_gameplay_fps_sum / self._fps_probe_gameplay_sample_count)
+            if use_gameplay
+            else (
+                self._fps_probe_session_fps_sum / self._fps_probe_session_sample_count
+                if self._fps_probe_session_sample_count > 0
+                else None
+            )
         )
+        use_gameplay_frame = self._fps_probe_gameplay_frametime_count > 0
         avg_frame = (
-            self._fps_probe_session_frametime_sum / self._fps_probe_session_frametime_count
-            if self._fps_probe_session_frametime_count > 0
-            else None
+            (self._fps_probe_gameplay_frametime_sum / self._fps_probe_gameplay_frametime_count)
+            if use_gameplay_frame
+            else (
+                self._fps_probe_session_frametime_sum / self._fps_probe_session_frametime_count
+                if self._fps_probe_session_frametime_count > 0
+                else None
+            )
         )
+        gameplay_min = self._fps_probe_gameplay_fps_min
+        gameplay_max = self._fps_probe_gameplay_fps_max
+        # Before any post-warmup sample exists, fall back to the session value so
+        # very short sessions still report something; once gameplay starts, the
+        # startup/shader-compile spikes are excluded.
         return {
             "game_fps_avg": self._format_plain_number(avg_fps),
-            "game_fps_min": self._format_plain_number(self._fps_probe_session_fps_min),
-            "game_fps_max": self._format_plain_number(self._fps_probe_session_fps_max),
+            "game_fps_min": self._format_plain_number(gameplay_min if gameplay_min is not None else self._fps_probe_session_fps_min),
+            "game_fps_max": self._format_plain_number(gameplay_max if gameplay_max is not None else self._fps_probe_session_fps_max),
+            "game_fps_min_session": self._format_plain_number(self._fps_probe_session_fps_min),
+            "game_fps_max_session": self._format_plain_number(self._fps_probe_session_fps_max),
+            "game_fps_warmup": "yes" if self._fps_in_warmup(now) else "no",
             "game_fps_1pct_low": self._format_plain_number(self._percentile_low(fps_values, 0.01)),
             "game_fps_0_1pct_low": self._format_plain_number(self._percentile_low(fps_values, 0.001)),
             "game_frametime_avg_ms": self._format_plain_number(avg_frame, decimals=1, suffix=" ms"),
-            "game_frametime_max_ms": self._format_plain_number(self._fps_probe_session_frametime_max, decimals=1, suffix=" ms"),
-            "game_stutter_count": str(self._fps_probe_session_stutter_count) if self._fps_probe_session_frametime_count else "N/A",
+            "game_frametime_max_ms": self._format_plain_number(
+                self._fps_probe_gameplay_frametime_max if use_gameplay_frame else self._fps_probe_session_frametime_max,
+                decimals=1,
+                suffix=" ms",
+            ),
+            "game_stutter_count": str(
+                self._fps_probe_gameplay_stutter_count if use_gameplay_frame else self._fps_probe_session_stutter_count
+            ) if (use_gameplay_frame or self._fps_probe_session_frametime_count) else "N/A",
             "game_session_time": self._format_duration(now - self._fps_probe_session_start_at if self._fps_probe_session_start_at > 0 else None),
         }
 
     def _start_fps_probe_server(self) -> None:
         path = self._fps_probe_socket_path
-        if not path:
+        if not path or not self._fps_probe_enabled:
             return
 
         def _worker() -> None:
@@ -480,6 +572,11 @@ class StatsProvider:
             try:
                 parent = os.path.dirname(path)
                 os.makedirs(parent, mode=0o700, exist_ok=True)
+                # Never steal the socket from a live receiver (the backend owns
+                # it). Only remove a stale file left behind by a dead process,
+                # otherwise transient StatsProviders orphan the real listener.
+                if os.path.exists(path) and self._fps_probe_socket_is_live(path):
+                    return
                 try:
                     os.unlink(path)
                 except FileNotFoundError:
@@ -567,9 +664,10 @@ class StatsProvider:
                         "at": now,
                         "fps": max(0.0, fps_float or 0.0),
                         "frametime_ms": max(0.0, frametime_float or 0.0),
+                        "warmup": self._fps_in_warmup(now),
                     }
                 )
-            self._update_fps_session_stats_locked(fps_float, frametime_float)
+            self._update_fps_session_stats_locked(now, fps_float, frametime_float)
             snapshot.update(self._fps_history_stats_locked(now))
             snapshot["game_fps_log_path"] = self._fps_log_path
             self._queue_fps_log_sample_locked(
@@ -592,6 +690,8 @@ class StatsProvider:
             "game_fps_avg",
             "game_fps_min",
             "game_fps_max",
+            "game_fps_min_session",
+            "game_fps_warmup",
             "game_fps_1pct_low",
             "game_fps_0_1pct_low",
             "game_frametime_avg_ms",
@@ -625,6 +725,9 @@ class StatsProvider:
                 "game_fps_avg",
                 "game_fps_min",
                 "game_fps_max",
+                "game_fps_min_session",
+                "game_fps_max_session",
+                "game_fps_warmup",
                 "game_fps_1pct_low",
                 "game_fps_0_1pct_low",
                 "game_frametime_ms",
@@ -669,6 +772,8 @@ class StatsProvider:
                 "game_fps_avg",
                 "game_fps_min",
                 "game_fps_max",
+                "game_fps_min_session",
+                "game_fps_warmup",
                 "game_fps_1pct_low",
                 "game_fps_0_1pct_low",
                 "game_frametime_avg_ms",
@@ -2148,7 +2253,36 @@ class StatsProvider:
             "mangohud",
             "mangoapp",
             "gamescope",
+            # Steam Runtime / shader-compile helpers that are not games.
+            "fossilize_replay",
+            "fossilize_repla",
+            "fossilize",
+            "reaper",
+            "srt-logger",
+            "pv-adverb",
+            "pv-runtime",
+            "pv-bwrap",
+            "steam-runtime-check-requirements",
+            "steam-runtime-launcher-service",
+            "steamerrorreporter",
+            "gameoverlayui",
+            "wine-preloader",
+            "wine64-preloader",
+            "winedbg",
         }
+        helper_prefixes = (
+            "steamwebhelper",
+            "steam-runtime",
+            "fossilize",
+            "srt-logger",
+            "pv-adverb",
+            "pv-runtime",
+            "pv-bwrap",
+            "reaper",
+            "gameoverlayui",
+            "wine-preloader",
+            "wine64-preloader",
+        )
         helper_markers = (
             "legacycompat",
             "iscriptevaluator",
@@ -2156,8 +2290,19 @@ class StatsProvider:
             "dxsetup.exe",
             "_commonredist",
             "runasadmin.vdf",
+            "fossilize_replay",
+            "fossilize-replay",
+            "steam-runtime-check-requirements",
+            "srt-logger",
+            "pv-adverb",
+            "pv-runtime",
+            "steamerrorreporter",
+            "gameoverlayui",
         )
-        is_helper = lowered_comm in helper_names or lowered_comm.startswith("steamwebhelper")
+        is_helper = (
+            lowered_comm in helper_names
+            or any(lowered_comm.startswith(prefix) for prefix in helper_prefixes)
+        )
         if is_helper:
             score -= 45 if configured_name else 220
         if any(marker in haystack for marker in helper_markers):
@@ -2372,6 +2517,8 @@ class StatsProvider:
                 "game_fps_avg",
                 "game_fps_min",
                 "game_fps_max",
+                "game_fps_min_session",
+                "game_fps_warmup",
                 "game_fps_1pct_low",
                 "game_fps_0_1pct_low",
                 "game_frametime_avg_ms",
@@ -2400,6 +2547,8 @@ class StatsProvider:
                 "game_fps_avg",
                 "game_fps_min",
                 "game_fps_max",
+                "game_fps_min_session",
+                "game_fps_warmup",
                 "game_fps_1pct_low",
                 "game_fps_0_1pct_low",
                 "game_frametime_avg_ms",

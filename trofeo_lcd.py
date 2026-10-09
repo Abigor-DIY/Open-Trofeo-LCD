@@ -1393,7 +1393,7 @@ def _get_monitor_stats_provider() -> StatsProvider:
     global _MONITOR_STATS_PROVIDER
 
     if _MONITOR_STATS_PROVIDER is None:
-        _MONITOR_STATS_PROVIDER = StatsProvider()
+        _MONITOR_STATS_PROVIDER = StatsProvider(enable_fps_probe=False)
     return _MONITOR_STATS_PROVIDER
 
 

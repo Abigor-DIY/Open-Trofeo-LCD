@@ -19,14 +19,14 @@ and a dedicated gaming view with FPS and frame-time history.
 
 | Area | Current capabilities |
 |---|---|
-| Themes | Theme Gallery, JSON themes, previews, duplication, import/export and multiple bundled starter themes |
+| Themes | Theme Gallery, JSON themes, previews, duplication, import/export and eight bundled starter themes |
 | Creation tools | Qt Theme Designer, layer controls, quick-add tools, auto-layout and Animation Studio |
 | System telemetry | CPU/GPU/RAM/VRAM load, temperatures, frequency, storage, network activity, uptime and sparklines |
 | Processes | Top processes by resident memory, refreshed without blocking the live display path |
 | Media and audio | MPRIS now-playing metadata, album art, playback state, volume and CAVA spectrum/EQ bars |
 | Weather | Open-Meteo current conditions, city search, animated icons and a seven-day forecast; no API key required |
 | Gaming | Native Vulkan FPS probe, frame time, session min/average/max, 1% and 0.1% lows, stutter count and per-session CSV logs |
-| Automation | Automatic gaming-theme switching and restore plus KDE Wayland VRR controls |
+| Automation | Automatic gaming-theme switching and restore, temporary `power-profiles-daemon` performance hold, and KDE Wayland VRR controls |
 | Display runtime | Native PyUSB transfer path, optional `trcc-linux` integration, brightness control and USB recovery tooling |
 
 MangoHud log reading is available only as an explicit fallback. It is not on the
@@ -43,21 +43,28 @@ critical path for backend status or normal live rendering.
   may still require launch-option or compatibility-layer tuning.
 - KDE VRR controls use `kscreen-doctor`. The `Automatic` policy is recommended;
   forcing VRR continuously can make some desktop/display combinations flicker.
+- The CPU performance option requests a temporary hold through
+  `powerprofilesctl`; it does not write CPU governor files directly.
 - This is an unofficial community project and is not affiliated with or
   endorsed by Thermalright.
 
 ## Project status
 
-The public development preview includes the Valhalla Command gaming dashboard,
-Orbital Relay, Obsidian Pulse and other starter themes. Source/venv installation
-remains the primary route for early testers. The PPA currently publishes
-`0.1.0~dev20260913+gaming2` for Ubuntu 26.04 / Resolute; there is not yet a
-stable GitHub Release.
+The current development tree includes eight live themes:
 
-- [Ubuntu PPA](https://launchpad.net/~abigor82/+archive/ubuntu/open-trofeo-lcd)
-- [Gaming setup](docs/gaming-fps.md)
-- [Experimental Flatpak notes](docs/flatpak.md)
-- [Distribution packaging notes](docs/linux-packaging.md)
+- Amber Hi-Fi
+- Crimson Telemetry
+- Neon Frame Arena
+- Nordic Forecast
+- Obsidian Pulse
+- Orbital Relay
+- Valhalla Command
+- Verdant Bloom
+
+Source/venv installation remains the primary route for early testers. A working
+development DEB is built locally, but there is not yet a stable GitHub Release.
+Experimental Flatpak and distribution-packaging notes are available in
+`docs/flatpak.md` and `docs/linux-packaging.md`.
 
 Before publishing a release, validate the tree with:
 

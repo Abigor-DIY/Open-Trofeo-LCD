@@ -2342,7 +2342,7 @@ def render_theme_document(
     output_mode: str = "RGB",
 ) -> Image.Image:
     base_dir = Path(".") if base_dir is None else base_dir
-    stats_provider = StatsProvider() if stats_provider is None else stats_provider
+    stats_provider = StatsProvider(enable_fps_probe=False) if stats_provider is None else stats_provider
 
     themed = _apply_motion_tracks(theme)
     snapshot = dict(stats_override) if isinstance(stats_override, dict) else stats_provider.snapshot().values

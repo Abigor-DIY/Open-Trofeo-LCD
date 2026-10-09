@@ -231,7 +231,8 @@ def build_shell(
     title_widget.setLayout(title_stack)
 
     ui_mode_combo = QComboBox()
-    ui_mode_combo.addItems(["Dark", "Light"])
+    ui_mode_combo.addItems(["Dark", "Light", "System"])
+    ui_mode_combo.setToolTip("Application theme: Dark, Light, or follow the desktop (System).")
     ui_theme_combo = QComboBox()
     ui_theme_combo.addItems(ui_theme_names)
     ui_theme_combo.hide()
