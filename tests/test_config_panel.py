@@ -129,6 +129,9 @@ class ConfigPanelTests(unittest.TestCase):
 
         self.assertEqual(controls.results_combo.itemData(0), None)
         self.assertEqual(controls.refresh_spin.value(), 900)
+        self.assertEqual(controls.temperature_unit_combo.currentData(), "celsius")
+        controls.temperature_unit_combo.setCurrentIndex(1)
+        self.assertEqual(controls.temperature_unit_combo.currentData(), "fahrenheit")
         self.assertIn("search", calls)
         self.assertIn("select:1", calls)
         self.assertEqual(calls[-2:], ["apply", "refresh"])
@@ -357,6 +360,7 @@ class ConfigPanelTests(unittest.TestCase):
         self.assertIs(owner.cfg_vrr_status_label, controls.gaming_fps.vrr_status_label)
         self.assertIs(owner.cfg_vrr_automatic_btn, controls.gaming_fps.vrr_automatic_btn)
         self.assertIs(owner.cfg_weather_status_label, controls.weather.status_label)
+        self.assertIs(owner.cfg_weather_temp_unit_combo, controls.weather.temperature_unit_combo)
         self.assertIs(owner.cfg_audio_eq_apply_btn, controls.audio_eq.apply_btn)
         self.assertIs(owner.automation_tools_box, controls.automation.box)
         self.assertIs(owner.cfg_save_btn, controls.actions.save_btn)

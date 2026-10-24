@@ -223,6 +223,10 @@ def refresh_config_weather_labels(owner: object, translate: TranslateFn) -> None
         owner.cfg_weather_search_btn.setText(translate("Search", "Szukaj"))
     if hasattr(owner, "cfg_weather_apply_btn"):
         owner.cfg_weather_apply_btn.setText(translate("Apply weather", "Zastosuj pogodę"))
+    if hasattr(owner, "cfg_weather_temp_unit_combo"):
+        label = owner.weather_box.layout().labelForField(owner.cfg_weather_temp_unit_combo)
+        if label is not None:
+            label.setText(translate("Temperature unit:", "Jednostka temperatury:"))
 
 
 def refresh_theme_gallery_labels(owner: object, translate: TranslateFn) -> None:

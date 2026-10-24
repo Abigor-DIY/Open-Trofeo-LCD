@@ -15,36 +15,24 @@ if str(ROOT) not in sys.path:
 
 from theme_renderer import render_theme_document
 from theme_schema import load_theme_document
-from preview_stats import PreviewStatsProvider, preview_stats_values
+from preview_stats import PreviewStatsProvider
 
 
 PREVIEW_NAMES = {
-    "heritage_duality.json": "theme-heritage-duality.png",
-    "linux_matrix_green.json": "theme-matrix-green.png",
+    "amber_hi_fi.json": "theme-amber-hi-fi.png",
+    "crimson_telemetry.json": "theme-crimson-telemetry.png",
+    "kernel_console.json": "theme-kernel-console.png",
+    "linux_matrix_green.json": "theme-neon-frame-arena.png",
+    "nordic_forecast.json": "theme-nordic-forecast.png",
     "obsidian_pulse.json": "theme-obsidian-pulse.png",
-    "orbital_relay.json": "theme-orbital-relay.png",
+    "penguin_circuit.json": "theme-penguin-circuit.png",
     "verdant_bloom.json": "theme-verdant-bloom.png",
-    "wolfstorm_forge.json": "theme-wolfstorm-forge.png",
-    "valhalla_command.json": "theme-valhalla-command.png",
 }
 
 
 def render_preview(theme_path: Path, out_path: Path, *, width: int | None) -> None:
     document = load_theme_document(theme_path)
-    values = preview_stats_values()
-    if theme_path.name == "valhalla_command.json":
-        values["game_name"] = "DEMO GAME / SYNTHETIC DATA"
-        for index, (name, gib) in enumerate(
-            [("demo-game", "4.20"), ("demo-browser", "1.10"),
-             ("demo-desktop", "0.65"), ("demo-player", "0.24")], start=1
-        ):
-            values[f"process_ram_{index}_name"] = name
-            values[f"process_ram_{index}_gib"] = gib
-            values[f"process_ram_{index}_pid"] = str(1000 + index)
-        for widget in document.data.get("texts", []):
-            if widget.get("text") == "LIVE TELEMETRY  /  NO SIMULATED DATA":
-                widget["text"] = "ILLUSTRATIVE PREVIEW / SYNTHETIC DATA"
-    image = render_theme_document(document, base_dir=theme_path.parent, stats_provider=PreviewStatsProvider(values))
+    image = render_theme_document(document, base_dir=theme_path.parent, stats_provider=PreviewStatsProvider())
     rotation = int(document.data.get("canvas", {}).get("rotation", 0)) % 360
     if rotation:
         image = image.transpose(

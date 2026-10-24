@@ -1,0 +1,476 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Nordic Forecast",
+    "author": "Open Trofeo LCD",
+    "description": "Aurora weather observatory; live telemetry with subtle looped artwork.",
+    "tags": [
+      "starter-pack",
+      "animated"
+    ]
+  },
+  "canvas": {
+    "width": 1920,
+    "height": 462,
+    "rotation": 180
+  },
+  "background": {
+    "kind": "image",
+    "path": "nordic_forecast_assets/2026-10-10/frames/nordic_forecast_frame_0000.jpg",
+    "fit": "cover",
+    "base_color": [
+      8,
+      19,
+      36
+    ],
+    "accent_color": [
+      127,
+      223,
+      223
+    ],
+    "texture_alpha": 0.0,
+    "panels": []
+  },
+  "texts": [
+    {
+      "id": "txt_0",
+      "text": "NORDIC FORECAST",
+      "x": 36,
+      "y": 31,
+      "box_width": 620,
+      "box_height": 39,
+      "font_size": 27,
+      "font_bold": true,
+      "color": [
+        127,
+        223,
+        223,
+        255
+      ]
+    },
+    {
+      "id": "txt_1",
+      "text": "AURORA WEATHER OBSERVATORY  /  LIVE",
+      "x": 765,
+      "y": 37,
+      "box_width": 620,
+      "box_height": 25,
+      "font_size": 13,
+      "font_bold": true,
+      "color": [
+        165,
+        231,
+        232,
+        255
+      ]
+    },
+    {
+      "id": "txt_2",
+      "text": "CURRENT CONDITIONS",
+      "x": 58,
+      "y": 103,
+      "box_width": 470,
+      "box_height": 26,
+      "font_size": 14,
+      "font_bold": true,
+      "color": [
+        127,
+        223,
+        223,
+        255
+      ]
+    },
+    {
+      "id": "txt_3",
+      "text": "7 DAY OUTLOOK",
+      "x": 630,
+      "y": 103,
+      "box_width": 1150,
+      "box_height": 26,
+      "font_size": 14,
+      "font_bold": true,
+      "color": [
+        127,
+        223,
+        223,
+        255
+      ]
+    },
+    {
+      "id": "txt_4",
+      "text": "HUMIDITY",
+      "x": 58,
+      "y": 365,
+      "box_width": 335,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        127,
+        223,
+        223,
+        255
+      ]
+    },
+    {
+      "id": "txt_5",
+      "text": "WIND",
+      "x": 423,
+      "y": 365,
+      "box_width": 335,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        127,
+        223,
+        223,
+        255
+      ]
+    },
+    {
+      "id": "txt_6",
+      "text": "RAIN",
+      "x": 788,
+      "y": 365,
+      "box_width": 335,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        127,
+        223,
+        223,
+        255
+      ]
+    },
+    {
+      "id": "txt_7",
+      "text": "CPU",
+      "x": 1153,
+      "y": 365,
+      "box_width": 335,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        127,
+        223,
+        223,
+        255
+      ]
+    },
+    {
+      "id": "txt_8",
+      "text": "UPTIME",
+      "x": 1518,
+      "y": 365,
+      "box_width": 335,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        127,
+        223,
+        223,
+        255
+      ]
+    }
+  ],
+  "stats": [
+    {
+      "id": "stat_0",
+      "source": "time_hms",
+      "x": 1645,
+      "y": 28,
+      "box_width": 245,
+      "box_height": 41,
+      "font_size": 29,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_1",
+      "source": "weather_humidity_percent",
+      "x": 58,
+      "y": 387,
+      "box_width": 335,
+      "box_height": 37,
+      "font_size": 25,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_2",
+      "source": "weather_wind_kph",
+      "x": 423,
+      "y": 387,
+      "box_width": 335,
+      "box_height": 37,
+      "font_size": 25,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_3",
+      "source": "weather_precip_mm",
+      "x": 788,
+      "y": 387,
+      "box_width": 335,
+      "box_height": 37,
+      "font_size": 25,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_4",
+      "source": "cpu_usage_percent",
+      "x": 1153,
+      "y": 387,
+      "box_width": 335,
+      "box_height": 37,
+      "font_size": 25,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_5",
+      "source": "uptime_human",
+      "x": 1518,
+      "y": 387,
+      "box_width": 335,
+      "box_height": 37,
+      "font_size": 25,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    }
+  ],
+  "images": [],
+  "widgets": [
+    {
+      "id": "widget_0",
+      "kind": "weather_current",
+      "rect": [
+        57,
+        145,
+        496,
+        171
+      ],
+      "style": "compact",
+      "settings": {
+        "panel_enabled": false,
+        "panel_fill": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "font_family": "DejaVu Sans",
+        "location_font_size": 16,
+        "temp_font_size": 32,
+        "condition_font_size": 18,
+        "detail_font_size": 12,
+        "location_color": [
+          235,
+          248,
+          255,
+          255
+        ],
+        "temp_color": [
+          127,
+          223,
+          223,
+          255
+        ],
+        "condition_color": [
+          210,
+          224,
+          240,
+          255
+        ],
+        "detail_color": [
+          182,
+          204,
+          220,
+          255
+        ],
+        "animate_icons": true,
+        "icon_animation_speed": 1.0,
+        "icon_frame_fps": 12.0,
+        "title_marquee": true,
+        "equalizer_color": [
+          127,
+          223,
+          223,
+          255
+        ],
+        "day_color": [
+          127,
+          223,
+          223,
+          255
+        ],
+        "backdrop_enabled": false,
+        "title_color": [
+          237,
+          246,
+          249,
+          255
+        ]
+      },
+      "opacity": 1.0,
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "widget_1",
+      "kind": "weather_forecast_7d",
+      "rect": [
+        626,
+        144,
+        1238,
+        168
+      ],
+      "style": "compact",
+      "settings": {
+        "panel_enabled": false,
+        "panel_fill": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "font_family": "DejaVu Sans",
+        "location_font_size": 18,
+        "day_font_size": 17,
+        "temp_max_font_size": 19,
+        "temp_min_font_size": 16,
+        "condition_font_size": 12,
+        "location_color": [
+          235,
+          246,
+          255,
+          255
+        ],
+        "day_color": [
+          127,
+          223,
+          223,
+          255
+        ],
+        "temp_max_color": [
+          246,
+          231,
+          152,
+          255
+        ],
+        "temp_min_color": [
+          180,
+          206,
+          232,
+          255
+        ],
+        "condition_color": [
+          210,
+          224,
+          240,
+          255
+        ],
+        "animate_icons": true,
+        "icon_animation_speed": 1.0,
+        "icon_frame_fps": 12.0,
+        "title_marquee": true,
+        "equalizer_color": [
+          127,
+          223,
+          223,
+          255
+        ],
+        "backdrop_enabled": false,
+        "title_color": [
+          237,
+          246,
+          249,
+          255
+        ],
+        "temp_color": [
+          127,
+          223,
+          223,
+          255
+        ]
+      },
+      "opacity": 1.0,
+      "z_index": 210,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "effects": {
+    "animation": {
+      "enabled": true,
+      "use_as_background": true,
+      "fps": 4,
+      "loop": true,
+      "smooth_loop": false,
+      "current_frame": 0,
+      "frame_paths": [
+        "nordic_forecast_assets/2026-10-10/frames/nordic_forecast_frame_0000.jpg",
+        "nordic_forecast_assets/2026-10-10/frames/nordic_forecast_frame_0001.jpg",
+        "nordic_forecast_assets/2026-10-10/frames/nordic_forecast_frame_0002.jpg",
+        "nordic_forecast_assets/2026-10-10/frames/nordic_forecast_frame_0003.jpg",
+        "nordic_forecast_assets/2026-10-10/frames/nordic_forecast_frame_0004.jpg",
+        "nordic_forecast_assets/2026-10-10/frames/nordic_forecast_frame_0005.jpg",
+        "nordic_forecast_assets/2026-10-10/frames/nordic_forecast_frame_0006.jpg",
+        "nordic_forecast_assets/2026-10-10/frames/nordic_forecast_frame_0007.jpg"
+      ],
+      "frame_durations_ms": [
+        250,
+        250,
+        250,
+        250,
+        250,
+        250,
+        250,
+        250
+      ]
+    }
+  }
+}

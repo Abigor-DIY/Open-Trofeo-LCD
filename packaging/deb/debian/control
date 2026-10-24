@@ -36,6 +36,7 @@ Recommends:
  gcc,
  make,
 Suggests:
+ power-profiles-daemon,
  trcc-linux,
  goverlay,
 Description: Linux driver and theme editor for Thermalright Trofeo LCD

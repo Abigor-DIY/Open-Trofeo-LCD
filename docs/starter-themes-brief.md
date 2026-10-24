@@ -3,18 +3,20 @@
 ## Wspolne wymagania techniczne
 
 - Docelowa rozdzielczosc canvasu: `1920 x 462`
-- Bezpieczny format tla: `PNG`, `sRGB`, 8-bit
+- Bezpieczny format tla: `PNG` lub `JPG`, `sRGB`, 8-bit
 - Dopuszczalny format tla fotograficznego: `JPG`, jakosc wysoka
 - Overlay z przezroczystoscia: `PNG`
 - Elementy ikon / panele: `PNG` z alfa
-- Jesli planujesz animacje:
+- Sekwencje animacji w odswiezonych motywach:
   - sekwencja klatek `1920 x 462`
   - format `PNG` albo `JPG`
-  - nazewnictwo `theme_name_frame_0001.png`
+  - 8 klatek po 250 ms, petla 4 FPS
+  - backend TRCC zachowuje czas klatki z motywu; limit transferu USB nie przyspiesza animacji
+  - pliki w `themes/<nazwa>_assets/2026-10-10/frames/`
 
 ## Co dostarczyc do kazdego motywu
 
-- `1 x background` w `1920 x 462`
+- `1 x background` w `1920 x 462` lub pierwsza klatka animacji
 - `1 x overlay` opcjonalny w `1920 x 462 PNG`
 - `1 x preview` pod galerie i metainfo w `docs/screenshots/*.png`
 - Jesli motyw ma sekcje now playing:
@@ -28,16 +30,24 @@
 - Generator kompensuje `canvas.rotation`, wiec miniatury sa zapisane w orientacji widocznej w GUI.
 - Po zmianie layoutu motywu uruchom generator i sprawdz `docs/screenshots/`.
 
-## Pakiet dystrybucyjny: 6 motywow
+## Pakiet dystrybucyjny: 10 motywow
 
 Te motywy zostaja w paczce startowej:
 
-- `Heritage Duality` (`themes/heritage_duality.json`)
-- `Matrix Green` (`themes/linux_matrix_green.json`)
-- `Verdant Bloom` (`themes/verdant_bloom.json`)
-- `Wolfstorm Forge` (`themes/wolfstorm_forge.json`)
-- `Orbital Relay` (`themes/orbital_relay.json`)
+- `Amber Hi-Fi` (`themes/amber_hi_fi.json`)
+- `Crimson Telemetry` (`themes/crimson_telemetry.json`)
+- `Kernel Console` (`themes/kernel_console.json`)
+- `Neon Frame Arena` (`themes/linux_matrix_green.json`)
+- `Nordic Forecast` (`themes/nordic_forecast.json`)
 - `Obsidian Pulse` (`themes/obsidian_pulse.json`)
+- `Penguin Circuit` (`themes/penguin_circuit.json`)
+- `Verdant Bloom` (`themes/verdant_bloom.json`)
+- `Orbital Relay` (`themes/orbital_relay.json`)
+- `Valhalla Command` (`themes/valhalla_command.json`)
+
+Sześć odświeżonych istniejących motywów i dwa nowe linuksowe generuje
+`python3 scripts/generate_refreshed_themes.py`. `Orbital Relay` i
+`Valhalla Command` pozostają bez zmian w tej rundzie.
 
 ## Gotowe komponenty w Theme Designer
 

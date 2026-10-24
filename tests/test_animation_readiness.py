@@ -17,7 +17,7 @@ class AnimationReadinessTest(unittest.TestCase):
             controller.cfg = SimpleNamespace(trcc_animation_script=frame,
                 child_log_file=root / 'worker.log', workdir=root)
             controller._resolve_trcc_python = Mock(return_value=Path('/usr/bin/python3'))
-            controller._runtime_temp_file = Mock(return_value=root / 'manifest.json')
+            controller._tmp_temp_file = Mock(return_value=root / 'manifest.json')
             controller._preflight_trcc_display_start = Mock()
             controller._cleanup_proc_locked = Mock()
             controller._log = Mock()

@@ -42,9 +42,16 @@ from theme_schema import (
     save_theme_document,
 )
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, ""))
+    except (TypeError, ValueError):
+        return default
+
+
 DEFAULT_LIVE_REFRESH_INTERVAL_S = 1.0
-FAST_VISUAL_REFRESH_INTERVAL_S = 0.25
-FAST_AUDIO_EQ_REFRESH_INTERVAL_S = 0.075
+FAST_VISUAL_REFRESH_INTERVAL_S = 0.20
+FAST_AUDIO_EQ_REFRESH_INTERVAL_S = 0.05
 MIN_LIVE_REFRESH_INTERVAL_S = 0.15
 FAST_VISUAL_FULL_STATS_INTERVAL_S = 1.0
 MEDIA_TRANSIENT_GRACE_S = 8.0
@@ -52,8 +59,22 @@ LIVE_REFRESH_LOG_INTERVAL_S = 5.0
 LIVE_REFRESH_SLOW_STAGE_MS = 120.0
 WINDOWS_CAPTURE_INTER_PACKET_DELAY_S = 0.0005
 WINDOWS_CAPTURE_ACK_TIMEOUT_MS = 120
-TRCC_ANIMATION_TARGET_FPS = 15.0
-TRCC_ANIMATION_TARGET_FRAME_MS = int(round(1000.0 / TRCC_ANIMATION_TARGET_FPS))
+# The 1920x462 panel is bandwidth-bound: a q95 full frame is ~300 KB and the
+# USB link only sustains ~12 FPS with dropped frames. Shrinking the JPEG (see
+# OPEN_TROFEO_JPEG_QUALITY in scripts/trcc_animated_image.py) drops the frame
+# time to ~20 ms, so a 24 FPS target now runs steadily. Raise/lower this to
+# match the measured send time; too high a value causes dropped frames.
+TRCC_ANIMATION_TARGET_FPS = max(5.0, min(60.0, _env_float("OPEN_TROFEO_ANIMATION_FPS", 24.0)))
+TRCC_ANIMATION_TARGET_FRAME_MS = max(1, int(round(1000.0 / TRCC_ANIMATION_TARGET_FPS)))
+
+# The first starter pack predates the bundled-theme inventory. Treat its files
+# as already seen when migrating an existing library, including themes that the
+# user deliberately removed from that library.
+LEGACY_BUNDLED_THEME_FILES = {
+    "amber_hi_fi.json", "crimson_telemetry.json", "linux_matrix_green.json",
+    "nordic_forecast.json", "obsidian_pulse.json", "orbital_relay.json",
+    "valhalla_command.json", "verdant_bloom.json",
+}
 
 
 def now_iso() -> str:
@@ -146,6 +167,13 @@ class ReplayController:
         self.display_lock = threading.RLock()
         self.runtime_dir = Path.home() / ".local/state/open-trofeo-lcd" / "runtime"
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
+        runtime_base = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        self.tmp_render_dir = Path(runtime_base) / "open-trofeo-lcd" / "render"
+        try:
+            self.tmp_render_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            self.tmp_render_dir = self.runtime_dir
+        self._active_runtime_dirs: list[str] = []
         self.proc: subprocess.Popen | None = None
         self.proc_started_at: float | None = None
         self.mode = "idle"
@@ -185,6 +213,7 @@ class ReplayController:
         self._load_themes()
         self._seed_themes_from_directory()
         self._load_playlist()
+        self._prune_runtime_storage(aggressive=True)
 
     def _refresh_mode_locked(self) -> None:
         playlist_running = self.playlist_thread is not None and self.playlist_thread.is_alive()
@@ -295,11 +324,28 @@ class ReplayController:
 
     def _runtime_temp_dir(self, prefix: str) -> Path:
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
-        return Path(tempfile.mkdtemp(prefix=prefix, dir=str(self.runtime_dir)))
+        path = Path(tempfile.mkdtemp(prefix=prefix, dir=str(self.runtime_dir)))
+        self._mark_active_runtime_dir(path)
+        return path
 
     def _runtime_temp_file(self, prefix: str, suffix: str) -> Path:
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=str(self.runtime_dir))
+        os.close(fd)
+        return Path(tmp_name)
+
+    def _tmp_temp_dir(self, prefix: str) -> Path:
+        """Transient render dir on tmpfs (XDG_RUNTIME_DIR) to avoid disk writes."""
+        base = Path(getattr(self, "tmp_render_dir", self.runtime_dir))
+        base.mkdir(parents=True, exist_ok=True)
+        path = Path(tempfile.mkdtemp(prefix=prefix, dir=str(base)))
+        self._mark_active_runtime_dir(path)
+        return path
+
+    def _tmp_temp_file(self, prefix: str, suffix: str) -> Path:
+        base = Path(getattr(self, "tmp_render_dir", self.runtime_dir))
+        base.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=str(base))
         os.close(fd)
         return Path(tmp_name)
 
@@ -309,10 +355,128 @@ class ReplayController:
         return preview_dir
 
     def _theme_live_staging_dir(self) -> Path:
-        """Fixed paths for live theme PNGs so quick theme switches do not orphan TRCC workers."""
-        staging = self.runtime_dir / "theme-live-staging"
+        """Fixed paths for live theme PNGs so quick theme switches do not orphan TRCC workers.
+
+        Lives on tmpfs: the live overlay is rewritten several times per second
+        and must not wear the disk (~26 GB/day observed before this).
+        """
+        staging = Path(getattr(self, "tmp_render_dir", self.runtime_dir)) / "theme-live-staging"
         staging.mkdir(parents=True, exist_ok=True)
         return staging
+
+    _RUNTIME_TEMP_PREFIXES = (
+        "trofeo-theme-anim-",
+        "trofeo-anim-overlay-",
+        "trofeo-theme-slideshow-",
+        "trofeo-theme-live-",
+    )
+    _RUNTIME_TEMP_MAX_AGE_S = 600.0
+    _ACTIVE_RUNTIME_DIRS_KEEP = 3
+    _ANIMATION_CACHE_KEEP = 6
+    _MEDIA_COVERS_KEEP = 400
+    _PREVIEWS_KEEP = 200
+
+    def _mark_active_runtime_dir(self, path: Path) -> None:
+        try:
+            key = str(path)
+        except Exception:
+            return
+        if key in self._active_runtime_dirs:
+            self._active_runtime_dirs.remove(key)
+        self._active_runtime_dirs.append(key)
+        if len(self._active_runtime_dirs) > self._ACTIVE_RUNTIME_DIRS_KEEP:
+            del self._active_runtime_dirs[: len(self._active_runtime_dirs) - self._ACTIVE_RUNTIME_DIRS_KEEP]
+
+    @staticmethod
+    def _prune_dir_by_count(path: Path, keep: int, *, directories: bool = False) -> int:
+        try:
+            entries = list(path.iterdir())
+        except OSError:
+            return 0
+        items: list[tuple[float, Path]] = []
+        for entry in entries:
+            try:
+                if directories != entry.is_dir():
+                    continue
+                items.append((entry.stat().st_mtime, entry))
+            except OSError:
+                continue
+        if len(items) <= keep:
+            return 0
+        items.sort(key=lambda item: item[0], reverse=True)
+        removed = 0
+        for _mtime, entry in items[keep:]:
+            try:
+                if directories:
+                    shutil.rmtree(entry, ignore_errors=True)
+                else:
+                    entry.unlink(missing_ok=True)
+                removed += 1
+            except OSError:
+                pass
+        return removed
+
+    def _prune_runtime_storage(self, *, aggressive: bool = False) -> dict[str, int]:
+        """Remove orphaned temp render dirs/manifests and cap long-lived caches.
+
+        Every theme apply creates transient render dirs; without pruning they
+        accumulate indefinitely (observed: 20+ GB). Startup runs this with
+        ``aggressive=True`` so nothing from previous runs survives.
+        """
+        removed = {"dirs": 0, "files": 0}
+        now = time.time()
+        max_age = 0.0 if aggressive else self._RUNTIME_TEMP_MAX_AGE_S
+        tmp_render_dir = Path(getattr(self, "tmp_render_dir", self.runtime_dir))
+        scan_dirs = [self.runtime_dir]
+        if tmp_render_dir != self.runtime_dir:
+            scan_dirs.append(tmp_render_dir)
+        if aggressive and tmp_render_dir != self.runtime_dir:
+            # tmpfs is per-session; wipe everything but the fixed staging dir.
+            try:
+                for entry in tmp_render_dir.iterdir():
+                    if entry.name == "theme-live-staging":
+                        continue
+                    try:
+                        if entry.is_dir():
+                            shutil.rmtree(entry, ignore_errors=True)
+                            removed["dirs"] += 1
+                        else:
+                            entry.unlink(missing_ok=True)
+                            removed["files"] += 1
+                    except OSError:
+                        continue
+            except OSError:
+                pass
+        for scan_dir in scan_dirs:
+            try:
+                entries = list(scan_dir.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                if not entry.name.startswith(self._RUNTIME_TEMP_PREFIXES):
+                    continue
+                if str(entry) in self._active_runtime_dirs:
+                    continue
+                try:
+                    age = now - entry.stat().st_mtime
+                    if age < max_age:
+                        continue
+                    if entry.is_dir():
+                        shutil.rmtree(entry, ignore_errors=True)
+                        removed["dirs"] += 1
+                    else:
+                        entry.unlink(missing_ok=True)
+                        removed["files"] += 1
+                except OSError:
+                    continue
+        removed["files"] += self._prune_dir_by_count(
+            self.runtime_dir / "animation-frame-cache", self._ANIMATION_CACHE_KEEP, directories=True
+        )
+        removed["files"] += self._prune_dir_by_count(self.runtime_dir / "media-covers", self._MEDIA_COVERS_KEEP)
+        removed["files"] += self._prune_dir_by_count(self.runtime_dir / "previews", self._PREVIEWS_KEEP)
+        if removed["dirs"] or removed["files"]:
+            self._log(f"runtime storage pruned: dirs={removed['dirs']} files={removed['files']}")
+        return removed
 
     def _kill_orphan_display_helpers(self) -> list[int]:
         patterns = [
@@ -538,22 +702,40 @@ class ReplayController:
 
     def _seed_themes_from_directory(self) -> None:
         with self.lock:
-            if self.themes:
-                if self._repair_theme_paths_from_directory_locked():
-                    self._save_themes()
-                return
             themes_dir = self.cfg.workdir / "themes"
             if not themes_dir.exists():
                 return
+            changed = self._repair_theme_paths_from_directory_locked()
+            had_library = bool(self.themes)
+            inventory_file = self.cfg.workdir / ".trofeo-bundled-theme-files.json"
+            if inventory_file.exists():
+                try:
+                    inventory = json.loads(inventory_file.read_text(encoding="utf-8"))
+                    seen_files = {str(name) for name in inventory if isinstance(name, str)} if isinstance(inventory, list) else set()
+                except (OSError, ValueError):
+                    seen_files = set()
+            else:
+                seen_files = set(LEGACY_BUNDLED_THEME_FILES) if self.themes else set()
+            available_files: set[str] = set()
             for path in sorted(themes_dir.glob("*.json")):
+                available_files.add(path.name)
                 rel_path = path.relative_to(self.cfg.workdir).as_posix()
-                name = self._unique_theme_name_locked(self._theme_name_from_file(path))
+                name = self._theme_name_from_file(path)
+                if path.name in seen_files:
+                    continue
+                if name in self.themes:
+                    if had_library:
+                        continue
+                    name = self._unique_theme_name_locked(name)
                 self.themes[name] = {
                     "path": rel_path,
                     "raw_jpeg_passthrough": False,
                 }
-            if self.themes:
+                changed = True
+            if changed:
                 self._save_themes()
+            if not inventory_file.exists() or not available_files.issubset(seen_files):
+                inventory_file.write_text(json.dumps(sorted(seen_files | available_files), indent=2) + "\n", encoding="utf-8")
 
     def _reload_themes_if_changed(self) -> None:
         with self.lock:
@@ -919,6 +1101,10 @@ class ReplayController:
                     digest.update(f"|{idx}|{frame_path}|missing".encode("utf-8", errors="replace"))
             rendered_dir = self.runtime_dir / "animation-frame-cache" / digest.hexdigest()[:24]
             rendered_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                os.utime(rendered_dir, None)
+            except OSError:
+                pass
 
         for idx in selected_indices:
             if render_frames:
@@ -997,17 +1183,17 @@ class ReplayController:
             except Exception:
                 parsed.append(int(round(1000.0 / 12.0)))
         mean_ms = sum(parsed) / max(1, len(parsed))
-        if mean_ms <= TRCC_ANIMATION_TARGET_FRAME_MS + 2:
-            animation_spec["frame_durations_ms"] = parsed
-            return
-        tuned = [TRCC_ANIMATION_TARGET_FRAME_MS if ms > TRCC_ANIMATION_TARGET_FRAME_MS else ms for ms in parsed]
+        # This target is a maximum transfer rate, not a requested playback
+        # speed. Longer frame durations must survive unchanged.
+        tuned = [max(TRCC_ANIMATION_TARGET_FRAME_MS, ms) for ms in parsed]
         animation_spec["frame_durations_ms"] = tuned
-        animation_spec["fps"] = max(float(animation_spec.get("fps", 0.0) or 0.0), TRCC_ANIMATION_TARGET_FPS)
-        animation_spec["trcc_playback_tuned"] = {
-            "original_mean_frame_ms": round(mean_ms, 3),
-            "target_frame_ms": TRCC_ANIMATION_TARGET_FRAME_MS,
-            "target_fps": TRCC_ANIMATION_TARGET_FPS,
-        }
+        if tuned != parsed:
+            animation_spec["fps"] = min(float(animation_spec.get("fps", 0.0) or 0.0), TRCC_ANIMATION_TARGET_FPS)
+            animation_spec["trcc_playback_tuned"] = {
+                "original_mean_frame_ms": round(mean_ms, 3),
+                "target_frame_ms": TRCC_ANIMATION_TARGET_FRAME_MS,
+                "target_fps": TRCC_ANIMATION_TARGET_FPS,
+            }
 
     def _append_animation_loop_bridge(self, frame_paths: list[str], durations_ms: list[int], rendered_dir: Path) -> None:
         try:
@@ -1327,6 +1513,29 @@ class ReplayController:
             "height": composed.height,
         }
 
+    @staticmethod
+    def _composite_overlay_image(
+        base_image: Image.Image,
+        overlay_image: Image.Image,
+        crop_box: tuple[int, int, int, int] | None = None,
+    ) -> Image.Image:
+        """Composite an RGBA overlay onto a base image, optionally cropped."""
+        if crop_box is not None:
+            # Composite only the overlay's visible region. This is dramatically
+            # cheaper than a full 1920x462 alpha composite on every refresh.
+            x0, y0, x1, y1 = crop_box
+            x0 = max(0, min(base_image.width, int(x0)))
+            y0 = max(0, min(base_image.height, int(y0)))
+            x1 = max(x0, min(base_image.width, int(x1)))
+            y1 = max(y0, min(base_image.height, int(y1)))
+            if x1 > x0 and y1 > y0:
+                composed = base_image.copy()
+                region = composed.crop((x0, y0, x1, y1))
+                piece = overlay_image.crop((x0, y0, x1, y1))
+                composed.paste(Image.alpha_composite(region, piece), (x0, y0))
+                return composed
+        return Image.alpha_composite(base_image, overlay_image)
+
     def _compose_overlay_image(
         self,
         base_image: Image.Image,
@@ -1334,14 +1543,37 @@ class ReplayController:
         out_path: str,
         *,
         skip_unchanged: bool = True,
+        crop_box: tuple[int, int, int, int] | None = None,
     ) -> dict[str, Any]:
-        composed = Image.alpha_composite(base_image.copy(), overlay_image)
+        composed = self._composite_overlay_image(base_image, overlay_image, crop_box)
         target = self._save_image_atomic(composed, out_path, skip_unchanged=skip_unchanged)
         return {
             "image_path": str(target),
             "width": composed.width,
             "height": composed.height,
         }
+
+    @staticmethod
+    def _overlay_visible_bbox(
+        image: Image.Image,
+        *,
+        padding: int = 8,
+    ) -> tuple[int, int, int, int] | None:
+        """Return the visible overlay bounds (alpha bbox) padded for safety."""
+        try:
+            bbox = image.getchannel("A").getbbox()
+        except Exception:
+            return None
+        if bbox is None:
+            return None
+        x0, y0, x1, y1 = bbox
+        x0 = max(0, int(x0) - int(padding))
+        y0 = max(0, int(y0) - int(padding))
+        x1 = min(image.width, int(x1) + int(padding))
+        y1 = min(image.height, int(y1) + int(padding))
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return (x0, y0, x1, y1)
 
     def _theme_has_heavy_live_overlay(self, document: dict[str, Any] | None) -> bool:
         if not isinstance(document, dict):
@@ -1388,7 +1620,7 @@ class ReplayController:
         # a theme switch. Keep it separate from the state lock so the GUI can still
         # list themes and read status while USB recovery is slow after suspend.
         with self.display_lock:
-            return self._send_theme_doc_locked(
+            result = self._send_theme_doc_locked(
                 path=path,
                 theme_input=theme_input,
                 timeout_s=timeout_s,
@@ -1396,6 +1628,8 @@ class ReplayController:
                 live_refresh=live_refresh,
                 keep_live_refresh_running=keep_live_refresh_running,
             )
+        self._prune_runtime_storage()
+        return result
 
     def _send_theme_doc_locked(
         self,
@@ -1450,7 +1684,7 @@ class ReplayController:
                 overlay_render: dict[str, Any] | None = None
                 if overlay_doc is not None:
                     if live_overlay_doc is not None and static_overlay_doc is not None:
-                        overlay_dir = self._runtime_temp_dir("trofeo-anim-overlay-")
+                        overlay_dir = self._tmp_temp_dir("trofeo-anim-overlay-")
                         static_overlay_path = overlay_dir / "static_overlay.png"
                         live_overlay_path = overlay_dir / "live_overlay.png"
                         static_overlay_render = self._render_theme_overlay_to_file(
@@ -1509,9 +1743,9 @@ class ReplayController:
                             min_ms = 83
                     min_s = min_ms / 1000.0
                     if self._theme_has_fast_visual_live_refresh(theme_input):
-                        animation_spec["overlay_min_interval_s"] = round(max(0.09, min_s * 0.48), 4)
+                        animation_spec["overlay_min_interval_s"] = round(max(0.05, min_s * 0.48), 4)
                     else:
-                        animation_spec["overlay_min_interval_s"] = round(max(0.12, min_s * 0.62), 4)
+                        animation_spec["overlay_min_interval_s"] = round(max(0.08, min_s * 0.62), 4)
                 send_result = self._start_trcc_animation_worker(animation_spec)
                 send_result["rendered_animation"] = animation_spec
                 if overlay_render is not None:
@@ -1888,21 +2122,24 @@ class ReplayController:
         heavy_overlay = self._theme_has_heavy_live_overlay(overlay_document)
         if cheap_overlay_mode:
             if fast_visual_refresh:
-                fallback_interval_s = 0.16 if animated_theme and audio_eq_visual else (0.20 if animated_theme else FAST_VISUAL_REFRESH_INTERVAL_S)
-            elif periodic_live_refresh or marquee_motion:
-                # Animated themes use a separate overlay file for clocks, stats,
-                # weather and media text. Even without EQ this must tick regularly;
-                # otherwise the base animation keeps playing while seconds/stats
-                # stay frozen until a media/EQ event happens.
+                # Render cost for the overlay is ~25-50 ms, so a ~60-120 ms tick
+                # keeps EQ bars/clock/stats visibly smooth without flooding USB.
+                fallback_interval_s = 0.08 if animated_theme and audio_eq_visual else (0.10 if animated_theme else FAST_VISUAL_REFRESH_INTERVAL_S)
+            elif marquee_motion:
+                # Moving text needs a fast, steady cadence.
+                fallback_interval_s = 0.15
+            elif periodic_live_refresh:
+                # Clock/date/stats change at most once per second; rendering
+                # faster only burns CPU and disk I/O.
                 fallback_interval_s = max(0.35, min(1.0, interval_s))
             else:
                 fallback_interval_s = 300.0
         elif fast_visual_refresh:
             fallback_interval_s = FAST_VISUAL_REFRESH_INTERVAL_S
         elif marquee_motion:
-            fallback_interval_s = 0.25
+            fallback_interval_s = 0.15
         elif periodic_live_refresh:
-            fallback_interval_s = max(0.3, interval_s)
+            fallback_interval_s = max(0.35, interval_s)
         else:
             fallback_interval_s = 3600.0 if animated_theme else (120.0 if fast_file_refresh_mode else max(10.0, interval_s))
         last_media_sig: tuple[str, str, str, str, str, str] | None = None
@@ -1916,11 +2153,11 @@ class ReplayController:
         else:
             probe_interval_s = 0.45 if cheap_overlay_mode else (0.25 if fast_file_refresh_mode else max(0.7, min(2.0, interval_s)))
         if cheap_overlay_mode and fast_visual_refresh:
-            min_refresh_gap_s = 0.12 if animated_theme and audio_eq_visual else (0.20 if animated_theme else 0.07)
+            min_refresh_gap_s = 0.06 if animated_theme and audio_eq_visual else (0.10 if animated_theme else 0.05)
         elif cheap_overlay_mode:
-            min_refresh_gap_s = 0.15 if heavy_overlay else 0.10
+            min_refresh_gap_s = 0.10 if heavy_overlay else 0.08
         else:
-            min_refresh_gap_s = 12.0 if animated_theme else (0.08 if fast_file_refresh_mode else 0.25)
+            min_refresh_gap_s = 8.0 if animated_theme else (0.06 if fast_file_refresh_mode else 0.20)
 
         media_players: dict[str, dict[str, str]] = {}
 
@@ -2368,6 +2605,7 @@ class ReplayController:
                             overlay_image,
                             refresh_target_path,
                             skip_unchanged=False,
+                            crop_box=self._overlay_visible_bbox(overlay_image),
                         )
                         compose_ms = (time.perf_counter() - stage_started) * 1000.0
                     elif overlay_document is not None and overlay_path:
@@ -3178,7 +3416,7 @@ class ReplayController:
                 + (" ..." if len(undersized) > 3 else "")
             )
 
-        manifest_path = self._runtime_temp_file("trofeo-theme-anim-", ".json")
+        manifest_path = self._tmp_temp_file("trofeo-theme-anim-", ".json")
         manifest_path.write_text(json.dumps(animation_spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
         def _read_start_tail() -> str:
@@ -3385,9 +3623,10 @@ class ReplayController:
                 self.cfg.brightness_percent = 100
                 self.last_error = "rendered brightness control is disabled until hardware brightness protocol is decoded"
                 self._log(self.last_error)
-            if any(key in payload for key in ("weather_lat", "weather_lon", "weather_location", "weather_refresh_s")):
+            if any(key in payload for key in ("weather_lat", "weather_lon", "weather_location", "weather_refresh_s", "weather_temp_unit")):
                 lat_raw = payload.get("weather_lat")
                 lon_raw = payload.get("weather_lon")
+                current_weather = self.stats_provider.weather_config()
 
                 def _opt_float(value: object) -> float | None:
                     text = str(value or "").strip().replace(",", ".")
@@ -3399,10 +3638,11 @@ class ReplayController:
                         return None
 
                 self.stats_provider.set_weather_config(
-                    lat=_opt_float(lat_raw),
-                    lon=_opt_float(lon_raw),
-                    location=str(payload.get("weather_location", "")).strip(),
-                    refresh_s=float(payload.get("weather_refresh_s", 900) or 900),
+                    lat=_opt_float(lat_raw) if "weather_lat" in payload else current_weather["lat"],
+                    lon=_opt_float(lon_raw) if "weather_lon" in payload else current_weather["lon"],
+                    location=str(payload.get("weather_location", current_weather["location"])).strip(),
+                    refresh_s=float(payload.get("weather_refresh_s", current_weather["refresh_s"]) or 900),
+                    temperature_unit=str(payload.get("weather_temp_unit", current_weather["temperature_unit"])),
                 )
             if bool(payload.get("weather_refresh_now", False)):
                 self.stats_provider._last_weather_at = 0.0

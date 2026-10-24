@@ -136,6 +136,7 @@ class ConfigWeatherControls:
     lat_edit: QLineEdit
     lon_edit: QLineEdit
     location_edit: QLineEdit
+    temperature_unit_combo: QComboBox
     refresh_spin: QSpinBox
     apply_btn: QPushButton
     refresh_now_btn: QPushButton
@@ -256,6 +257,7 @@ def bind_config_panel_controls(owner: Any, controls: ConfigPanelControls) -> Non
     owner.cfg_weather_lat_edit = controls.weather.lat_edit
     owner.cfg_weather_lon_edit = controls.weather.lon_edit
     owner.cfg_weather_location_edit = controls.weather.location_edit
+    owner.cfg_weather_temp_unit_combo = controls.weather.temperature_unit_combo
     owner.cfg_weather_refresh_spin = controls.weather.refresh_spin
     owner.cfg_weather_apply_btn = controls.weather.apply_btn
     owner.cfg_weather_refresh_now_btn = controls.weather.refresh_now_btn
@@ -352,7 +354,8 @@ def build_config_appearance_box(theme_names: list[str]) -> ConfigAppearanceContr
     theme_combo = QComboBox()
     theme_combo.addItems(theme_names)
     mode_combo = QComboBox()
-    mode_combo.addItems(["Dark", "Light"])
+    mode_combo.addItems(["Dark", "Light", "System"])
+    mode_combo.setToolTip("Application theme: Dark, Light, or follow the desktop (System).")
     scale_combo = QComboBox()
     for value in (70, 80, 90, 100, 110, 125, 140):
         scale_combo.addItem(f"{value}%", value)
@@ -579,6 +582,9 @@ def build_config_weather_box(callbacks: ConfigWeatherCallbacks) -> ConfigWeather
     lat_edit = QLineEdit()
     lon_edit = QLineEdit()
     location_edit = QLineEdit()
+    temperature_unit_combo = QComboBox()
+    temperature_unit_combo.addItem("Celsius (°C)", "celsius")
+    temperature_unit_combo.addItem("Fahrenheit (°F)", "fahrenheit")
     refresh_spin = QSpinBox()
     refresh_spin.setRange(300, 86400)
     refresh_spin.setSingleStep(300)
@@ -614,6 +620,7 @@ def build_config_weather_box(callbacks: ConfigWeatherCallbacks) -> ConfigWeather
     form.addRow("Latitude:", lat_edit)
     form.addRow("Longitude:", lon_edit)
     form.addRow("Location label:", location_edit)
+    form.addRow("Temperature unit:", temperature_unit_combo)
     form.addRow("Refresh (s):", refresh_spin)
     form.addRow("", actions_row)
     form.addRow(status_label)
@@ -625,6 +632,7 @@ def build_config_weather_box(callbacks: ConfigWeatherCallbacks) -> ConfigWeather
         lat_edit=lat_edit,
         lon_edit=lon_edit,
         location_edit=location_edit,
+        temperature_unit_combo=temperature_unit_combo,
         refresh_spin=refresh_spin,
         apply_btn=apply_btn,
         refresh_now_btn=refresh_now_btn,

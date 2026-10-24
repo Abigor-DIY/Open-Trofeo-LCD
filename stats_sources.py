@@ -23,7 +23,9 @@ from collections import deque
 from urllib.parse import unquote, urlparse, urlencode
 from urllib.request import Request, urlopen
 from dataclasses import dataclass
+from pathlib import Path
 from process_memory import ProcessMemoryCache
+from gpu_sources import find_amd_card, has_nvidia_card, read_amd_gpu_stats
 
 
 def _format_percent(value: float | None) -> str:
@@ -62,7 +64,7 @@ class StatsSnapshot:
 
 
 class StatsProvider:
-    def __init__(self) -> None:
+    def __init__(self, *, enable_fps_probe: bool = True) -> None:
         self._cpu_snapshot = None
         self._process_memory = ProcessMemoryCache()
         self._cpu_core_snapshot = None
@@ -125,6 +127,21 @@ class StatsProvider:
         self._fps_probe_session_frametime_count = 0
         self._fps_probe_session_frametime_max: float | None = None
         self._fps_probe_session_stutter_count = 0
+        # Warmup window: game start / shader compilation produces misleading
+        # 1-5 FPS spikes. Samples inside the window are logged but excluded from
+        # the session min/max/stutter and from the 1%/0.1% lows.
+        try:
+            self._fps_probe_session_warmup_s = max(0.0, float(os.environ.get("OPEN_TROFEO_FPS_WARMUP_S", "20")))
+        except (TypeError, ValueError):
+            self._fps_probe_session_warmup_s = 20.0
+        self._fps_probe_gameplay_sample_count = 0
+        self._fps_probe_gameplay_fps_sum = 0.0
+        self._fps_probe_gameplay_fps_min: float | None = None
+        self._fps_probe_gameplay_fps_max: float | None = None
+        self._fps_probe_gameplay_frametime_count = 0
+        self._fps_probe_gameplay_frametime_sum = 0.0
+        self._fps_probe_gameplay_frametime_max: float | None = None
+        self._fps_probe_gameplay_stutter_count = 0
         state_home = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
         self._fps_log_dir = os.path.join(state_home, "open-trofeo-lcd", "fps-sessions")
         self._fps_log_path = ""
@@ -185,13 +202,16 @@ class StatsProvider:
         self._weather_lon = self._weather_float(os.environ.get("OPEN_TROFEO_WEATHER_LON", ""))
         self._weather_location = os.environ.get("OPEN_TROFEO_WEATHER_LOCATION", "").strip()
         self._weather_refresh_s = self._parse_weather_refresh_s(os.environ.get("OPEN_TROFEO_WEATHER_REFRESH_S", "900"))
+        self._weather_temp_unit = self._normalize_weather_temp_unit(os.environ.get("OPEN_TROFEO_WEATHER_TEMP_UNIT", "celsius"))
         self._last_weather_snapshot = self._default_weather_snapshot()
         self._last_weather_at = 0.0
         self._last_weather_error = ""
         self._last_weather_source = "none"
         self._weather_lock = threading.Lock()
         self._weather_refresh_inflight = False
-        self._start_fps_probe_server()
+        self._fps_probe_enabled = bool(enable_fps_probe)
+        if self._fps_probe_enabled:
+            self._start_fps_probe_server()
         if not self._audio_eq_enabled:
             self._audio_eq_status = "disabled"
         elif not self._audio_eq_cava_bin:
@@ -208,6 +228,20 @@ class StatsProvider:
             return os.path.expanduser(configured)
         runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
         return os.path.join(runtime_dir, "open-trofeo-lcd", "fps.sock")
+
+    @staticmethod
+    def _fps_probe_socket_is_live(path: str) -> bool:
+        """Return True when an existing socket path is served by a live process."""
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        try:
+            probe.settimeout(0.2)
+            probe.connect(path)
+            probe.send(b"")
+            return True
+        except OSError:
+            return False
+        finally:
+            probe.close()
 
     @staticmethod
     def _format_fps_value(value: object) -> str:
@@ -290,6 +324,14 @@ class StatsProvider:
         self._fps_probe_session_frametime_count = 0
         self._fps_probe_session_frametime_max = None
         self._fps_probe_session_stutter_count = 0
+        self._fps_probe_gameplay_sample_count = 0
+        self._fps_probe_gameplay_fps_sum = 0.0
+        self._fps_probe_gameplay_fps_min = None
+        self._fps_probe_gameplay_fps_max = None
+        self._fps_probe_gameplay_frametime_count = 0
+        self._fps_probe_gameplay_frametime_sum = 0.0
+        self._fps_probe_gameplay_frametime_max = None
+        self._fps_probe_gameplay_stutter_count = 0
         day = time.strftime("%Y-%m-%d", time.localtime(now))
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
         game_slug = self._fps_log_slug(snapshot.get("game_name"))
@@ -301,7 +343,13 @@ class StatsProvider:
         )
         self._fps_log_error = ""
 
-    def _update_fps_session_stats_locked(self, fps: float | None, frametime_ms: float | None) -> None:
+    def _fps_in_warmup(self, now: float) -> bool:
+        warmup = float(getattr(self, "_fps_probe_session_warmup_s", 0.0) or 0.0)
+        start = float(self._fps_probe_session_start_at or 0.0)
+        return warmup > 0.0 and start > 0.0 and (now - start) < warmup
+
+    def _update_fps_session_stats_locked(self, now: float, fps: float | None, frametime_ms: float | None) -> None:
+        in_warmup = self._fps_in_warmup(now)
         if fps is not None and math.isfinite(fps) and fps > 0.0:
             self._fps_probe_session_sample_count += 1
             self._fps_probe_session_fps_sum += fps
@@ -315,6 +363,19 @@ class StatsProvider:
                 if self._fps_probe_session_fps_max is None
                 else max(self._fps_probe_session_fps_max, fps)
             )
+            if not in_warmup:
+                self._fps_probe_gameplay_sample_count += 1
+                self._fps_probe_gameplay_fps_sum += fps
+                self._fps_probe_gameplay_fps_min = (
+                    fps
+                    if self._fps_probe_gameplay_fps_min is None
+                    else min(self._fps_probe_gameplay_fps_min, fps)
+                )
+                self._fps_probe_gameplay_fps_max = (
+                    fps
+                    if self._fps_probe_gameplay_fps_max is None
+                    else max(self._fps_probe_gameplay_fps_max, fps)
+                )
         if frametime_ms is not None and math.isfinite(frametime_ms) and frametime_ms > 0.0:
             self._fps_probe_session_frametime_count += 1
             self._fps_probe_session_frametime_sum += frametime_ms
@@ -325,6 +386,16 @@ class StatsProvider:
             )
             if frametime_ms >= 33.3:
                 self._fps_probe_session_stutter_count += 1
+            if not in_warmup:
+                self._fps_probe_gameplay_frametime_count += 1
+                self._fps_probe_gameplay_frametime_sum += frametime_ms
+                self._fps_probe_gameplay_frametime_max = (
+                    frametime_ms
+                    if self._fps_probe_gameplay_frametime_max is None
+                    else max(self._fps_probe_gameplay_frametime_max, frametime_ms)
+                )
+                if frametime_ms >= 33.3:
+                    self._fps_probe_gameplay_stutter_count += 1
 
     @staticmethod
     def _fps_log_number(value: object) -> object:
@@ -446,33 +517,57 @@ class StatsProvider:
         while self._fps_probe_history and now - float(self._fps_probe_history[0].get("at", 0.0)) > 120.0:
             self._fps_probe_history.popleft()
         recent = [sample for sample in self._fps_probe_history if now - float(sample.get("at", 0.0)) <= 60.0]
-        fps_values = [float(sample["fps"]) for sample in recent if float(sample.get("fps", 0.0)) > 0.0]
-        frame_values = [float(sample["frametime_ms"]) for sample in recent if float(sample.get("frametime_ms", 0.0)) > 0.0]
+        gameplay_recent = [sample for sample in recent if not sample.get("warmup")]
+        fps_values = [float(sample["fps"]) for sample in gameplay_recent if float(sample.get("fps", 0.0)) > 0.0]
+        use_gameplay = self._fps_probe_gameplay_sample_count > 0
         avg_fps = (
-            self._fps_probe_session_fps_sum / self._fps_probe_session_sample_count
-            if self._fps_probe_session_sample_count > 0
-            else None
+            (self._fps_probe_gameplay_fps_sum / self._fps_probe_gameplay_sample_count)
+            if use_gameplay
+            else (
+                self._fps_probe_session_fps_sum / self._fps_probe_session_sample_count
+                if self._fps_probe_session_sample_count > 0
+                else None
+            )
         )
+        use_gameplay_frame = self._fps_probe_gameplay_frametime_count > 0
         avg_frame = (
-            self._fps_probe_session_frametime_sum / self._fps_probe_session_frametime_count
-            if self._fps_probe_session_frametime_count > 0
-            else None
+            (self._fps_probe_gameplay_frametime_sum / self._fps_probe_gameplay_frametime_count)
+            if use_gameplay_frame
+            else (
+                self._fps_probe_session_frametime_sum / self._fps_probe_session_frametime_count
+                if self._fps_probe_session_frametime_count > 0
+                else None
+            )
         )
+        gameplay_min = self._fps_probe_gameplay_fps_min
+        gameplay_max = self._fps_probe_gameplay_fps_max
+        # Before any post-warmup sample exists, fall back to the session value so
+        # very short sessions still report something; once gameplay starts, the
+        # startup/shader-compile spikes are excluded.
         return {
             "game_fps_avg": self._format_plain_number(avg_fps),
-            "game_fps_min": self._format_plain_number(self._fps_probe_session_fps_min),
-            "game_fps_max": self._format_plain_number(self._fps_probe_session_fps_max),
+            "game_fps_min": self._format_plain_number(gameplay_min if gameplay_min is not None else self._fps_probe_session_fps_min),
+            "game_fps_max": self._format_plain_number(gameplay_max if gameplay_max is not None else self._fps_probe_session_fps_max),
+            "game_fps_min_session": self._format_plain_number(self._fps_probe_session_fps_min),
+            "game_fps_max_session": self._format_plain_number(self._fps_probe_session_fps_max),
+            "game_fps_warmup": "yes" if self._fps_in_warmup(now) else "no",
             "game_fps_1pct_low": self._format_plain_number(self._percentile_low(fps_values, 0.01)),
             "game_fps_0_1pct_low": self._format_plain_number(self._percentile_low(fps_values, 0.001)),
             "game_frametime_avg_ms": self._format_plain_number(avg_frame, decimals=1, suffix=" ms"),
-            "game_frametime_max_ms": self._format_plain_number(self._fps_probe_session_frametime_max, decimals=1, suffix=" ms"),
-            "game_stutter_count": str(self._fps_probe_session_stutter_count) if self._fps_probe_session_frametime_count else "N/A",
+            "game_frametime_max_ms": self._format_plain_number(
+                self._fps_probe_gameplay_frametime_max if use_gameplay_frame else self._fps_probe_session_frametime_max,
+                decimals=1,
+                suffix=" ms",
+            ),
+            "game_stutter_count": str(
+                self._fps_probe_gameplay_stutter_count if use_gameplay_frame else self._fps_probe_session_stutter_count
+            ) if (use_gameplay_frame or self._fps_probe_session_frametime_count) else "N/A",
             "game_session_time": self._format_duration(now - self._fps_probe_session_start_at if self._fps_probe_session_start_at > 0 else None),
         }
 
     def _start_fps_probe_server(self) -> None:
         path = self._fps_probe_socket_path
-        if not path:
+        if not path or not self._fps_probe_enabled:
             return
 
         def _worker() -> None:
@@ -480,6 +575,11 @@ class StatsProvider:
             try:
                 parent = os.path.dirname(path)
                 os.makedirs(parent, mode=0o700, exist_ok=True)
+                # Never steal the socket from a live receiver (the backend owns
+                # it). Only remove a stale file left behind by a dead process,
+                # otherwise transient StatsProviders orphan the real listener.
+                if os.path.exists(path) and self._fps_probe_socket_is_live(path):
+                    return
                 try:
                     os.unlink(path)
                 except FileNotFoundError:
@@ -567,9 +667,10 @@ class StatsProvider:
                         "at": now,
                         "fps": max(0.0, fps_float or 0.0),
                         "frametime_ms": max(0.0, frametime_float or 0.0),
+                        "warmup": self._fps_in_warmup(now),
                     }
                 )
-            self._update_fps_session_stats_locked(fps_float, frametime_float)
+            self._update_fps_session_stats_locked(now, fps_float, frametime_float)
             snapshot.update(self._fps_history_stats_locked(now))
             snapshot["game_fps_log_path"] = self._fps_log_path
             self._queue_fps_log_sample_locked(
@@ -592,6 +693,8 @@ class StatsProvider:
             "game_fps_avg",
             "game_fps_min",
             "game_fps_max",
+            "game_fps_min_session",
+            "game_fps_warmup",
             "game_fps_1pct_low",
             "game_fps_0_1pct_low",
             "game_frametime_avg_ms",
@@ -625,6 +728,9 @@ class StatsProvider:
                 "game_fps_avg",
                 "game_fps_min",
                 "game_fps_max",
+                "game_fps_min_session",
+                "game_fps_max_session",
+                "game_fps_warmup",
                 "game_fps_1pct_low",
                 "game_fps_0_1pct_low",
                 "game_frametime_ms",
@@ -669,6 +775,8 @@ class StatsProvider:
                 "game_fps_avg",
                 "game_fps_min",
                 "game_fps_max",
+                "game_fps_min_session",
+                "game_fps_warmup",
                 "game_fps_1pct_low",
                 "game_fps_0_1pct_low",
                 "game_frametime_avg_ms",
@@ -1023,12 +1131,27 @@ class StatsProvider:
         except (TypeError, ValueError):
             return 900.0
 
+    @staticmethod
+    def _normalize_weather_temp_unit(value: object) -> str:
+        return "fahrenheit" if str(value or "").strip().lower() in {"f", "°f", "fahrenheit"} else "celsius"
+
+    def _format_weather_temperature(self, value: object) -> str:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return "N/A"
+        if self._weather_temp_unit == "fahrenheit":
+            number = number * 9.0 / 5.0 + 32.0
+            return f"{number:.0f}°F"
+        return f"{number:.0f}°C"
+
     def weather_config(self) -> dict[str, object]:
         return {
             "lat": self._weather_lat,
             "lon": self._weather_lon,
             "location": self._weather_location,
             "refresh_s": self._weather_refresh_s,
+            "temperature_unit": self._weather_temp_unit,
             "enabled": self._weather_lat is not None and self._weather_lon is not None,
         }
 
@@ -1062,6 +1185,7 @@ class StatsProvider:
         lon: float | None = None,
         location: str | None = None,
         refresh_s: float | None = None,
+        temperature_unit: str | None = None,
     ) -> dict[str, object]:
         self._weather_lat = lat
         self._weather_lon = lon
@@ -1069,6 +1193,8 @@ class StatsProvider:
             self._weather_location = str(location).strip()
         if refresh_s is not None:
             self._weather_refresh_s = self._parse_weather_refresh_s(refresh_s)
+        if temperature_unit is not None:
+            self._weather_temp_unit = self._normalize_weather_temp_unit(temperature_unit)
         self._last_weather_at = 0.0
         self._last_weather_snapshot = self._default_weather_snapshot()
         self._last_weather_error = ""
@@ -1208,8 +1334,10 @@ class StatsProvider:
         condition, icon_name = self._weather_icon_for_code(code, is_day=is_day)
         out.update(
             {
-                "weather_temp_c": self._format_weather_number(current.get("temperature_2m"), "°C"),
-                "weather_feels_like_c": self._format_weather_number(current.get("apparent_temperature"), "°C"),
+                # Legacy *_c source names remain for existing themes; their
+                # displayed value follows the user's temperature unit.
+                "weather_temp_c": self._format_weather_temperature(current.get("temperature_2m")),
+                "weather_feels_like_c": self._format_weather_temperature(current.get("apparent_temperature")),
                 "weather_humidity_percent": self._format_weather_number(current.get("relative_humidity_2m"), "%"),
                 "weather_wind_kph": self._format_weather_number(current.get("wind_speed_10m"), " km/h"),
                 "weather_precip_mm": self._format_weather_number(current.get("precipitation"), " mm", digits=1),
@@ -1252,8 +1380,8 @@ class StatsProvider:
                         f"weather_day_{idx}_condition": str(row["condition"]),
                         f"weather_day_{idx}_icon": day_icon,
                         f"weather_day_{idx}_icon_path": self._weather_icon_path(day_icon),
-                        f"weather_day_{idx}_temp_min_c": self._format_weather_number(row["temp_min_c"], "°C"),
-                        f"weather_day_{idx}_temp_max_c": self._format_weather_number(row["temp_max_c"], "°C"),
+                        f"weather_day_{idx}_temp_min_c": self._format_weather_temperature(row["temp_min_c"]),
+                        f"weather_day_{idx}_temp_max_c": self._format_weather_temperature(row["temp_max_c"]),
                         f"weather_day_{idx}_precip_mm": self._format_weather_number(row["precip_mm"], " mm", digits=1),
                     }
                 )
@@ -1262,12 +1390,20 @@ class StatsProvider:
 
     def _cached_weather_snapshot(self) -> tuple[dict[str, str] | None, float]:
         cached = self._read_weather_cache()
-        if cached and isinstance(cached.get("normalized"), dict):
+        if cached:
             try:
                 cached_at = float(cached.get("fetched_at", 0.0) or 0.0)
             except (TypeError, ValueError):
                 cached_at = 0.0
-            return {str(k): str(v) for k, v in cached["normalized"].items()}, cached_at  # type: ignore[index]
+            raw = cached.get("raw")
+            if isinstance(raw, dict):
+                location = self._weather_location or str(cached.get("location") or "")
+                return self._normalize_weather_response(raw, location), cached_at
+            if (
+                isinstance(cached.get("normalized"), dict)
+                and self._normalize_weather_temp_unit(cached.get("temperature_unit")) == self._weather_temp_unit
+            ):
+                return {str(k): str(v) for k, v in cached["normalized"].items()}, cached_at  # type: ignore[index]
         return None, 0.0
 
     def _refresh_weather_stats_sync(
@@ -1290,6 +1426,7 @@ class StatsProvider:
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,sunrise,sunset",
             "forecast_days": "7",
             "timezone": "auto",
+            "temperature_unit": "celsius",
             "wind_speed_unit": "kmh",
         }
         location = self._weather_location or f"{lat:.3f},{lon:.3f}"
@@ -1306,7 +1443,7 @@ class StatsProvider:
             self._last_weather_at = now
             self._last_weather_error = ""
             self._last_weather_source = "open-meteo"
-            self._write_weather_cache({"fetched_at": now, "provider": "open-meteo", "raw": data, "normalized": normalized})
+            self._write_weather_cache({"fetched_at": now, "provider": "open-meteo", "raw": data, "normalized": normalized, "temperature_unit": self._weather_temp_unit, "location": location})
             return dict(normalized)
         except Exception as exc:
             self._last_weather_error = str(exc)
@@ -1896,11 +2033,25 @@ class StatsProvider:
         return not media_path or not self._is_local_video_path(media_path)
 
     def _detect_gpu_type(self) -> str | None:
-        if self._local_or_host_cmd("nvidia-smi"):
-            return "nvidia"
-        for i in range(4):
-            if os.path.exists(f"/sys/class/drm/card{i}/device/hwmon"):
-                return f"amd{i}"
+        preferred = str(os.environ.get("OPEN_TROFEO_GPU_VENDOR", "auto")).strip().lower()
+        amd_card = find_amd_card()
+        if preferred == "amd" and amd_card is not None:
+            return amd_card.name
+        nvidia_smi = self._local_or_host_cmd("nvidia-smi")
+        if preferred != "amd" and nvidia_smi:
+            try:
+                output = subprocess.check_output(
+                    nvidia_smi + ["--query-gpu=name", "--format=csv,noheader"],
+                    encoding="utf-8", stderr=subprocess.DEVNULL, timeout=1.0,
+                )
+                if output.strip():
+                    return "nvidia"
+            except (OSError, subprocess.SubprocessError):
+                pass
+            if has_nvidia_card():
+                return "nvidia"
+        if amd_card is not None:
+            return amd_card.name
         return None
 
     def read_local_ip(self) -> str:
@@ -2022,13 +2173,15 @@ class StatsProvider:
             "gpu_name": "N/A", "gpu_temp": "N/A", "gpu_load": "N/A",
             "vram_used_mb": "N/A", "vram_total_mb": "N/A", "vram_percent": "N/A"
         }
-        if self._gpu_type == "nvidia":
+        if isinstance(self._gpu_type, str) and re.fullmatch(r"card\d+", self._gpu_type):
+            stats.update(read_amd_gpu_stats(Path("/sys/class/drm") / self._gpu_type))
+        elif self._gpu_type == "nvidia":
             try:
                 nvidia_smi = self._local_or_host_cmd("nvidia-smi")
                 if not nvidia_smi:
                     return stats
                 cmd = nvidia_smi + ["--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"]
-                out = subprocess.check_output(cmd, encoding="utf-8").strip().split(", ")
+                out = subprocess.check_output(cmd, encoding="utf-8", stderr=subprocess.DEVNULL, timeout=1.0).strip().split(", ")
                 if len(out) >= 5:
                     stats.update({
                         "gpu_name": out[0], "gpu_temp": f"{out[1]}°C", "gpu_load": f"{out[2]}%",
@@ -2148,7 +2301,36 @@ class StatsProvider:
             "mangohud",
             "mangoapp",
             "gamescope",
+            # Steam Runtime / shader-compile helpers that are not games.
+            "fossilize_replay",
+            "fossilize_repla",
+            "fossilize",
+            "reaper",
+            "srt-logger",
+            "pv-adverb",
+            "pv-runtime",
+            "pv-bwrap",
+            "steam-runtime-check-requirements",
+            "steam-runtime-launcher-service",
+            "steamerrorreporter",
+            "gameoverlayui",
+            "wine-preloader",
+            "wine64-preloader",
+            "winedbg",
         }
+        helper_prefixes = (
+            "steamwebhelper",
+            "steam-runtime",
+            "fossilize",
+            "srt-logger",
+            "pv-adverb",
+            "pv-runtime",
+            "pv-bwrap",
+            "reaper",
+            "gameoverlayui",
+            "wine-preloader",
+            "wine64-preloader",
+        )
         helper_markers = (
             "legacycompat",
             "iscriptevaluator",
@@ -2156,8 +2338,19 @@ class StatsProvider:
             "dxsetup.exe",
             "_commonredist",
             "runasadmin.vdf",
+            "fossilize_replay",
+            "fossilize-replay",
+            "steam-runtime-check-requirements",
+            "srt-logger",
+            "pv-adverb",
+            "pv-runtime",
+            "steamerrorreporter",
+            "gameoverlayui",
         )
-        is_helper = lowered_comm in helper_names or lowered_comm.startswith("steamwebhelper")
+        is_helper = (
+            lowered_comm in helper_names
+            or any(lowered_comm.startswith(prefix) for prefix in helper_prefixes)
+        )
         if is_helper:
             score -= 45 if configured_name else 220
         if any(marker in haystack for marker in helper_markers):
@@ -2372,6 +2565,8 @@ class StatsProvider:
                 "game_fps_avg",
                 "game_fps_min",
                 "game_fps_max",
+                "game_fps_min_session",
+                "game_fps_warmup",
                 "game_fps_1pct_low",
                 "game_fps_0_1pct_low",
                 "game_frametime_avg_ms",
@@ -2400,6 +2595,8 @@ class StatsProvider:
                 "game_fps_avg",
                 "game_fps_min",
                 "game_fps_max",
+                "game_fps_min_session",
+                "game_fps_warmup",
                 "game_fps_1pct_low",
                 "game_fps_0_1pct_low",
                 "game_frametime_avg_ms",

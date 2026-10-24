@@ -36,6 +36,7 @@ from animation_limits import (
 from animation_studio import AnimationSequenceController, AnimationTimelineWidget, refresh_animation_studio_labels
 from backend_client import BackendClient
 from flow_layout import FlowLayout
+from game_power_profile import GamePowerWidget
 from config_panel import (
     ConfigurationPanel,
     bind_config_panel_controls,
@@ -134,7 +135,7 @@ from ui_section_labels import (
 
 try:
     from PySide6.QtCore import QEasingCurve, QPoint, QRect, QSize, Qt, QTimer, Signal, QPropertyAnimation, QUrl, QEvent, QObject
-    from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut, QTransform
+    from PySide6.QtGui import QAction, QColor, QDesktopServices, QGuiApplication, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut, QTransform
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -336,28 +337,46 @@ EQUALIZER_COLOR_PRESETS = {
 }
 THEME_TEMPLATE_CATALOG = [
     {
-        "title": "Heritage Duality",
-        "description": "Cieply animowany dashboard z odtwarzaczem, pogoda i telemetria.",
-        "path": "themes/heritage_duality.json",
-        "accent": "#f6be70",
+        "title": "Amber Hi-Fi",
+        "description": "Analogowy odtwarzacz, pogoda i animowane rowki winylu.",
+        "path": "themes/amber_hi_fi.json",
+        "accent": "#f0b659",
     },
     {
-        "title": "Matrix Green",
-        "description": "Statyczny command deck z gesta telemetria i czytelnym EQ.",
+        "title": "Crimson Telemetry",
+        "description": "Panel sesji gry z FPS, wskaznikami zasobow i pamieci procesu.",
+        "path": "themes/crimson_telemetry.json",
+        "accent": "#ff5b56",
+    },
+    {
+        "title": "Kernel Console",
+        "description": "Linuksowy terminal z zasobami, siecia i telemetria hosta.",
+        "path": "themes/kernel_console.json",
+        "accent": "#a9ecae",
+    },
+    {
+        "title": "Neon Frame Arena",
+        "description": "Linuksowy panel gier z telemetria Protona, pogoda i muzyka.",
         "path": "themes/linux_matrix_green.json",
-        "accent": "#48ec8e",
+        "accent": "#7cf299",
+    },
+    {
+        "title": "Nordic Forecast",
+        "description": "Siedmiodniowa prognoza pod subtelnie animowana zorza.",
+        "path": "themes/nordic_forecast.json",
+        "accent": "#7fdfdf",
     },
     {
         "title": "Verdant Bloom",
-        "description": "Zielony motyw pogodowy z prognoza, playerem i gauge.",
+        "description": "Organiczny motyw z muzyka, pogoda i prognoza tygodniowa.",
         "path": "themes/verdant_bloom.json",
-        "accent": "#7ce89c",
+        "accent": "#98e793",
     },
     {
-        "title": "Wolfstorm Forge",
-        "description": "Animowany motyw media-first z pogoda i statystykami systemu.",
-        "path": "themes/wolfstorm_forge.json",
-        "accent": "#f2b052",
+        "title": "Penguin Circuit",
+        "description": "Linuksowy pulpit z autorskim pingwinem i danymi systemu.",
+        "path": "themes/penguin_circuit.json",
+        "accent": "#70c4ff",
     },
     {
         "title": "Orbital Relay",
@@ -367,9 +386,15 @@ THEME_TEMPLATE_CATALOG = [
     },
     {
         "title": "Obsidian Pulse",
-        "description": "Ciemny minimalistyczny dashboard z transparentnym EQ.",
+        "description": "Precyzyjny monitor sprzetu z pulsem CPU, muzyka i pogoda.",
         "path": "themes/obsidian_pulse.json",
-        "accent": "#6ce8de",
+        "accent": "#5bddf4",
+    },
+    {
+        "title": "Valhalla Command",
+        "description": "Rozbudowany panel komend i telemetrii systemowej.",
+        "path": "themes/valhalla_command.json",
+        "accent": "#d9bc80",
     },
 ]
 
@@ -611,6 +636,12 @@ class TrofeoGui(QMainWindow):
         self._setup_shortcuts()
         self._setup_tray()
         self.apply_ui_chrome()
+        try:
+            hints = QGuiApplication.styleHints()
+            if hints is not None and hasattr(hints, "colorSchemeChanged"):
+                hints.colorSchemeChanged.connect(self._on_system_color_scheme_changed)
+        except Exception:
+            pass
         self.api_result.connect(self._on_api_result)
         self.weather_city_search_finished.connect(self._finish_weather_city_search)
         if start_background_tasks:
@@ -733,8 +764,8 @@ class TrofeoGui(QMainWindow):
             "media_app": "Now Playing: App",
             "media_state": "Now Playing: State",
             "weather_location": "Weather: Location",
-            "weather_temp_c": "Weather: Temperature (C)",
-            "weather_feels_like_c": "Weather: Feels Like (C)",
+            "weather_temp_c": "Weather: Temperature (selected unit)",
+            "weather_feels_like_c": "Weather: Feels Like (selected unit)",
             "weather_humidity_percent": "Weather: Humidity (%)",
             "weather_wind_kph": "Weather: Wind (km/h)",
             "weather_precip_mm": "Weather: Precipitation (mm)",
@@ -1037,6 +1068,7 @@ class TrofeoGui(QMainWindow):
             "weather_lon": self.cfg_weather_lon_edit.text().strip() if hasattr(self, "cfg_weather_lon_edit") else "",
             "weather_location": self.cfg_weather_location_edit.text().strip() if hasattr(self, "cfg_weather_location_edit") else "",
             "weather_refresh_s": int(self.cfg_weather_refresh_spin.value()) if hasattr(self, "cfg_weather_refresh_spin") else 900,
+            "weather_temp_unit": str(self.cfg_weather_temp_unit_combo.currentData() or "celsius") if hasattr(self, "cfg_weather_temp_unit_combo") else "celsius",
         }
 
     def apply_weather_config(self) -> None:
@@ -1485,6 +1517,8 @@ class TrofeoGui(QMainWindow):
         self._refresh_gaming_auto_theme_status()
 
     def _maybe_apply_gaming_auto_theme(self, status: dict[str, Any]) -> None:
+        if hasattr(self, "game_power_widget"):
+            self.game_power_widget.controller.observe(status)
         config = status.get("config", {})
         game = status.get("game", config.get("game", {}) if isinstance(config, dict) else {})
         if not isinstance(game, dict):
@@ -1672,9 +1706,22 @@ class TrofeoGui(QMainWindow):
         )
         self.config_intro_text_label = self.configuration_panel.intro_label
         bind_config_panel_controls(self, self.configuration_panel.controls)
+        self.game_power_widget = GamePowerWidget(self.configuration_panel)
+        gaming_layout = self.configuration_panel.controls.gaming_fps.box.layout()
+        gaming_layout.insertWidget(gaming_layout.indexOf(self.cfg_game_auto_theme_chk), self.game_power_widget)
+        self.game_power_widget.checkbox.toggled.connect(lambda _checked: self._save_ui_state())
+        QApplication.instance().aboutToQuit.connect(self.game_power_widget.controller.shutdown)
         automation_layout.addWidget(self.configuration_panel)
 
         self.config_preferences.sync_ui_controls_from_header()
+        if hasattr(self, "ui_mode_combo"):
+            self.ui_mode_combo.currentTextChanged.connect(
+                lambda _text: self.config_preferences.sync_ui_controls_from_header()
+            )
+        if hasattr(self, "ui_theme_combo"):
+            self.ui_theme_combo.currentTextChanged.connect(
+                lambda _text: self.config_preferences.sync_ui_controls_from_header()
+            )
         QTimer.singleShot(600, self.refresh_fps_layer_status)
 
         studio_panel_controls = build_studio_panel(
@@ -1906,7 +1953,7 @@ class TrofeoGui(QMainWindow):
 
         # TOOLBAR (Przyciski akcji nad LCD)
         toolbar_frame = QFrame()
-        toolbar_frame.setStyleSheet("background: rgba(30, 41, 59, 0.6); border-radius: 14px; border: 1px solid #334155;")
+        toolbar_frame.setObjectName("designerToolbarFrame")
         toolbar_layout = FlowLayout(toolbar_frame, h_spacing=6, v_spacing=6)
         toolbar_layout.setContentsMargins(10, 8, 10, 8)
         toolbar_policy = toolbar_frame.sizePolicy()
@@ -3378,7 +3425,6 @@ class TrofeoGui(QMainWindow):
         self.designer_selection_label.setWordWrap(False)
         self.designer_selection_label.setMaximumHeight(16)
         self.designer_selection_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.designer_selection_label.setStyleSheet("font-size: 10px; margin: 0; padding: 0; color: #9fb0c6;")
         self.designer_selection_label.setToolTip("")
         layout.addWidget(self.designer_selection_label)
         self.designer_kind_combo.currentIndexChanged.connect(self.refresh_designer_element_list)
@@ -3480,30 +3526,126 @@ class TrofeoGui(QMainWindow):
         layout.addWidget(self.inspector_tabs)
         container_layout.addWidget(box)
 
+    def _ui_mode_is_light(self) -> bool:
+        """Resolve the Dark/Light/System mode choice into a concrete palette."""
+        if not hasattr(self, "ui_mode_combo"):
+            return False
+        mode = self.ui_mode_combo.currentText().strip().lower()
+        if mode == "light":
+            return True
+        if mode == "dark":
+            return False
+        try:
+            hints = QGuiApplication.styleHints()
+            if hints is not None and hasattr(hints, "colorScheme"):
+                return hints.colorScheme() != Qt.ColorScheme.Dark
+        except Exception:
+            pass
+        return False
+
     def _build_app_stylesheet(self, theme_name: str, scale_percent: int) -> str:
         theme = UI_THEMES.get(theme_name, UI_THEMES["Plasma Blue"])
-        light_mode = hasattr(self, "ui_mode_combo") and self.ui_mode_combo.currentText() == "Light"
+        light_mode = self._ui_mode_is_light()
         base_font = max(12, int(round(13 * scale_percent / 100)))
         small_font = max(11, int(round(11 * scale_percent / 100)))
         title_font = max(15, int(round(16 * scale_percent / 100)))
-        bg_page = "#f0f4f9" if light_mode else "#15191e"
-        bg_panel = "#ffffff" if light_mode else "#1e232b"
-        bg_input = "#fdfdfe" if light_mode else "#101419"
-        bg_tab = "#e2e8f0" if light_mode else "#1e2531"
-        bg_tab_selected = "#ffffff" if light_mode else "#283244"
-        text_main = "#1e293b" if light_mode else "#f1f5f9"
-        text_soft = "#64748b" if light_mode else "#94a3b8"
-        border_main = "#e2e8f0" if light_mode else "#2d3440"
-        border_soft = "#cbd5e1" if light_mode else "#3b4453"
-        accent_color = theme['accent']
-        primary_color = theme['primary']
+        primary_color = theme["primary"]
+        primary_border = theme["primary_border"]
+        accent_color = theme["accent"]
+
+        if light_mode:
+            bg_page = "#e7edf5"
+            bg_panel = "#ffffff"
+            bg_input = "#ffffff"
+            bg_soft = "#eef2f8"
+            bg_tab = "#dfe6f0"
+            bg_tab_selected = "#ffffff"
+            text_main = "#0b1220"
+            text_soft = "#4b5b6e"
+            border_main = "#cdd7e3"
+            border_soft = "#aebccd"
+            btn_bg = "#ffffff"
+            btn_border = "#aebccd"
+            btn_text = "#16202e"
+            btn_hover_bg = "#e8f0fb"
+            btn_hover_border = primary_color
+            btn_press_bg = "#dbe7f7"
+            sec_bg = "#e8f1fd"
+            sec_text = primary_color
+            sec_border = primary_border
+            sec_hover_bg = "#d9e8fb"
+            toggle_bg = "#eef2f8"
+            toggle_border = "#aebccd"
+            toggle_text = "#26364b"
+            toggle_checked_text = "#ffffff"
+            pill_bg = "#eef2f8"
+            pill_text = primary_color
+            accent_text = primary_color
+            ok_bg = "#e7f8ec"
+            ok_border = "#86d29b"
+            ok_text = "#15803d"
+            menu_bg = "#ffffff"
+            menu_border = "#aebccd"
+            menu_sel_bg = primary_color
+            menu_sel_text = "#ffffff"
+            scroll_handle = "#b3c0cf"
+            editor_bg = "#f8fafc"
+        else:
+            bg_page = "#0b0f14"
+            bg_panel = "#181f28"
+            bg_input = "#0d131a"
+            bg_soft = "#212a35"
+            bg_tab = "#161d25"
+            bg_tab_selected = "#222c38"
+            text_main = "#eef3fa"
+            text_soft = "#9dabbd"
+            border_main = "#333e4b"
+            border_soft = "#475565"
+            btn_bg = "#232c38"
+            btn_border = "#455264"
+            btn_text = "#eef3fa"
+            btn_hover_bg = "#2e3948"
+            btn_hover_border = "#6a7a90"
+            btn_press_bg = "#1a222c"
+            sec_bg = "#22303f"
+            sec_text = accent_color
+            sec_border = accent_color
+            sec_hover_bg = "#2b3c4f"
+            toggle_bg = "#1d2733"
+            toggle_border = "#43536a"
+            toggle_text = "#d7e5f7"
+            toggle_checked_text = "#08111f"
+            pill_bg = "#0a0e13"
+            pill_text = accent_color
+            accent_text = accent_color
+            ok_bg = "#17361f"
+            ok_border = "#1f7a39"
+            ok_text = "#7cf59a"
+            menu_bg = "#1b2129"
+            menu_border = "#2a333f"
+            menu_sel_bg = primary_color
+            menu_sel_text = "#ffffff"
+            scroll_handle = "#3b4654"
+            editor_bg = "#0b0f14"
         
         return f"""
-            QWidget {{
+            QMainWindow, QDialog {{
                 background: {bg_page};
+            }}
+            QWidget {{
                 color: {text_main};
                 font-size: {base_font}px;
                 font-family: "Segoe UI", "Roboto", "DejaVu Sans", sans-serif;
+            }}
+            QScrollArea, QAbstractScrollArea {{
+                background: transparent;
+                border: none;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background: transparent;
+            }}
+            QStackedWidget {{
+                background: transparent;
             }}
             QFrame#shellSidebar {{
                 background: {bg_panel};
@@ -3556,6 +3698,11 @@ class TrofeoGui(QMainWindow):
                 border: 1px solid {border_main};
                 border-radius: 16px;
             }}
+            QFrame#designerToolbarFrame {{
+                background: {bg_soft};
+                border: 1px solid {border_main};
+                border-radius: 14px;
+            }}
             QLabel#shellTitleLabel {{
                 font-size: {title_font + 2}px;
                 font-weight: 800;
@@ -3565,6 +3712,15 @@ class TrofeoGui(QMainWindow):
                 color: {text_soft};
                 font-size: {small_font}px;
                 font-weight: 500;
+            }}
+            QLabel#studioHeroText {{
+                color: {text_main};
+                background: transparent;
+                font-size: {base_font}px;
+            }}
+            QLabel#previewHintLabel, QLabel#selectionSummaryLabel {{
+                color: {text_soft};
+                background: transparent;
             }}
             QLabel#headerFieldLabel {{
                 color: {text_soft};
@@ -3606,11 +3762,11 @@ class TrofeoGui(QMainWindow):
                 font-weight: 700;
             }}
             QLabel#headerReadyBadge {{
-                background: #17361f;
-                border: 1px solid #1f7a39;
+                background: {ok_bg};
+                border: 1px solid {ok_border};
                 border-radius: 10px;
                 padding: 5px 10px;
-                color: #7cf59a;
+                color: {ok_text};
                 font-weight: 800;
             }}
             QLabel#sectionTinyTitle {{
@@ -3635,76 +3791,124 @@ class TrofeoGui(QMainWindow):
                 padding: 0 8px;
                 color: {primary_color};
             }}
-            QLineEdit, QTextEdit, QComboBox, QListWidget, QSpinBox, QDoubleSpinBox {{
+            QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QListWidget, QSpinBox, QDoubleSpinBox {{
                 background: {bg_input};
+                color: {text_main};
                 border: 1px solid {border_soft};
                 border-radius: 8px;
                 padding: 6px 8px;
-                selection-background-color: {accent_color};
-                selection-color: white;
+                selection-background-color: {primary_color};
+                selection-color: #ffffff;
             }}
-            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
+            QTextEdit, QPlainTextEdit {{
+                background: {editor_bg};
+            }}
+            QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover {{
+                border: 1px solid {btn_hover_border};
+            }}
+            QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
                 border: 1px solid {primary_color};
             }}
+            QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{
+                background: {bg_soft};
+                color: {text_soft};
+            }}
+            QComboBox {{
+                padding-right: 24px;
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 22px;
+                border: none;
+                background: transparent;
+            }}
+            QComboBox QAbstractItemView {{
+                background: {menu_bg};
+                border: 1px solid {border_soft};
+                border-radius: 8px;
+                padding: 4px;
+                outline: 0;
+                color: {text_main};
+                selection-background-color: {menu_sel_bg};
+                selection-color: {menu_sel_text};
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 24px;
+                padding: 4px 8px;
+                border-radius: 6px;
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background: {bg_soft};
+            }}
+            QComboBox QAbstractItemView::item:selected {{
+                background: {menu_sel_bg};
+                color: {menu_sel_text};
+            }}
             QPushButton {{
-                background: #2d3648;
-                border: 1px solid #4a5568;
+                background: {btn_bg};
+                border: 1px solid {btn_border};
                 border-radius: 10px;
                 padding: 8px 12px;
                 font-weight: 600;
-                color: #f8fafc;
+                color: {btn_text};
             }}
             QPushButton:hover {{
-                background: #3a475d;
-                border: 1px solid #718096;
+                background: {btn_hover_bg};
+                border: 1px solid {btn_hover_border};
             }}
             QPushButton:pressed {{
-                background: #1e2533;
+                background: {btn_press_bg};
+            }}
+            QPushButton:disabled {{
+                background: {bg_soft};
+                border: 1px solid {border_main};
+                color: {text_soft};
             }}
             QPushButton#primaryButton {{
                 background: {primary_color};
-                border: 1px solid {theme['primary_border']};
-                color: white;
+                border: 1px solid {primary_border};
+                color: #ffffff;
             }}
             QPushButton#primaryButton:hover {{
-                background: {theme['primary_border']};
+                background: {primary_border};
             }}
             QPushButton#primaryButton:pressed {{
-                background: {theme['primary_border']};
-                border: 1px solid {theme['primary_border']};
+                background: {primary_border};
+                border: 1px solid {primary_border};
                 padding-top: 9px;
                 padding-bottom: 7px;
             }}
             QPushButton#secondaryAccentButton {{
-                background: #2d3748;
-                border: 1px solid {accent_color};
-                color: {accent_color};
+                background: {sec_bg};
+                border: 1px solid {sec_border};
+                color: {sec_text};
             }}
             QPushButton#secondaryAccentButton:hover {{
-                background: #344358;
-                border: 1px solid #8fdcff;
-                color: #f0fbff;
+                background: {sec_hover_bg};
+                border: 1px solid {primary_border};
+                color: {sec_text};
             }}
             QPushButton#secondaryAccentButton:pressed {{
-                background: #233146;
-                border: 1px solid #67d2ff;
-                color: #ffffff;
+                background: {bg_tab_selected};
+                border: 1px solid {primary_color};
+                color: {sec_text};
                 padding-top: 9px;
                 padding-bottom: 7px;
             }}
             QPushButton#modeToggleButton {{
-                background: #233044;
-                border: 1px solid #4c627e;
-                color: #dbeafe;
+                background: {toggle_bg};
+                border: 1px solid {toggle_border};
+                color: {toggle_text};
             }}
             QPushButton#modeToggleButton:hover {{
-                background: #2b3b54;
+                background: {bg_tab_selected};
                 border: 1px solid {accent_color};
             }}
             QPushButton#modeToggleButton:checked {{
                 background: {accent_color};
-                border: 1px solid {theme['primary_border']};
-                color: #08111f;
+                border: 1px solid {primary_border};
+                color: {toggle_checked_text};
             }}
             QPushButton#quickAddButton {{
                 background: {bg_input};
@@ -3912,9 +4116,9 @@ class TrofeoGui(QMainWindow):
                 font-size: {small_font}px;
             }}
             QLabel#layerBadgeLabel {{
-                color: {accent_color};
-                background: rgba(31, 111, 235, 0.14);
-                border: 1px solid rgba(94, 200, 255, 0.25);
+                color: {accent_text};
+                background: {bg_soft};
+                border: 1px solid {border_soft};
                 border-radius: 8px;
                 padding: 4px 8px;
                 font-size: {small_font - 1}px;
@@ -3950,8 +4154,9 @@ class TrofeoGui(QMainWindow):
                 background: {bg_tab_selected};
             }}
             QLabel#statPillValue {{
-                background: #111827;
-                color: {accent_color};
+                background: {pill_bg};
+                color: {pill_text};
+                border: 1px solid {border_soft};
                 border-radius: 6px;
                 padding: 4px 10px;
                 font-weight: 800;
@@ -3968,6 +4173,81 @@ class TrofeoGui(QMainWindow):
                 border: 1px solid {border_soft};
                 border-radius: 10px;
             }}
+            QMenu {{
+                background: {menu_bg};
+                border: 1px solid {menu_border};
+                border-radius: 10px;
+                padding: 6px;
+                color: {text_main};
+            }}
+            QMenu::item {{
+                padding: 6px 22px 6px 12px;
+                border-radius: 6px;
+                background: transparent;
+            }}
+            QMenu::item:selected {{
+                background: {menu_sel_bg};
+                color: {menu_sel_text};
+            }}
+            QMenu::item:disabled {{
+                color: {text_soft};
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: {border_main};
+                margin: 4px 8px;
+            }}
+            QToolTip {{
+                background: {menu_bg};
+                color: {text_main};
+                border: 1px solid {border_soft};
+                border-radius: 6px;
+                padding: 4px 8px;
+            }}
+            QCheckBox, QRadioButton {{
+                color: {text_main};
+                spacing: 7px;
+            }}
+            QHeaderView::section {{
+                background: {bg_soft};
+                color: {text_soft};
+                border: none;
+                border-bottom: 1px solid {border_main};
+                padding: 6px 8px;
+                font-weight: 700;
+            }}
+            QTableWidget, QTableView {{
+                background: {bg_input};
+                alternate-background-color: {bg_soft};
+                gridline-color: {border_main};
+                border: 1px solid {border_soft};
+                border-radius: 10px;
+                color: {text_main};
+            }}
+            QTableWidget::item:selected, QTableView::item:selected {{
+                background: {primary_color};
+                color: #ffffff;
+            }}
+            QScrollBar:horizontal {{
+                border: none;
+                background: transparent;
+                height: 10px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background: {scroll_handle};
+                min-width: 20px;
+                border-radius: 5px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
+                background: {primary_color};
+            }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                width: 0px;
+            }}
+            QScrollBar::add-page, QScrollBar::sub-page {{
+                background: transparent;
+            }}
         """
 
     def apply_ui_chrome(self) -> None:
@@ -3976,6 +4256,10 @@ class TrofeoGui(QMainWindow):
         self.setStyleSheet(self._build_app_stylesheet(theme_name, scale_percent))
         self._apply_responsive_layout_metrics(scale_percent)
         self._apply_content_width_rules(scale_percent)
+
+    def _on_system_color_scheme_changed(self, *_args: object) -> None:
+        if hasattr(self, "ui_mode_combo") and self.ui_mode_combo.currentText().strip().lower() == "system":
+            self.apply_ui_chrome()
 
     def _apply_equal_width_for_group(
         self,
@@ -4406,6 +4690,10 @@ class TrofeoGui(QMainWindow):
             self._startup_theme_name = str(payload.get("startup_theme", "")).strip()
             self._startup_theme_applied = False
             self._gaming_auto_theme_enabled = bool(payload.get("gaming_auto_theme_enabled", False))
+            self.game_power_widget.checkbox.blockSignals(True)
+            self.game_power_widget.checkbox.setChecked(bool(payload.get("gaming_cpu_performance", False)))
+            self.game_power_widget.checkbox.blockSignals(False)
+            self.game_power_widget.controller.set_enabled(self.game_power_widget.checkbox.isChecked())
             self._gaming_auto_theme_name = str(payload.get("gaming_auto_theme", "")).strip()
             self._gaming_auto_theme_restore_on_fps_loss = bool(payload.get("gaming_auto_theme_restore_on_fps_loss", False))
             try:
@@ -4438,6 +4726,9 @@ class TrofeoGui(QMainWindow):
                     self.cfg_weather_refresh_spin.setValue(int(payload.get("weather_refresh_s", 900) or 900))
                 except Exception:
                     self.cfg_weather_refresh_spin.setValue(900)
+                if hasattr(self, "cfg_weather_temp_unit_combo"):
+                    index = self.cfg_weather_temp_unit_combo.findData(str(payload.get("weather_temp_unit", "celsius") or "celsius"))
+                    self.cfg_weather_temp_unit_combo.setCurrentIndex(max(0, index))
             if hasattr(self, "cfg_audio_eq_input_combo"):
                 idx = self.cfg_audio_eq_input_combo.findData(str(payload.get("audio_eq_input", "auto") or "auto"))
                 if idx >= 0:
@@ -4486,6 +4777,8 @@ class TrofeoGui(QMainWindow):
             payload["designer_mode"] = self.designer_mode_combo.currentText()
         payload["startup_theme"] = str(getattr(self, "_startup_theme_name", "")).strip()
         payload["gaming_auto_theme_enabled"] = bool(getattr(self, "_gaming_auto_theme_enabled", False))
+        if hasattr(self, "game_power_widget"):
+            payload["gaming_cpu_performance"] = self.game_power_widget.checkbox.isChecked()
         payload["gaming_auto_theme"] = str(getattr(self, "_gaming_auto_theme_name", "")).strip()
         payload["gaming_auto_theme_restore_on_fps_loss"] = bool(getattr(self, "_gaming_auto_theme_restore_on_fps_loss", False))
         payload["gaming_auto_theme_fps_loss_delay_s"] = int(getattr(self, "_gaming_auto_theme_fps_loss_delay_s", 12) or 12)
@@ -4494,6 +4787,7 @@ class TrofeoGui(QMainWindow):
             payload["weather_lon"] = self.cfg_weather_lon_edit.text().strip()
             payload["weather_location"] = self.cfg_weather_location_edit.text().strip()
             payload["weather_refresh_s"] = int(self.cfg_weather_refresh_spin.value())
+            payload["weather_temp_unit"] = str(self.cfg_weather_temp_unit_combo.currentData() or "celsius")
         if hasattr(self, "cfg_audio_eq_input_combo"):
             payload["audio_eq_input"] = str(self.cfg_audio_eq_input_combo.currentData() or "auto")
         if hasattr(self, "cfg_audio_eq_profile_combo"):
@@ -5770,7 +6064,7 @@ class TrofeoGui(QMainWindow):
         best_path = ""
         best_score = -1
         if not hasattr(self, "_media_preview_stats_provider"):
-            self._media_preview_stats_provider = StatsProvider()
+            self._media_preview_stats_provider = StatsProvider(enable_fps_probe=False)
         for line in payload.splitlines():
             parts = line.split("\t")
             player = parts[0].strip() if len(parts) > 0 else ""

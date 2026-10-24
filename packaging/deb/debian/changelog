@@ -1,3 +1,41 @@
+open-trofeo-lcd (0.1.0~dev20261024+pikaos2) resolute; urgency=medium
+
+  * Read AMDGPU load, edge temperature and VRAM statistics from Linux sysfs,
+    preferring a discrete AMD card when multiple AMD devices are present.
+  * Add Celsius/Fahrenheit selection to Configuration > Weather and preserve
+    the choice across restarts and cached forecasts.
+  * Keep NVIDIA telemetry selected on systems with an NVIDIA display card.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Sat, 24 Oct 2026 07:08:10 +0200
+
+open-trofeo-lcd (0.1.0~dev20261010+themes2) resolute; urgency=medium
+
+  * Respect animation frame durations on TRCC LCDs so refreshed themes play
+    at their designed 4 FPS instead of being accelerated to 24 FPS.
+  * Add newly bundled Linux themes to existing user libraries on upgrade,
+    while preserving custom themes and intentionally removed starter themes.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Sat, 10 Oct 2026 07:01:40 +0200
+
+open-trofeo-lcd (0.1.0~dev20260914+ui5cpu2) resolute; urgency=medium
+
+  * Add an opt-in, session-scoped CPU performance profile hold when a game is
+    detected, without writing CPU governor settings directly.
+  * Reduce animated-theme memory use by decoding frames on demand and cap
+    temporary render caches left by interrupted sessions.
+  * Ignore Steam shader and runtime helpers such as fossilize_replay during
+    game detection while preserving real Steam game detection.
+  * Exclude shader-compilation warm-up samples from gameplay minimum FPS and
+    keep full session values in the CSV log.
+  * Improve responsive Qt layouts and refresh theme choices used by automatic
+    game switching.
+  * Ship the current eight-theme set, including Valhalla Command and the new
+    Amber Hi-Fi, Crimson Telemetry and Nordic Forecast themes.
+  * Document upstream thermalright-trcc-linux provenance and add physical
+    hardware screenshots.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Mon, 14 Sep 2026 20:14:39 +0200
+
 open-trofeo-lcd (0.1.0~dev20260520+resolute7) resolute; urgency=medium
 
   * Development preview package for Ubuntu testing.

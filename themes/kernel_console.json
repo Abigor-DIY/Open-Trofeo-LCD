@@ -1,0 +1,594 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "Kernel Console",
+    "author": "Open Trofeo LCD",
+    "description": "Unix workstation; live telemetry with subtle looped artwork.",
+    "tags": [
+      "starter-pack",
+      "animated",
+      "linux"
+    ]
+  },
+  "canvas": {
+    "width": 1920,
+    "height": 462,
+    "rotation": 180
+  },
+  "background": {
+    "kind": "image",
+    "path": "kernel_console_assets/2026-10-10/frames/kernel_console_frame_0000.jpg",
+    "fit": "cover",
+    "base_color": [
+      8,
+      18,
+      16
+    ],
+    "accent_color": [
+      169,
+      236,
+      174
+    ],
+    "texture_alpha": 0.0,
+    "panels": []
+  },
+  "texts": [
+    {
+      "id": "txt_0",
+      "text": "KERNEL CONSOLE",
+      "x": 36,
+      "y": 31,
+      "box_width": 620,
+      "box_height": 39,
+      "font_size": 27,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_1",
+      "text": "UNIX WORKSTATION  /  LIVE",
+      "x": 765,
+      "y": 37,
+      "box_width": 620,
+      "box_height": 25,
+      "font_size": 13,
+      "font_bold": true,
+      "color": [
+        192,
+        239,
+        200,
+        255
+      ]
+    },
+    {
+      "id": "txt_2",
+      "text": "abigor@trofeo:~$",
+      "x": 57,
+      "y": 95,
+      "box_width": 445,
+      "box_height": 34,
+      "font_size": 22,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_3",
+      "text": "uname -a  /  htop  /  sensors",
+      "x": 58,
+      "y": 135,
+      "box_width": 450,
+      "box_height": 29,
+      "font_size": 17,
+      "font_bold": false,
+      "color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "txt_4",
+      "text": "HOST",
+      "x": 59,
+      "y": 189,
+      "box_width": 430,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_5",
+      "text": "IPV4",
+      "x": 59,
+      "y": 260,
+      "box_width": 430,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_6",
+      "text": "UPTIME",
+      "x": 59,
+      "y": 333,
+      "box_width": 430,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_7",
+      "text": "PROCESS / RESOURCES",
+      "x": 594,
+      "y": 92,
+      "box_width": 670,
+      "box_height": 26,
+      "font_size": 14,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_8",
+      "text": "CPU",
+      "x": 600,
+      "y": 140,
+      "box_width": 320,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_9",
+      "text": "GPU",
+      "x": 964,
+      "y": 140,
+      "box_width": 320,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_10",
+      "text": "RAM",
+      "x": 600,
+      "y": 270,
+      "box_width": 320,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_11",
+      "text": "DISK",
+      "x": 964,
+      "y": 270,
+      "box_width": 320,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_12",
+      "text": "NETWORK / TRAFFIC",
+      "x": 1410,
+      "y": 92,
+      "box_width": 400,
+      "box_height": 26,
+      "font_size": 14,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_13",
+      "text": "DOWNLOAD",
+      "x": 1414,
+      "y": 145,
+      "box_width": 410,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_14",
+      "text": "UPLOAD",
+      "x": 1414,
+      "y": 231,
+      "box_width": 410,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    },
+    {
+      "id": "txt_15",
+      "text": "KERNEL LOAD",
+      "x": 1414,
+      "y": 318,
+      "box_width": 410,
+      "box_height": 24,
+      "font_size": 12,
+      "font_bold": true,
+      "color": [
+        169,
+        236,
+        174,
+        255
+      ]
+    }
+  ],
+  "stats": [
+    {
+      "id": "stat_0",
+      "source": "time_hms",
+      "x": 1645,
+      "y": 28,
+      "box_width": 245,
+      "box_height": 41,
+      "font_size": 29,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_1",
+      "source": "hostname",
+      "x": 59,
+      "y": 211,
+      "box_width": 430,
+      "box_height": 39,
+      "font_size": 27,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_2",
+      "source": "ip_local",
+      "x": 59,
+      "y": 282,
+      "box_width": 430,
+      "box_height": 36,
+      "font_size": 24,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_3",
+      "source": "uptime_human",
+      "x": 59,
+      "y": 355,
+      "box_width": 430,
+      "box_height": 37,
+      "font_size": 25,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_4",
+      "source": "cpu_usage_percent",
+      "x": 600,
+      "y": 162,
+      "box_width": 320,
+      "box_height": 49,
+      "font_size": 37,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_5",
+      "source": "cpu_usage_percent",
+      "x": 600,
+      "y": 214,
+      "box_width": 310,
+      "box_height": 34,
+      "font_size": 12,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        169,
+        236,
+        174,
+        255
+      ],
+      "display": "progress",
+      "show_value_text": false,
+      "stroke_width": 9
+    },
+    {
+      "id": "stat_6",
+      "source": "gpu_load",
+      "x": 964,
+      "y": 162,
+      "box_width": 320,
+      "box_height": 49,
+      "font_size": 37,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_7",
+      "source": "gpu_load",
+      "x": 964,
+      "y": 214,
+      "box_width": 310,
+      "box_height": 34,
+      "font_size": 12,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        169,
+        236,
+        174,
+        255
+      ],
+      "display": "progress",
+      "show_value_text": false,
+      "stroke_width": 9
+    },
+    {
+      "id": "stat_8",
+      "source": "mem_percent",
+      "x": 600,
+      "y": 292,
+      "box_width": 320,
+      "box_height": 49,
+      "font_size": 37,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_9",
+      "source": "mem_percent",
+      "x": 600,
+      "y": 344,
+      "box_width": 310,
+      "box_height": 34,
+      "font_size": 12,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        169,
+        236,
+        174,
+        255
+      ],
+      "display": "progress",
+      "show_value_text": false,
+      "stroke_width": 9
+    },
+    {
+      "id": "stat_10",
+      "source": "disk_percent",
+      "x": 964,
+      "y": 292,
+      "box_width": 320,
+      "box_height": 49,
+      "font_size": 37,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_11",
+      "source": "disk_percent",
+      "x": 964,
+      "y": 344,
+      "box_width": 310,
+      "box_height": 34,
+      "font_size": 12,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        169,
+        236,
+        174,
+        255
+      ],
+      "display": "progress",
+      "show_value_text": false,
+      "stroke_width": 9
+    },
+    {
+      "id": "stat_12",
+      "source": "net_dl_kbps",
+      "x": 1414,
+      "y": 167,
+      "box_width": 410,
+      "box_height": 39,
+      "font_size": 27,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_13",
+      "source": "net_ul_kbps",
+      "x": 1414,
+      "y": 253,
+      "box_width": 410,
+      "box_height": 39,
+      "font_size": 27,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    },
+    {
+      "id": "stat_14",
+      "source": "load_average",
+      "x": 1414,
+      "y": 340,
+      "box_width": 410,
+      "box_height": 39,
+      "font_size": 27,
+      "font_bold": true,
+      "format": "{value}",
+      "value_color": [
+        237,
+        246,
+        249,
+        255
+      ]
+    }
+  ],
+  "images": [],
+  "widgets": [],
+  "effects": {
+    "animation": {
+      "enabled": true,
+      "use_as_background": true,
+      "fps": 4,
+      "loop": true,
+      "smooth_loop": false,
+      "current_frame": 0,
+      "frame_paths": [
+        "kernel_console_assets/2026-10-10/frames/kernel_console_frame_0000.jpg",
+        "kernel_console_assets/2026-10-10/frames/kernel_console_frame_0001.jpg",
+        "kernel_console_assets/2026-10-10/frames/kernel_console_frame_0002.jpg",
+        "kernel_console_assets/2026-10-10/frames/kernel_console_frame_0003.jpg",
+        "kernel_console_assets/2026-10-10/frames/kernel_console_frame_0004.jpg",
+        "kernel_console_assets/2026-10-10/frames/kernel_console_frame_0005.jpg",
+        "kernel_console_assets/2026-10-10/frames/kernel_console_frame_0006.jpg",
+        "kernel_console_assets/2026-10-10/frames/kernel_console_frame_0007.jpg"
+      ],
+      "frame_durations_ms": [
+        250,
+        250,
+        250,
+        250,
+        250,
+        250,
+        250,
+        250
+      ]
+    }
+  }
+}
