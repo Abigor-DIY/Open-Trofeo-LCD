@@ -1,3 +1,11 @@
+open-trofeo-lcd (0.1.0~dev20261024+ubuntu1) resolute; urgency=medium
+
+  * Publish AMDGPU telemetry and Celsius/Fahrenheit weather selection for Ubuntu.
+  * Include theme layout, animation timing and bundled Linux theme upgrades.
+  * Pin AppStream screenshots to this release and refresh its release metadata.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Sat, 24 Oct 2026 08:00:00 +0200
+
 open-trofeo-lcd (0.1.0~dev20261024+pikaos2) resolute; urgency=medium
 
   * Read AMDGPU load, edge temperature and VRAM statistics from Linux sysfs,
