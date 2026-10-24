@@ -1,3 +1,14 @@
+open-trofeo-lcd (0.1.0~dev20261024+ubuntu2) resolute; urgency=medium
+
+  * Support the command-based TRCC 9.11 display API as well as legacy TRCC 9.4
+    for animated themes, static images and live overlays.
+  * Use TRCC's synchronous image command to preserve orientation and confirm
+    USB completion before acknowledging animation readiness.
+  * Resolve standalone pip/pipx launchers through their Python shebang.
+  * Retain AMDGPU telemetry, Fahrenheit weather and the ten bundled themes.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Sat, 24 Oct 2026 16:50:00 +0200
+
 open-trofeo-lcd (0.1.0~dev20261024+ubuntu1) resolute; urgency=medium
 
   * Publish AMDGPU telemetry and Celsius/Fahrenheit weather selection for Ubuntu.

@@ -60,6 +60,7 @@ REQUIRED_FLATPAK_SKIPS = {
 }
 
 REQUIRED_PACKAGE_FILES = {
+    "scripts/trcc_runtime.py",
     "assets/transport/trofeo_1920x462_packet_template.bin",
     "animation_limits.py",
     "animation_studio.py",

@@ -14,35 +14,12 @@ def main() -> int:
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
+    from trcc_runtime import open_display
+
     try:
-        import trcc.cli as trcc_cli
-        from trcc.cli._connect import connect_device
-        from trcc.core.app import TrccApp
-        from trcc.adapters.infra.diagnostics import StandardLoggingConfigurator
-        from trcc.services import ImageService
+        lcd, renderer = open_display(args.device)
     except Exception as exc:
-        print(f"Error: failed to import trcc: {exc}", flush=True)
-        return 1
-
-    try:
-        from trcc.adapters.system.linux.setup import LinuxSetup
-
-        LinuxSetup.needs_setup = lambda self: False
-        LinuxSetup.auto_setup = lambda self: None
-    except Exception:
-        pass
-
-    StandardLoggingConfigurator().configure(verbosity=0)
-    app = TrccApp.init()
-    app.init_platform(verbosity=0, renderer_factory=trcc_cli._make_cli_renderer)
-
-    rc = connect_device(args.device)
-    if rc != 0:
-        return rc
-
-    lcd = TrccApp.get().device(0)
-    if lcd is None:
-        print("Error: no LCD device", flush=True)
+        print(f"Error: TRCC runtime: {exc}", flush=True)
         return 1
 
     result = lcd.load_image(args.image)
@@ -55,7 +32,6 @@ def main() -> int:
         print("Error: image load returned no surface", flush=True)
         return 1
 
-    renderer = ImageService._r()
     frame = renderer.copy_surface(image)
     frame = renderer.convert_to_rgb(frame)
 

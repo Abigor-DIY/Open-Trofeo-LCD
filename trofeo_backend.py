@@ -14,6 +14,7 @@ import json
 import os
 import random
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -3176,10 +3177,24 @@ class ReplayController:
             else:
                 raise RuntimeError(f"Brak binarki trcc: {trcc_bin}")
 
+        # pip/pipx may leave a launcher in ~/.local/bin with its interpreter
+        # only in the shebang. Keep the venv path (resolving its Python symlink
+        # would silently drop that venv's site-packages).
+        try:
+            with trcc_bin.open("r", encoding="utf-8") as launcher:
+                first_line = launcher.readline(512).strip()
+            if first_line.startswith("#!"):
+                command = shlex.split(first_line[2:])
+                if command and Path(command[0]).is_absolute() and "python" in Path(command[0]).name:
+                    interpreter = Path(command[0])
+                    if interpreter.exists():
+                        return interpreter
+        except (OSError, UnicodeError, ValueError):
+            pass
         trcc_python = trcc_bin.parent / "python"
         if trcc_python.exists():
             return trcc_python
-        return Path(sys.executable).resolve()
+        return Path(sys.executable)
 
     def _start_trcc_static_worker(self, image_path: Path) -> dict[str, Any]:
         trcc_python = self._resolve_trcc_python()

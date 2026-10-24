@@ -27,23 +27,7 @@ def main() -> int:
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
-    try:
-        import trcc.cli as trcc_cli
-        from trcc.cli._connect import connect_device
-        from trcc.core.app import TrccApp
-        from trcc.adapters.infra.diagnostics import StandardLoggingConfigurator
-        from trcc.services import ImageService
-    except Exception as exc:
-        print(f"Error: failed to import trcc: {exc}", flush=True)
-        return 1
-
-    try:
-        from trcc.adapters.system.linux.setup import LinuxSetup
-
-        LinuxSetup.needs_setup = lambda self: False
-        LinuxSetup.auto_setup = lambda self: None
-    except Exception:
-        pass
+    from trcc_runtime import open_display
 
     background_path = Path(args.image).expanduser()
     overlay_path = Path(args.overlay).expanduser()
@@ -54,17 +38,10 @@ def main() -> int:
         print(f"Error: overlay not found: {overlay_path}", flush=True)
         return 1
 
-    StandardLoggingConfigurator().configure(verbosity=0)
-    app = TrccApp.init()
-    app.init_platform(verbosity=0, renderer_factory=trcc_cli._make_cli_renderer)
-
-    rc = connect_device(args.device)
-    if rc != 0:
-        return rc
-
-    lcd = TrccApp.get().device(0)
-    if lcd is None:
-        print("Error: no LCD device", flush=True)
+    try:
+        lcd, renderer = open_display(args.device)
+    except Exception as exc:
+        print(f"Error: TRCC runtime: {exc}", flush=True)
         return 1
 
     background_result = lcd.load_image(str(background_path))
@@ -76,7 +53,6 @@ def main() -> int:
         print("Error: background load returned no surface", flush=True)
         return 1
 
-    renderer = ImageService._r()
     overlay_image = None
     overlay_mtime_ns = None
     composited = None

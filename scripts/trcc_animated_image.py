@@ -26,50 +26,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    try:
-        import trcc.cli as trcc_cli
-        from trcc.cli._connect import connect_device
-        from trcc.core.app import TrccApp
-        from trcc.adapters.infra.diagnostics import StandardLoggingConfigurator
-        from trcc.services import ImageService
-    except Exception as exc:
-        print(f"Error: failed to import trcc: {exc}", flush=True)
-        return 1
-
-    try:
-        from trcc.adapters.system.linux.setup import LinuxSetup
-
-        LinuxSetup.needs_setup = lambda self: False
-        LinuxSetup.auto_setup = lambda self: None
-    except Exception:
-        pass
-
-    # The 1920x462 panel is bandwidth-bound (~4 MB/s): a q95 full frame is
-    # ~240 KB and takes 60-80 ms to transfer. Encoding at a slightly lower
-    # quality shrinks the frame a lot, which is the main lever for smoother
-    # playback. Both knobs are optional; 0 keeps the TRCC default.
-    try:
-        jpeg_quality = int(os.environ.get("OPEN_TROFEO_JPEG_QUALITY", "80") or 0)
-    except ValueError:
-        jpeg_quality = 0
-    try:
-        jpeg_max_bytes = int(os.environ.get("OPEN_TROFEO_JPEG_MAX_BYTES", "350000") or 0)
-    except ValueError:
-        jpeg_max_bytes = 0
-    if jpeg_quality or jpeg_max_bytes:
-        try:
-            base_quality = jpeg_quality if 5 <= jpeg_quality <= 100 else 95
-            base_max_size = jpeg_max_bytes if jpeg_max_bytes > 0 else 650000
-
-            def _tuned_to_jpeg(image, quality=base_quality, max_size=base_max_size):
-                data = ImageService._r().encode_jpeg(image, quality, max_size)
-                if os.environ.get("OPEN_TROFEO_DEBUG_JPEG"):
-                    print(f"[jpeg] quality={quality} bytes={len(data)}", flush=True)
-                return data
-
-            ImageService.to_jpeg = staticmethod(_tuned_to_jpeg)
-        except Exception:
-            pass
+    from trcc_runtime import open_display
 
     manifest_path = Path(args.manifest).expanduser()
     if not manifest_path.exists():
@@ -108,23 +65,13 @@ def main() -> int:
         durations_ms = []
     if not isinstance(frame_roles, list):
         frame_roles = []
-    StandardLoggingConfigurator().configure(verbosity=0)
-    app = TrccApp.init()
-    app.init_platform(verbosity=0, renderer_factory=trcc_cli._make_cli_renderer)
-
-    rc = connect_device(args.device)
-    if rc != 0:
-        return rc
-
-    # Brief settle after enumeration / first control transfers — reduces rare USBTimeout on first bulk write.
-    time.sleep(0.25)
-
-    lcd = TrccApp.get().device(0)
-    if lcd is None:
-        print("Error: no LCD device", flush=True)
+    try:
+        lcd, renderer = open_display(args.device)
+    except Exception as exc:
+        print(f"Error: TRCC runtime: {exc}", flush=True)
         return 1
 
-    renderer = ImageService._r()
+    time.sleep(0.25)
     static_overlay_image = None
     if static_overlay_path is not None:
         if not static_overlay_path.exists():
