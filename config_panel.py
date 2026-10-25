@@ -393,7 +393,10 @@ def build_config_lcd_preferences_box() -> ConfigLcdPreferencesControls:
     box = QGroupBox("LCD Preferences")
     box.setObjectName("configCardBox")
     form = QFormLayout(box)
+    form.setRowWrapPolicy(QFormLayout.WrapLongRows)
     rotation = QComboBox()
+    rotation.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+    rotation.setMinimumWidth(220)
     rotation.addItem("Standard (0°)", 0)
     rotation.addItem("Flipped (180°)", 180)
     rotation_label = QLabel("Screen rotation:")
@@ -407,7 +410,7 @@ def build_config_lcd_preferences_box() -> ConfigLcdPreferencesControls:
     note.setWordWrap(True)
     note.setObjectName("selectionSummaryLabel")
     note.setMinimumHeight(28)
-    note.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
+    note.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     form.addRow(note)
     return ConfigLcdPreferencesControls(box=box, note_label=note, rotation_combo=rotation,
                                        rotation_label=rotation_label, rotation_note_label=rotation_note)
@@ -833,7 +836,7 @@ def build_config_panel_controls(
     actions = build_config_action_row(callbacks.actions)
 
     grid.addWidget(appearance.box, 0, 0)
-    grid.addWidget(lcd.box, 0, 1)
+    grid.addWidget(lcd.box, 0, 1, Qt.AlignTop)
     grid.addWidget(gaming_fps.box, 0, 2)
     grid.addWidget(weather.box, 1, 0, 1, 2)
     grid.addWidget(audio_eq.box, 1, 2)
