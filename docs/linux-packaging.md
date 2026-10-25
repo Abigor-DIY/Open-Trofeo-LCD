@@ -37,7 +37,7 @@ Files live in `packaging/deb/debian`.
 
 The Ubuntu development PPA is
 [`ppa:abigor82/open-trofeo-lcd`](https://launchpad.net/~abigor82/+archive/ubuntu/open-trofeo-lcd).
-The `0.1.0~dev20261024+ubuntu2` update targets **resolute**, matching the existing
+The `0.1.0~dev20261025+ubuntu1` update targets **resolute**, matching the existing
 PPA series. It includes automatic AMDGPU readings, a Celsius/Fahrenheit weather
 setting, corrected theme animation timing and migration of the bundled Linux
 themes into existing libraries. Quit and reopen the app after upgrading.
@@ -53,6 +53,18 @@ sudo apt install open-trofeo-lcd
 The matching GitHub release provides a standalone `.deb`, signed source-package
 files and SHA-256 checksums. AppStream screenshot URLs are pinned to that release
 tag so Discover can fetch the same previews that shipped with the package.
+
+### Display rotation and missing FPS
+
+Version `0.1.0~dev20261025+ubuntu1` compensates for the rotation current TRCC
+adds to frames already rotated by the Open Trofeo canvas. It preserves the
+rendered frame instead of requiring edits to every bundled theme or changing
+TRCC's saved orientation. The worker logs the profile's wire angle and the
+compensation used. Physical output still needs confirmation on each device.
+
+For missing FPS, use the [support report](gaming-fps-probe.md#fps-and-display-support-report)
+while the game is presenting frames. It identifies missing manifests/libraries,
+whether the game loaded the probe, and whether its namespace can see the socket.
 
 ### TRCC display startup
 

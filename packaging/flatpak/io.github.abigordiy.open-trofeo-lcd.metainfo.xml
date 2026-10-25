@@ -41,43 +41,48 @@
   </description>
   <screenshots>
     <screenshot type="default">
-      <image type="source" width="1600" height="900">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261024-ubuntu2/docs/screenshots/open-trofeo-lcd-theme-gallery.png</image>
+      <image type="source" width="1600" height="900">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261025-ubuntu1/docs/screenshots/open-trofeo-lcd-theme-gallery.png</image>
       <caption>Open Trofeo LCD Theme Gallery</caption>
     </screenshot>
     <screenshot>
-      <image type="source" width="1600" height="900">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261024-ubuntu2/docs/screenshots/open-trofeo-lcd-theme-designer.png</image>
+      <image type="source" width="1600" height="900">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261025-ubuntu1/docs/screenshots/open-trofeo-lcd-theme-designer.png</image>
       <caption>Open Trofeo LCD Theme Designer</caption>
     </screenshot>
     <screenshot>
-      <image type="source" width="1600" height="900">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261024-ubuntu2/docs/screenshots/open-trofeo-lcd-animation-studio.png</image>
+      <image type="source" width="1600" height="900">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261025-ubuntu1/docs/screenshots/open-trofeo-lcd-animation-studio.png</image>
       <caption>Open Trofeo LCD Animation Studio</caption>
     </screenshot>
     <screenshot>
-      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261024-ubuntu2/docs/screenshots/theme-obsidian-pulse.png</image>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261025-ubuntu1/docs/screenshots/theme-obsidian-pulse.png</image>
       <caption>Bundled Obsidian Pulse theme preview</caption>
     </screenshot>
     <screenshot>
-      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261024-ubuntu2/docs/screenshots/theme-orbital-relay.png</image>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261025-ubuntu1/docs/screenshots/theme-orbital-relay.png</image>
       <caption>Bundled Orbital Relay theme preview</caption>
     </screenshot>
     <screenshot>
-      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261024-ubuntu2/docs/screenshots/theme-kernel-console.png</image>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261025-ubuntu1/docs/screenshots/theme-kernel-console.png</image>
       <caption>Bundled Kernel Console theme preview</caption>
     </screenshot>
     <screenshot>
-      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261024-ubuntu2/docs/screenshots/theme-verdant-bloom.png</image>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261025-ubuntu1/docs/screenshots/theme-verdant-bloom.png</image>
       <caption>Bundled Verdant Bloom theme preview</caption>
     </screenshot>
     <screenshot>
-      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261024-ubuntu2/docs/screenshots/theme-neon-frame-arena.png</image>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261025-ubuntu1/docs/screenshots/theme-neon-frame-arena.png</image>
       <caption>Bundled Neon Frame Arena theme preview</caption>
     </screenshot>
     <screenshot>
-      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261024-ubuntu2/docs/screenshots/theme-penguin-circuit.png</image>
+      <image type="source" width="1920" height="462">https://raw.githubusercontent.com/Abigor-DIY/Open-Trofeo-LCD/v0.1.0-dev20261025-ubuntu1/docs/screenshots/theme-penguin-circuit.png</image>
       <caption>Bundled Penguin Circuit theme preview</caption>
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.1.0-dev20261025-ubuntu1" date="2026-10-25">
+      <description>
+        <p>Correct rotated output with current TRCC and add a focused diagnostic report for missing game FPS and display startup.</p>
+      </description>
+    </release>
     <release version="0.1.0-dev20261024-ubuntu2" date="2026-10-24">
       <description>
         <p>Fix display startup with current TRCC 9.11 while retaining legacy TRCC 9.4 support for animated themes, static images and live overlays.</p>

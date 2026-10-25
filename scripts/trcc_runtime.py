@@ -31,7 +31,8 @@ def load_api() -> tuple[str, dict]:
         boot = importlib.import_module("trcc._boot")
         commands = importlib.import_module("trcc.core.commands")
         qt = importlib.import_module("trcc.adapters.render.qt")
-        return "commands", dict(boot=boot, commands=commands, qt=qt)
+        protocol = importlib.import_module("trcc.core.protocol")
+        return "commands", dict(boot=boot, commands=commands, qt=qt, protocol=protocol)
     return "legacy", dict(
         cli=cli,
         connect=importlib.import_module("trcc.cli._connect").connect_device,
@@ -61,10 +62,16 @@ class _Renderer:
     def composite(self, base, overlay, position):
         return self.renderer.composite(base, overlay, position)
 
+    def rotate(self, image, degrees):
+        return self.renderer.rotate(image, degrees)
+
 
 class _CommandDisplay:
-    def __init__(self, app, commands, key, renderer):
+    def __init__(self, app, commands, key, renderer, wire_rotation=0):
         self.app, self.commands, self.key, self.renderer = app, commands, key, renderer
+        # Theme frames already carry Open Trofeo's canvas rotation. Undo the
+        # rotation SendImage will add so the USB frame matches legacy output.
+        self.input_rotation = (-int(wire_rotation)) % 360
         self.directory = tempfile.TemporaryDirectory(prefix="open-trofeo-trcc-frame-")
         self.frame_path = Path(self.directory.name) / "frame.png"
         atexit.register(self.directory.cleanup)
@@ -85,6 +92,8 @@ class _CommandDisplay:
         pass  # Background lifetime is owned by the worker's compositing loop.
 
     def send_frame(self, image):
+        if self.input_rotation:
+            image = self.renderer.rotate(image, self.input_rotation)
         if not image.save(str(self.frame_path), "PNG"):
             raise RuntimeError("Failed to stage TRCC frame")
         # Use the supported command, preserving device profile, orientation,
@@ -145,5 +154,15 @@ def open_display(device=None):
     connected = app.dispatch(commands.ConnectDevice(key=key))
     if not connected.ok:
         raise RuntimeError(f"TRCC connection failed: {connected.message}")
+    profile = app.devices[key].profile
+    if profile is None:
+        raise RuntimeError("TRCC connection did not provide an LCD profile")
+    orientation = app.settings.for_device(key).orientation
+    wire_rotation = modules["protocol"].wire_angle(profile, orientation, False)
+    print(
+        f"TRCC frame rotation: orientation={orientation} wire={wire_rotation} "
+        f"compensation={(-wire_rotation) % 360} (canvas rotation already rendered)",
+        flush=True,
+    )
     facade = _Renderer(renderer)
-    return _CommandDisplay(app, commands, key, facade), facade
+    return _CommandDisplay(app, commands, key, facade, wire_rotation), facade

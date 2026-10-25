@@ -190,6 +190,35 @@ Useful markers are `loaded`, `negotiate`, `create-instance`, `create-device`,
 and `first-present`. When these entries appear but the backend still waits for
 samples, check the socket path and Flatpak permission first.
 
+## FPS and display support report
+
+If the game runs but the Trofeo shows `N/A`, collect the report while the game
+is presenting frames. From a terminal, run:
+
+```bash
+python3 /usr/share/open-trofeo-lcd/scripts/trofeo_support_report.py --game Enshrouded --delay 15
+```
+
+Switch back into the unpaused game during those 15 seconds. The tool saves
+`~/trofeo-support.txt`. Review it, then attach it to the support conversation.
+Source users can run `python3 scripts/trofeo_support_report.py` with the same
+options. `--url http://127.0.0.1:18777` can select a different local backend port.
+
+The report checks the backend FPS snapshot, both native/Flatpak manifests and
+their libraries, the matching game's loaded probe/MangoHud libraries, socket
+visibility inside the game's namespace, selected FPS environment variables,
+probe log markers and display-worker errors. It also reports installed TRCC
+versions and saved Trofeo orientation. It does not touch USB, send synthetic
+FPS samples, change settings, upload data, or export weather coordinates/full
+process environments. Home and runtime paths are replaced with placeholders.
+
+`OPEN_TROFEO_FPS_LAYER=1` opts into an installed layer; the flag alone does not
+install it. If the report says the manifest/library is missing, use
+**Configuration → Gaming FPS → Configure FPS layer**, restart Steam completely
+and retry. MangoHud's visible FPS counter does not establish that the separate
+Open Trofeo layer has loaded. Compare its `loaded`, `create-device`,
+`first-present` and `socket-error` markers before changing launch options.
+
 ## Native probe plan
 
 The production probe should use the same socket and schema:

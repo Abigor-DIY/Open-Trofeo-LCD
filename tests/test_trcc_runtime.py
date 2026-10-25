@@ -9,6 +9,21 @@ from trofeo_backend import ReplayController
 
 
 class TrccRuntimeTests(unittest.TestCase):
+    def test_pre_rendered_frame_compensates_for_trcc_rotation(self):
+        app = SimpleNamespace(dispatch=Mock(return_value=SimpleNamespace(ok=True)))
+        commands = SimpleNamespace(SendImage=lambda **kwargs: SimpleNamespace(**kwargs))
+        original = SimpleNamespace(save=Mock())
+        compensated = SimpleNamespace(save=Mock(return_value=True))
+        renderer = SimpleNamespace(rotate=Mock(return_value=compensated))
+        display = trcc_runtime._CommandDisplay(app, commands, "0416:5408", renderer, wire_rotation=90)
+        try:
+            self.assertTrue(display.send_frame(original))
+            renderer.rotate.assert_called_once_with(original, 270)
+            original.save.assert_not_called()
+            compensated.save.assert_called_once()
+        finally:
+            display.directory.cleanup()
+
     def test_current_api_is_used_when_legacy_cli_was_removed(self):
         def load(name):
             if name == "trcc.cli":
