@@ -103,6 +103,28 @@ class ConfigPreferencesControllerTests(unittest.TestCase):
             self.assertFalse(autosave.exists())
             self.assertIn("[config] Wyczyszczono cache aplikacji.", owner.calls)
 
+    def test_rotation_apply_and_cancel_preserve_pending_selection_during_status_refresh(self):
+        owner = self._owner()
+        owner.cfg_display_rotation_combo = QComboBox()
+        owner.cfg_display_rotation_combo.addItem("Standard", 0)
+        owner.cfg_display_rotation_combo.addItem("Flipped", 180)
+        owner.apply_lcd_config = lambda: owner.calls.append("lcd")
+        owner._lcd_rotation = 0
+        owner.cfg_display_rotation_combo.setCurrentIndex(1)
+        owner._lcd_rotation_dirty = True
+        controller = ConfigPreferencesController(owner, ui_state_path=Path("unused"),
+                                                 theme_autosave_path=Path("unused"))
+        controller.sync_ui_controls_from_header()
+        self.assertEqual(owner.cfg_display_rotation_combo.currentData(), 180)
+        controller.apply_preferences()
+        self.assertIn("lcd", owner.calls)
+        controller.sync_ui_controls_from_header(discard_lcd_changes=True)
+        self.assertEqual(owner.cfg_display_rotation_combo.currentData(), 0)
+        self.assertFalse(owner._lcd_rotation_dirty)
+        owner._lcd_rotation = 180
+        controller.sync_lcd_rotation()
+        self.assertEqual(owner.cfg_display_rotation_combo.currentData(), 180)
+
     def test_export_and_import_configuration_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             export_path = Path(tmp) / "export.json"

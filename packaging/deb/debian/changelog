@@ -1,3 +1,13 @@
+open-trofeo-lcd (0.1.0~dev20261025+ubuntu2) resolute; urgency=medium
+
+  * Add global 0/180-degree screen rotation to Configuration, independent of
+    theme canvas rotation, with persistent settings and Cancel/Apply actions.
+  * Apply changes to native and both TRCC APIs without reconnecting USB,
+    including cached static JPEGs, live overlays and animations.
+  * Include the applied physical display rotation in the support report.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Sun, 25 Oct 2026 11:00:00 +0100
+
 open-trofeo-lcd (0.1.0~dev20261025+ubuntu1) resolute; urgency=medium
 
   * Preserve pre-rendered canvas orientation when current TRCC applies its

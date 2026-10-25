@@ -75,6 +75,7 @@ def backend_state(url):
         # Never export the full status: weather configuration has coordinates.
         return {**{k: state.get(k) for k in ("busy", "running", "mode", "last_exit_code")},
                 "display_backend": config.get("display_backend"), "trcc_bin": config.get("trcc_bin"),
+                "display_rotation": config.get("display_rotation"),
                 "fps_probe": {k: probe.get(k) for k in ("active", "age_ms", "source", "socket_path", "log_error", "log_dropped_samples")},
                 "game": {k: game.get(k) for k in ("game_name", "game_launcher", "game_fps", "game_frametime_ms", "game_fps_source")}}
     except (OSError, ValueError) as exc:

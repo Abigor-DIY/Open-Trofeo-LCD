@@ -1,6 +1,7 @@
 import os
 import time
 import unittest
+from unittest.mock import Mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -25,6 +26,30 @@ class TrofeoGuiSmokeTests(unittest.TestCase):
             self.assertEqual(window.main_tabs.currentIndex(), 0)
             self.assertFalse(window.status_timer.isActive())
             self.assertFalse(window.show_request_timer.isActive())
+        finally:
+            window.status_timer.stop()
+            window.show_request_timer.stop()
+            window.close()
+            window.deleteLater()
+            QApplication.processEvents()
+
+    def test_global_rotation_apply_acknowledgement_and_cancel(self) -> None:
+        window = TrofeoGui("http://127.0.0.1:18777", start_background_tasks=False)
+        try:
+            window.api_call = Mock()
+            window._lcd_rotation = 0
+            window.cfg_display_rotation_combo.setCurrentIndex(1)
+            window.apply_lcd_config()
+            window.api_call.assert_called_once_with("lcd-config", "POST", "/v1/config", {"display_rotation": 180})
+            self.assertTrue(window._lcd_rotation_dirty)
+            window._on_api_result("lcd-config", True, {"status": {"ok": True, "config": {"display_rotation": 180}}})
+            self.assertFalse(window._lcd_rotation_dirty)
+            self.assertEqual(window._lcd_rotation, 180)
+            window.cfg_display_rotation_combo.setCurrentIndex(0)
+            window._update_status({"ok": True, "config": {"display_rotation": 180}})
+            self.assertEqual(window.cfg_display_rotation_combo.currentData(), 0)
+            window.cfg_cancel_btn.click()
+            self.assertEqual(window.cfg_display_rotation_combo.currentData(), 180)
         finally:
             window.status_timer.stop()
             window.show_request_timer.stop()

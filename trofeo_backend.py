@@ -31,6 +31,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 from PIL import Image, ImageChops
+from scripts.display_preferences import (
+    DISPLAY_PREFERENCES_FILE, read_display_rotation, save_display_rotation, validate_display_rotation,
+)
 from replay_from_pcap import parse_usbpcap_bulk_payloads, extract_init_and_frames
 from stats_sources import StatsProvider
 from theme_renderer import render_theme_document
@@ -142,6 +145,7 @@ class BackendConfig:
     display_backend: str
     trcc_bin: str
     brightness_percent: int = 100
+    display_rotation: int = 0
 
     def as_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -3576,6 +3580,7 @@ class ReplayController:
             return {"running": False, "frame_index": self.cfg.frame_index}
 
     def set_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        rotation = validate_display_rotation(payload["display_rotation"]) if "display_rotation" in payload else None
         def _cached_config() -> dict[str, Any]:
             return {
                 **self.cfg.as_json(),
@@ -3610,6 +3615,11 @@ class ReplayController:
             capture_config_changed = False
             brightness_changed = False
             brightness_reapply: dict[str, Any] | None = None
+
+            if rotation is not None and rotation != self.cfg.display_rotation:
+                save_display_rotation(self.cfg.workdir / DISPLAY_PREFERENCES_FILE, rotation)
+                self.cfg.display_rotation = rotation
+                self._log(f"LCD display rotation -> {rotation} degrees")
 
             if "pcap_path" in payload:
                 self.cfg.pcap_path = resolve_under_workdir(self.cfg.workdir, str(payload["pcap_path"]))
@@ -4163,6 +4173,7 @@ def main() -> None:
         display_backend=display_backend,
         trcc_bin=str(trcc_bin),
         brightness_percent=max(0, min(150, int(args.brightness_percent))),
+        display_rotation=read_display_rotation(workdir / DISPLAY_PREFERENCES_FILE),
     )
 
     if not cfg.replay_script.exists():

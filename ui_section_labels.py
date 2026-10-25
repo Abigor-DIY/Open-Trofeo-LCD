@@ -204,6 +204,19 @@ def refresh_configuration_action_labels(owner: object, translate: TranslateFn) -
 
 def refresh_config_weather_labels(owner: object, translate: TranslateFn) -> None:
     """Refresh labels for the Configuration weather panel."""
+    if hasattr(owner, "lcd_preferences_box"):
+        owner.lcd_preferences_box.setTitle(translate("LCD Preferences", "Preferencje LCD"))
+    if hasattr(owner, "cfg_display_rotation_combo"):
+        owner.cfg_display_rotation_label.setText(translate("Screen rotation:", "Obrót ekranu:"))
+        owner.cfg_display_rotation_combo.setItemText(0, translate("Standard (0°)", "Standardowy (0°)"))
+        owner.cfg_display_rotation_combo.setItemText(1, translate("Flipped (180°)", "Odwrócony (180°)"))
+        owner.cfg_display_rotation_note_label.setText(translate(
+            "Applies to all LCD themes and images. Click Apply to update the display.",
+            "Dotyczy wszystkich motywów i obrazów na LCD. Kliknij Zastosuj, aby zmienić obrót.",
+        ))
+        owner.cfg_lcd_note_label.setText(translate(
+            "Brightness control is disabled for now.", "Sterowanie jasnością jest obecnie wyłączone.",
+        ))
     if hasattr(owner, "config_intro_text_label"):
         owner.config_intro_text_label.setText(
             translate(

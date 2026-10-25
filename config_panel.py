@@ -49,6 +49,9 @@ class ConfigAppearanceControls:
 class ConfigLcdPreferencesControls:
     box: QGroupBox
     note_label: QLabel
+    rotation_combo: QComboBox
+    rotation_label: QLabel
+    rotation_note_label: QLabel
 
 
 @dataclass(frozen=True)
@@ -231,6 +234,10 @@ def bind_config_panel_controls(owner: Any, controls: ConfigPanelControls) -> Non
     owner.cfg_compact_layout_chk = controls.appearance.compact_layout_chk
     owner.lcd_preferences_box = controls.lcd.box
     owner.cfg_lcd_note_label = controls.lcd.note_label
+    owner.cfg_display_rotation_combo = controls.lcd.rotation_combo
+    owner.cfg_display_rotation_label = controls.lcd.rotation_label
+    owner.cfg_display_rotation_note_label = controls.lcd.rotation_note_label
+    controls.lcd.rotation_combo.currentIndexChanged.connect(lambda *_: setattr(owner, "_lcd_rotation_dirty", True))
     owner.gaming_fps_box = controls.gaming_fps.box
     owner.cfg_fps_setup_btn = controls.gaming_fps.setup_btn
     owner.cfg_fps_refresh_btn = controls.gaming_fps.refresh_btn
@@ -336,7 +343,7 @@ def build_config_panel_callbacks(owner: Any) -> ConfigPanelCallbacks:
             load_bundle=owner.load_bundle,
         ),
         actions=ConfigActionCallbacks(
-            cancel=owner.config_preferences.sync_ui_controls_from_header,
+            cancel=lambda: owner.config_preferences.sync_ui_controls_from_header(discard_lcd_changes=True),
             apply=owner.config_preferences.apply_preferences,
             save=lambda: (
                 owner.config_preferences.apply_preferences(),
@@ -386,16 +393,24 @@ def build_config_lcd_preferences_box() -> ConfigLcdPreferencesControls:
     box = QGroupBox("LCD Preferences")
     box.setObjectName("configCardBox")
     form = QFormLayout(box)
+    rotation = QComboBox()
+    rotation.addItem("Standard (0°)", 0)
+    rotation.addItem("Flipped (180°)", 180)
+    rotation_label = QLabel("Screen rotation:")
+    form.addRow(rotation_label, rotation)
+    rotation_note = QLabel("Applies to all LCD themes and images. Click Apply to update the display.")
+    rotation_note.setWordWrap(True)
+    form.addRow(rotation_note)
     note = QLabel(
-        "Brightness control is disabled for now. The previous rendered brightness path resent full themes and could freeze the LCD. "
-        "Hardware backlight control will be restored only after the USB command is decoded from captures."
+        "Brightness control is disabled for now."
     )
     note.setWordWrap(True)
     note.setObjectName("selectionSummaryLabel")
-    note.setMinimumHeight(72)
+    note.setMinimumHeight(28)
     note.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
     form.addRow(note)
-    return ConfigLcdPreferencesControls(box=box, note_label=note)
+    return ConfigLcdPreferencesControls(box=box, note_label=note, rotation_combo=rotation,
+                                       rotation_label=rotation_label, rotation_note_label=rotation_note)
 
 
 def build_config_gaming_fps_box(

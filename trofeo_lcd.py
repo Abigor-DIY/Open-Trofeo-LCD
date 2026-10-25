@@ -49,6 +49,7 @@ except ImportError:
     sys.exit(1)
 
 from stats_sources import StatsProvider
+from scripts.display_preferences import DisplayRotation
 from theme_renderer import render_theme_document
 from theme_schema import ThemeDocument, load_theme_document
 
@@ -139,6 +140,7 @@ class TrofeoLCD:
     """Driver for Thermalright Trofeo LCD display."""
 
     def __init__(self):
+        self._display_rotation = DisplayRotation()
         self.dev = None
         self.frame_counter = 0
         self._reattach_kernel = False
@@ -502,6 +504,9 @@ class TrofeoLCD:
         if image.mode != 'RGB':
             image = image.convert('RGB')
 
+        if self.output_rotation == 180:
+            image = image.transpose(Image.Transpose.ROTATE_180)
+
         buf = io.BytesIO()
         save_kwargs = {
             'format': 'JPEG',
@@ -515,6 +520,10 @@ class TrofeoLCD:
             save_kwargs['restart_marker_rows'] = int(JPEG_RESTART_MARKER_ROWS)
         image.save(buf, **save_kwargs)
         return image, buf.getvalue()
+
+    @property
+    def output_rotation(self):
+        return self._display_rotation.value
 
     @staticmethod
     def summarize_ack(ack: bytes) -> AckSummary | None:
@@ -992,7 +1001,7 @@ class TrofeoLCD:
         """Send an image file to the LCD."""
         try:
             path_lower = filepath.lower()
-            if raw_jpeg_passthrough and (path_lower.endswith(".jpg") or path_lower.endswith(".jpeg")):
+            if raw_jpeg_passthrough and self.output_rotation == 0 and (path_lower.endswith(".jpg") or path_lower.endswith(".jpeg")):
                 with open(filepath, "rb") as f:
                     jpeg_data = f.read()
                 jpeg_data = self.pad_jpeg_payload(jpeg_data, jpeg_pad_to_size)
@@ -1928,13 +1937,13 @@ def main():
         def _refresh_cache():
             started = time.perf_counter()
             stat = os.stat(filepath)
-            sig = (stat.st_mtime_ns, stat.st_size)
+            sig = (stat.st_mtime_ns, stat.st_size, lcd.output_rotation)
             if cache["sig"] == sig and cache["jpeg_data"] is not None:
                 cache["reloaded"] = False
                 cache["reload_ms"] = 0.0
                 return
 
-            if args.raw_jpeg_passthrough and (path_lower.endswith(".jpg") or path_lower.endswith(".jpeg")):
+            if args.raw_jpeg_passthrough and lcd.output_rotation == 0 and (path_lower.endswith(".jpg") or path_lower.endswith(".jpeg")):
                 with open(filepath, "rb") as handle:
                     jpeg_data = handle.read()
             else:

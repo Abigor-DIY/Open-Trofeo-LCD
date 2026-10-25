@@ -1051,13 +1051,19 @@ class TrofeoGui(QMainWindow):
         return "N/A", "-"
 
     def _lcd_config_payload(self) -> dict[str, object]:
-        return {}
+        if not hasattr(self, "cfg_display_rotation_combo"):
+            return {}
+        return {"display_rotation": int(self.cfg_display_rotation_combo.currentData() or 0)}
 
     def _update_lcd_brightness_label(self, value: int | None = None) -> None:
         return None
 
     def apply_lcd_config(self) -> None:
-        self.append_log("[lcd] Brightness control is disabled until hardware backlight protocol is decoded.")
+        payload = self._lcd_config_payload()
+        if payload and payload["display_rotation"] != getattr(self, "_lcd_rotation", 0):
+            self.api_call("lcd-config", "POST", "/v1/config", payload)
+        else:
+            self._lcd_rotation_dirty = False
 
     def _apply_restored_lcd_config_to_backend(self) -> None:
         self._lcd_config_restored_to_backend = True
@@ -8511,6 +8517,10 @@ class TrofeoGui(QMainWindow):
             return
 
         data = payload if isinstance(payload, dict) else {}
+        if action == "lcd-config":
+            applied = data.get("status", {}).get("config", {}).get("display_rotation")
+            if applied is not None and applied == self.cfg_display_rotation_combo.currentData():
+                self._lcd_rotation_dirty = False
         self.append_log(self._format_log_payload(action, data))
         if action == "animation-export":
             result = data.get("result", {})
@@ -8563,6 +8573,7 @@ class TrofeoGui(QMainWindow):
             "restart",
             "set-frame",
             "config",
+            "lcd-config",
             "scan",
             "send-image",
             "themes",
@@ -8773,6 +8784,9 @@ class TrofeoGui(QMainWindow):
         self.lbl_last_error.setText(str(status.get("last_error", "-")))
 
         cfg = status.get("config", {}) or {}
+        if cfg.get("display_rotation") in (0, 180):
+            self._lcd_rotation = int(cfg["display_rotation"])
+            self.config_preferences.sync_lcd_rotation()
         game_cfg = cfg.get("game", {}) if isinstance(cfg, dict) else {}
         fps_probe_cfg = cfg.get("fps_probe", {}) if isinstance(cfg, dict) else {}
         self._update_gaming_fps_metrics(

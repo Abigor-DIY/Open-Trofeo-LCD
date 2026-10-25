@@ -50,6 +50,7 @@ class ConfigPanelTests(unittest.TestCase):
 
         self.assertEqual(controls.box.title(), "LCD Preferences")
         self.assertIn("Brightness control is disabled", controls.note_label.text())
+        self.assertEqual([controls.rotation_combo.itemData(i) for i in range(2)], [0, 180])
 
     def test_build_config_gaming_fps_box_wires_actions_and_command(self) -> None:
         calls: list[str] = []

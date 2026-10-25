@@ -23,8 +23,22 @@ class ConfigPreferencesController:
         self.ui_state_path = ui_state_path
         self.theme_autosave_path = theme_autosave_path
 
-    def sync_ui_controls_from_header(self) -> None:
+    def sync_lcd_rotation(self, *, discard_changes: bool = False) -> None:
         owner = self.owner
+        if not hasattr(owner, "cfg_display_rotation_combo"):
+            return
+        if discard_changes:
+            owner._lcd_rotation_dirty = False
+        if getattr(owner, "_lcd_rotation_dirty", False):
+            return
+        combo = owner.cfg_display_rotation_combo
+        previous = combo.blockSignals(True)
+        combo.setCurrentIndex(combo.findData(getattr(owner, "_lcd_rotation", 0)))
+        combo.blockSignals(previous)
+
+    def sync_ui_controls_from_header(self, *, discard_lcd_changes: bool = False) -> None:
+        owner = self.owner
+        self.sync_lcd_rotation(discard_changes=discard_lcd_changes)
         if not hasattr(owner, "cfg_ui_theme_combo"):
             return
         if getattr(owner, "cfg_ui_theme_combo", None) is getattr(owner, "ui_theme_combo", None):
@@ -53,6 +67,8 @@ class ConfigPreferencesController:
         if hasattr(owner, "cfg_ui_scale_combo"):
             owner.ui_scale_combo.setCurrentIndex(owner.cfg_ui_scale_combo.currentIndex())
         owner.apply_ui_chrome()
+        if hasattr(owner, "cfg_display_rotation_combo"):
+            owner.apply_lcd_config()
         if hasattr(owner, "cfg_weather_lat_edit"):
             owner.apply_weather_config()
         if hasattr(owner, "cfg_audio_eq_input_combo"):
@@ -72,6 +88,8 @@ class ConfigPreferencesController:
             owner.cfg_preview_fps_combo.setCurrentText("30")
         if hasattr(owner, "cfg_refresh_combo"):
             owner.cfg_refresh_combo.setCurrentText("1.5 s")
+        if hasattr(owner, "cfg_display_rotation_combo"):
+            owner.cfg_display_rotation_combo.setCurrentIndex(0)
         self.apply_preferences()
 
     def export_file(self) -> None:

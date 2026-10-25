@@ -8,6 +8,11 @@ import os
 import tempfile
 from pathlib import Path
 
+if __package__:
+    from .display_preferences import DisplayRotation
+else:
+    from display_preferences import DisplayRotation
+
 
 def _jpeg_settings() -> tuple[int, int]:
     try:
@@ -108,6 +113,25 @@ class _CommandDisplay:
         return self.send_frame(image)
 
 
+class _RotatedDisplay:
+    """Apply the user's physical LCD setting after all theme compositing."""
+    def __init__(self, display, renderer, rotation=None):
+        self.display, self.renderer = display, renderer
+        self.rotation = rotation or DisplayRotation()
+
+    def __getattr__(self, name):
+        return getattr(self.display, name)
+
+    def _image(self, image):
+        return self.renderer.rotate(image, 180) if self.rotation.value == 180 else image
+
+    def send(self, image):
+        return self.display.send(self._image(image))
+
+    def send_frame(self, image):
+        return self.display.send_frame(self._image(image))
+
+
 def open_display(device=None):
     api, modules = load_api()
     try:
@@ -133,7 +157,7 @@ def open_display(device=None):
         lcd = modules["app"].get().device(0)
         if lcd is None:
             raise RuntimeError("TRCC found no LCD device")
-        return lcd, images._r()
+        return _RotatedDisplay(lcd, images._r()), images._r()
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     renderer = modules["qt"].QtRenderer()
@@ -165,4 +189,4 @@ def open_display(device=None):
         flush=True,
     )
     facade = _Renderer(renderer)
-    return _CommandDisplay(app, commands, key, facade, wire_rotation), facade
+    return _RotatedDisplay(_CommandDisplay(app, commands, key, facade, wire_rotation), facade), facade

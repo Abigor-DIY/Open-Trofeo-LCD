@@ -37,7 +37,7 @@ Files live in `packaging/deb/debian`.
 
 The Ubuntu development PPA is
 [`ppa:abigor82/open-trofeo-lcd`](https://launchpad.net/~abigor82/+archive/ubuntu/open-trofeo-lcd).
-The `0.1.0~dev20261025+ubuntu1` update targets **resolute**, matching the existing
+The `0.1.0~dev20261025+ubuntu2` update targets **resolute**, matching the existing
 PPA series. It includes automatic AMDGPU readings, a Celsius/Fahrenheit weather
 setting, corrected theme animation timing and migration of the bundled Linux
 themes into existing libraries. Quit and reopen the app after upgrading.
@@ -55,6 +55,18 @@ files and SHA-256 checksums. AppStream screenshot URLs are pinned to that releas
 tag so Discover can fetch the same previews that shipped with the package.
 
 ### Display rotation and missing FPS
+
+From `0.1.0~dev20261025+ubuntu2`, use **Configuration → LCD Preferences →
+Screen rotation** to choose **Standard (0°)** or **Flipped (180°)**, then click
+**Apply**. This is a global setting for the physical LCD, independent of each
+theme's canvas rotation. It applies to static images, live overlays and animations
+on the next frame, without restarting the USB connection. **Cancel** restores
+the last applied selection.
+
+The backend saves this preference in `.trofeo-display.json` inside its workdir
+(`~/.local/share/open-trofeo-lcd-workdir/` for the system package). It survives
+restarts and package upgrades. Leave it at 0° unless the physical display needs
+flipping; portrait 90°/270° output is not supported by this horizontal LCD option.
 
 Version `0.1.0~dev20261025+ubuntu1` compensates for the rotation current TRCC
 adds to frames already rotated by the Open Trofeo canvas. It preserves the
