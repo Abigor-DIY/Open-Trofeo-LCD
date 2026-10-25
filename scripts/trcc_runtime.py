@@ -47,6 +47,14 @@ def load_api() -> tuple[str, dict]:
     )
 
 
+def _rotate_image(renderer, image, degrees):
+    """TRCC 9.4 calls this apply_rotation; 9.11 calls it rotate."""
+    rotation = getattr(renderer, "apply_rotation", None) or getattr(renderer, "rotate", None)
+    if not callable(rotation):
+        raise RuntimeError(f"{type(renderer).__name__} does not support image rotation")
+    return rotation(image, degrees)
+
+
 class _Renderer:
     """Names used by Open Trofeo's compositing loops, backed by current Qt."""
     def __init__(self, renderer):
@@ -68,7 +76,7 @@ class _Renderer:
         return self.renderer.composite(base, overlay, position)
 
     def rotate(self, image, degrees):
-        return self.renderer.rotate(image, degrees)
+        return _rotate_image(self.renderer, image, degrees)
 
 
 class _CommandDisplay:
@@ -123,7 +131,7 @@ class _RotatedDisplay:
         return getattr(self.display, name)
 
     def _image(self, image):
-        return self.renderer.rotate(image, 180) if self.rotation.value == 180 else image
+        return _rotate_image(self.renderer, image, 180) if self.rotation.value == 180 else image
 
     def send(self, image):
         return self.display.send(self._image(image))

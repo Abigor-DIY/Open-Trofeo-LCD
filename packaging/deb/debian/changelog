@@ -1,3 +1,12 @@
+open-trofeo-lcd (0.1.0~dev20261025+ubuntu3) resolute; urgency=medium
+
+  * Fix the global 180-degree rotation crash with TRCC 9.4.7 by adapting
+    its apply_rotation renderer API as well as the current rotate API.
+  * Add an integration test with the actual installed TRCC Qt renderer for
+    both display send paths, 0/180/0 transitions and unchanged source frames.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Sun, 25 Oct 2026 11:00:00 +0100
+
 open-trofeo-lcd (0.1.0~dev20261025+ubuntu2) resolute; urgency=medium
 
   * Add global 0/180-degree screen rotation to Configuration, independent of

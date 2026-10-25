@@ -95,6 +95,15 @@ class DisplayRotationTests(unittest.TestCase):
                 controller.set_config({"display_rotation": 90})
             self.assertEqual(controller.cfg.display_rotation, 180)
 
+    def test_legacy_renderer_uses_apply_rotation_when_rotate_is_absent(self):
+        image, flipped = object(), object()
+        renderer = SimpleNamespace(apply_rotation=Mock(return_value=flipped))
+        device = Mock()
+        output = _RotatedDisplay(device, renderer, SimpleNamespace(value=180))
+        self.assertTrue(output.send_frame(image))
+        renderer.apply_rotation.assert_called_once_with(image, 180)
+        device.send_frame.assert_called_once_with(flipped)
+
     def test_native_static_loop_rotates_cached_jpeg_and_back_without_usb_reconnect(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "display.json"
