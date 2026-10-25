@@ -120,7 +120,7 @@ class UiSectionLabelTests(unittest.TestCase):
 
         refresh_config_weather_labels(owner, lambda _en, pl: pl)
 
-        self.assertIn("Konfiguracja grupuje", owner.config_intro_text_label.text())
+        self.assertIn("Zatwierdzaj zmiany", owner.config_intro_text_label.text())
         self.assertEqual(owner.cfg_weather_refresh_now_btn.text(), "Odśwież pogodę")
         self.assertEqual(owner.weather_box.title(), "Pogoda")
         self.assertEqual(owner.cfg_weather_city_search_edit.placeholderText(), "Szukaj miasta, np. Warszawa")

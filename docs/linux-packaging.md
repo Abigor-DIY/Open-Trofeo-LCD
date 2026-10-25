@@ -37,7 +37,7 @@ Files live in `packaging/deb/debian`.
 
 The Ubuntu development PPA is
 [`ppa:abigor82/open-trofeo-lcd`](https://launchpad.net/~abigor82/+archive/ubuntu/open-trofeo-lcd).
-The `0.1.0~dev20261025+ubuntu4` update targets **resolute**, matching the existing
+The `0.1.0~dev20261025+ubuntu5` update targets **resolute**, matching the existing
 PPA series. It includes automatic AMDGPU readings, a Celsius/Fahrenheit weather
 setting, corrected theme animation timing and migration of the bundled Linux
 themes into existing libraries. Quit and reopen the app after upgrading.
@@ -55,6 +55,13 @@ files and SHA-256 checksums. AppStream screenshot URLs are pinned to that releas
 tag so Discover can fetch the same previews that shipped with the package.
 
 ### Display rotation and missing FPS
+
+From `0.1.0~dev20261025+ubuntu5`, Configuration groups settings into General,
+Gaming, Integrations, Automation and Tools. Apply, Save Settings and Cancel
+remain visible at the bottom of the window while each section scrolls
+independently. Cards stack when the window becomes narrower. LCD rotation is
+under **Configuration → General → LCD Preferences**; you can apply a pending
+selection from any section.
 
 For smooth rotated animations with legacy TRCC, use
 `0.1.0~dev20261025+ubuntu4` or later. Older builds could reuse a stale JPEG

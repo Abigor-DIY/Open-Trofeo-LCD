@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -20,17 +20,18 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSlider,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 
 CONFIG_INTRO_TEXT = (
-    "Configuration centralizes interface settings, LCD preferences and integrations in one place. "
-    "App theme management now lives here instead of the top control bar."
+    "Customize the interface, LCD and integrations. Apply or save your changes using the bar below."
 )
 
 
@@ -149,6 +150,9 @@ class ConfigWeatherControls:
 @dataclass(frozen=True)
 class ConfigGamingFpsControls:
     box: QGroupBox
+    automation_box: QGroupBox
+    automation_layout: QVBoxLayout
+    vrr_box: QGroupBox
     setup_btn: QPushButton
     refresh_btn: QPushButton
     status_label: QLabel
@@ -212,7 +216,6 @@ class ConfigPanelCallbacks:
 
 @dataclass(frozen=True)
 class ConfigPanelControls:
-    grid: QGridLayout
     appearance: ConfigAppearanceControls
     lcd: ConfigLcdPreferencesControls
     gaming_fps: ConfigGamingFpsControls
@@ -358,6 +361,7 @@ def build_config_appearance_box(theme_names: list[str]) -> ConfigAppearanceContr
     box = QGroupBox("App Appearance")
     box.setObjectName("configCardBox")
     form = QFormLayout(box)
+    form.setRowWrapPolicy(QFormLayout.WrapLongRows)
     theme_combo = QComboBox()
     theme_combo.addItems(theme_names)
     mode_combo = QComboBox()
@@ -376,8 +380,8 @@ def build_config_appearance_box(theme_names: list[str]) -> ConfigAppearanceContr
     form.addRow("Mode:", mode_combo)
     form.addRow("Interface scale:", scale_combo)
     form.addRow("Font size:", font_scale_slider)
-    form.addRow("Animation effects:", animations_chk)
-    form.addRow("Compact layout:", compact_layout_chk)
+    form.addRow(animations_chk)
+    form.addRow(compact_layout_chk)
     return ConfigAppearanceControls(
         box=box,
         theme_combo=theme_combo,
@@ -424,18 +428,22 @@ def build_config_gaming_fps_box(
     box = QGroupBox("Gaming FPS")
     box.setObjectName("configCardBox")
     layout = QVBoxLayout(box)
+    automation_box = QGroupBox("Game automation")
+    automation_box.setObjectName("configCardBox")
+    automation_layout = QVBoxLayout(automation_box)
+    vrr_box = QGroupBox("Variable refresh rate")
+    vrr_box.setObjectName("configCardBox")
+    vrr_layout = QVBoxLayout(vrr_box)
     setup_btn = QPushButton("Configure FPS layer")
     refresh_btn = QPushButton("Refresh FPS status")
     status_label = QLabel("FPS layer: not checked")
     status_label.setWordWrap(True)
     status_label.setObjectName("selectionSummaryLabel")
-    status_label.setMinimumHeight(74)
-    status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
+    status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     metrics_label = QLabel("No FPS session data yet")
     metrics_label.setWordWrap(True)
     metrics_label.setObjectName("selectionSummaryLabel")
-    metrics_label.setMinimumHeight(92)
-    metrics_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
+    metrics_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     log_path_edit = QLineEdit()
     log_path_edit.setReadOnly(True)
     log_path_edit.setPlaceholderText("FPS session CSV will appear here")
@@ -448,12 +456,11 @@ def build_config_gaming_fps_box(
     copy_steam_command_btn.setMinimumHeight(32)
     hint_label = QLabel(
         "For Steam Flatpak this installs the user Vulkan layer and grants only xdg-run/open-trofeo-lcd. "
-        "Steam from DEB/native does not need the Flatpak override. In Steam game Properties > Launch Options, paste the command below and replace Game Name."
+        "Steam from DEB/native does not need the Flatpak override. In Steam game Properties > Launch Options, paste the copied command and replace Game Name."
     )
     hint_label.setWordWrap(True)
     hint_label.setObjectName("selectionSummaryLabel")
-    hint_label.setMinimumHeight(72)
-    hint_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
+    hint_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     auto_theme_chk = QCheckBox("Switch to selected theme when a game is detected")
     auto_theme_combo = QComboBox()
     auto_theme_combo.setEditable(False)
@@ -474,13 +481,11 @@ def build_config_gaming_fps_box(
     auto_theme_status_label = QLabel("Game auto-theme: disabled")
     auto_theme_status_label.setWordWrap(True)
     auto_theme_status_label.setObjectName("selectionSummaryLabel")
-    auto_theme_status_label.setMinimumHeight(44)
-    auto_theme_status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
+    auto_theme_status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     vrr_status_label = QLabel("VRR: not checked")
     vrr_status_label.setWordWrap(True)
     vrr_status_label.setObjectName("selectionSummaryLabel")
-    vrr_status_label.setMinimumHeight(44)
-    vrr_status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
+    vrr_status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     vrr_refresh_btn = QPushButton("Refresh VRR")
     vrr_automatic_btn = QPushButton("VRR Automatic (recommended)")
     vrr_always_btn = QPushButton("VRR Always")
@@ -513,17 +518,20 @@ def build_config_gaming_fps_box(
     layout.addWidget(log_path_edit)
     layout.addWidget(steam_command_edit)
     layout.addWidget(copy_steam_command_btn)
-    layout.addWidget(auto_theme_chk)
-    layout.addWidget(auto_theme_combo)
-    layout.addWidget(auto_theme_restore_on_fps_loss_chk)
-    layout.addLayout(fps_loss_row)
-    layout.addWidget(auto_theme_status_label)
-    layout.addWidget(vrr_status_label)
-    layout.addLayout(vrr_row)
+    automation_layout.addWidget(auto_theme_chk)
+    automation_layout.addWidget(auto_theme_combo)
+    automation_layout.addWidget(auto_theme_restore_on_fps_loss_chk)
+    automation_layout.addLayout(fps_loss_row)
+    automation_layout.addWidget(auto_theme_status_label)
+    vrr_layout.addWidget(vrr_status_label)
+    vrr_layout.addLayout(vrr_row)
     layout.addWidget(hint_label)
     layout.addStretch(1)
     return ConfigGamingFpsControls(
         box=box,
+        automation_box=automation_box,
+        automation_layout=automation_layout,
+        vrr_box=vrr_box,
         setup_btn=setup_btn,
         refresh_btn=refresh_btn,
         status_label=status_label,
@@ -813,10 +821,6 @@ def build_config_panel_controls(
     fps_socket_path: str,
     callbacks: ConfigPanelCallbacks,
 ) -> ConfigPanelControls:
-    grid = QGridLayout()
-    grid.setHorizontalSpacing(14)
-    grid.setVerticalSpacing(14)
-
     appearance = build_config_appearance_box(theme_names)
     lcd = build_config_lcd_preferences_box()
     gaming_fps = build_config_gaming_fps_box(
@@ -835,16 +839,7 @@ def build_config_panel_controls(
     automation = build_config_automation_box(callbacks.automation)
     actions = build_config_action_row(callbacks.actions)
 
-    grid.addWidget(appearance.box, 0, 0)
-    grid.addWidget(lcd.box, 0, 1, Qt.AlignTop)
-    grid.addWidget(gaming_fps.box, 0, 2)
-    grid.addWidget(weather.box, 1, 0, 1, 2)
-    grid.addWidget(audio_eq.box, 1, 2)
-    grid.addWidget(quick_actions.box, 0, 3, 2, 1)
-    grid.addWidget(runtime_paths.box, 2, 0, 1, 4)
-
     return ConfigPanelControls(
-        grid=grid,
         appearance=appearance,
         lcd=lcd,
         gaming_fps=gaming_fps,
@@ -855,6 +850,50 @@ def build_config_panel_controls(
         automation=automation,
         actions=actions,
     )
+
+
+class ConfigSectionPage(QWidget):
+    """Keep cards at their natural height and stack them in narrow viewports."""
+    def __init__(self, cards: tuple[QGroupBox, ...]):
+        super().__init__()
+        self.cards = cards
+        self.columns = 0
+        self.grid = QGridLayout(self)
+        self.grid.setContentsMargins(8, 12, 8, 12)
+        self.grid.setSpacing(16)
+        self._reflow()
+
+    def _reflow(self, width=None):
+        margins = self.grid.contentsMargins()
+        if width is None:
+            width = self.parentWidget().width() if self.parentWidget() is not None else self.width()
+        available = width - margins.left() - margins.right()
+        minimums = [0, 0]
+        for index, card in enumerate(self.cards):
+            minimums[index % 2] = max(minimums[index % 2], card.minimumSizeHint().width())
+        required = sum(minimums) + self.grid.spacing()
+        columns = 2 if len(self.cards) > 1 and available >= max(840, required) else 1
+        if columns == self.columns:
+            return
+        while self.grid.count():
+            self.grid.takeAt(0)
+        for row in range(len(self.cards) + 1):
+            self.grid.setRowStretch(row, 0)
+        for column in range(2):
+            self.grid.setColumnStretch(column, int(column < columns))
+        for index, card in enumerate(self.cards):
+            self.grid.addWidget(card, index // columns, index % columns, Qt.AlignTop)
+        self.grid.setRowStretch((len(self.cards) + columns - 1) // columns, 1)
+        self.columns = columns
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow()
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Resize:
+            self._reflow(event.size().width())
+        return super().eventFilter(watched, event)
 
 
 class ConfigurationPanel(QWidget):
@@ -896,7 +935,30 @@ class ConfigurationPanel(QWidget):
             fps_socket_path=fps_socket_path,
             callbacks=callbacks,
         )
-        layout.addLayout(self.controls.grid)
-        layout.addWidget(self.controls.automation.box)
-        layout.addLayout(self.controls.actions.row)
-        layout.addStretch(1)
+        self.sections = QTabWidget()
+        self.sections.setObjectName("configSectionTabs")
+        self.sections.setDocumentMode(True)
+        self.section_pages = []
+        for title, cards in (
+            ("General", (self.controls.appearance.box, self.controls.lcd.box)),
+            ("Gaming", (self.controls.gaming_fps.box, self.controls.gaming_fps.automation_box,
+                        self.controls.gaming_fps.vrr_box)),
+            ("Integrations", (self.controls.weather.box, self.controls.audio_eq.box)),
+            ("Automation", (self.controls.automation.box,)),
+            ("Tools", (self.controls.quick_actions.box, self.controls.runtime_paths.box)),
+        ):
+            scroll = QScrollArea()
+            scroll.setFrameShape(QScrollArea.NoFrame)
+            scroll.setWidgetResizable(True)
+            page = ConfigSectionPage(cards)
+            scroll.setWidget(page)
+            scroll.viewport().installEventFilter(page)
+            self.sections.addTab(scroll, title)
+            self.section_pages.append(scroll)
+        layout.addWidget(self.sections, 1)
+
+        self.action_bar = QFrame()
+        self.action_bar.setObjectName("configActionBar")
+        self.controls.actions.row.setContentsMargins(14, 10, 14, 10)
+        self.action_bar.setLayout(self.controls.actions.row)
+        layout.addWidget(self.action_bar)

@@ -4,6 +4,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QPoint, QRect
 from PySide6.QtWidgets import QApplication, QFrame, QPushButton
 
 from config_panel import (
@@ -277,7 +278,6 @@ class ConfigPanelTests(unittest.TestCase):
         controls.automation.playlist_add_btn.click()
         controls.actions.save_btn.click()
 
-        self.assertEqual(controls.grid.count(), 7)
         self.assertEqual(controls.appearance.theme_combo.currentText(), "Plasma Blue")
         self.assertEqual(controls.runtime_paths.fps_socket_path_edit.text(), "/run/fps.sock")
         self.assertEqual(calls, ["setup", "search", "eq", "usb", "add", "save"])
@@ -387,9 +387,34 @@ class ConfigPanelTests(unittest.TestCase):
         self.assertEqual(panel.objectName(), "configurationPanel")
         self.assertEqual(factory_calls, ["runtimeHeroCard"])
         self.assertEqual(panel.intro_card.objectName(), "runtimeHeroCard")
-        self.assertIn("Configuration centralizes", panel.intro_label.text())
-        self.assertEqual(panel.controls.grid.count(), 7)
-        self.assertEqual(panel.layout().count(), 5)
+        self.assertIn("Apply or save", panel.intro_label.text())
+        self.assertEqual(panel.sections.count(), 5)
+        self.assertIs(panel.controls.actions.apply_btn.parentWidget(), panel.action_bar)
+
+    def test_apply_actions_stay_visible_when_gaming_settings_are_scrolled(self):
+        panel = ConfigurationPanel(
+            theme_names=["Plasma Blue"], steam_launch_options="%command%",
+            app_path="/app", theme_path="/themes", state_path="/state", fps_socket_path="/run/fps.sock",
+            callbacks=self._noop_panel_callbacks(),
+        )
+        panel.resize(900, 500)
+        panel.show()
+        panel.sections.setCurrentIndex(1)
+        self.app.processEvents()
+        scroll = panel.section_pages[1]
+        self.assertGreater(scroll.verticalScrollBar().maximum(), 0)
+        position = panel.action_bar.pos()
+        try:
+            for value in (0, scroll.verticalScrollBar().maximum()):
+                scroll.verticalScrollBar().setValue(value)
+                self.app.processEvents()
+                self.assertEqual(panel.action_bar.pos(), position)
+                for button in (panel.controls.actions.apply_btn, panel.controls.actions.cancel_btn,
+                               panel.controls.actions.save_btn):
+                    self.assertTrue(panel.rect().contains(QRect(button.mapTo(panel, QPoint()), button.size())))
+                    self.assertTrue(button.isVisible())
+        finally:
+            panel.close()
 
     @staticmethod
     def _noop_panel_callbacks() -> ConfigPanelCallbacks:

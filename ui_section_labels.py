@@ -155,8 +155,30 @@ def refresh_system_overview_labels(owner: object, translate: TranslateFn) -> Non
 
 def refresh_configuration_action_labels(owner: object, translate: TranslateFn) -> None:
     """Refresh labels for Configuration cards and action buttons."""
+    if hasattr(owner, "configuration_panel"):
+        gaming = owner.configuration_panel.controls.gaming_fps
+        gaming.automation_box.setTitle(translate("Game automation", "Automatyzacja gier"))
+        gaming.vrr_box.setTitle(translate("Variable refresh rate", "Zmienna częstotliwość odświeżania"))
+        for index, (en, pl) in enumerate((
+            ("General", "Ogólne"), ("Gaming", "Gaming"), ("Integrations", "Integracje"),
+            ("Automation", "Automatyzacja"), ("Tools", "Narzędzia"),
+        )):
+            owner.configuration_panel.sections.setTabText(index, translate(en, pl))
     if hasattr(owner, "appearance_box"):
         owner.appearance_box.setTitle(translate("App Appearance", "Wygląd Aplikacji"))
+    if hasattr(owner, "cfg_ui_theme_combo"):
+        form = owner.appearance_box.layout()
+        for field, en, pl in (
+            (owner.cfg_ui_theme_combo, "App theme:", "Motyw aplikacji:"),
+            (owner.cfg_ui_mode_combo, "Mode:", "Tryb:"),
+            (owner.cfg_ui_scale_combo, "Interface scale:", "Skala interfejsu:"),
+            (owner.cfg_font_scale_slider, "Font size:", "Rozmiar tekstu:"),
+        ):
+            label = form.labelForField(field)
+            if label is not None:
+                label.setText(translate(en, pl))
+        owner.cfg_animations_chk.setText(translate("Animation effects", "Efekty animacji"))
+        owner.cfg_compact_layout_chk.setText(translate("Compact layout", "Zwarty układ"))
     if hasattr(owner, "paths_box"):
         owner.paths_box.setTitle(translate("Paths and Integration", "Ścieżki i Integracja"))
     if hasattr(owner, "audio_eq_box"):
@@ -220,10 +242,8 @@ def refresh_config_weather_labels(owner: object, translate: TranslateFn) -> None
     if hasattr(owner, "config_intro_text_label"):
         owner.config_intro_text_label.setText(
             translate(
-                "Configuration centralizes interface settings, LCD preferences and integrations in one place. "
-                "App theme management now lives here instead of the top control bar.",
-                "Konfiguracja grupuje ustawienia interfejsu, preferencje LCD i integracje w jednym miejscu. "
-                "Motyw aplikacji jest ustawiany tutaj zamiast na górnym pasku.",
+                "Customize the interface, LCD and integrations. Apply or save your changes using the bar below.",
+                "Ustaw interfejs, ekran LCD i integracje. Zatwierdzaj zmiany przyciskami na dole okna.",
             )
         )
     if hasattr(owner, "cfg_weather_refresh_now_btn"):

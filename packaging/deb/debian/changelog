@@ -1,3 +1,15 @@
+open-trofeo-lcd (0.1.0~dev20261025+ubuntu5) resolute; urgency=medium
+
+  * Keep Configuration Apply, Save and Cancel actions visible outside the
+    settings scroll area, including when using smaller windows or larger text.
+  * Group settings into General, Gaming, Integrations, Automation and Tools.
+  * Use responsive cards and separate FPS, game automation and VRR panels,
+    removing forced tall cards and horizontal configuration scrolling.
+  * Verify pinned actions, resizing and applying pending LCD changes across
+    sections without altering configuration keys or backend behaviour.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Sun, 25 Oct 2026 10:21:18 +0100
+
 open-trofeo-lcd (0.1.0~dev20261025+ubuntu4) resolute; urgency=medium
 
   * Prevent legacy TRCC's image-identity JPEG cache from reusing stale frames

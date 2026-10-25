@@ -1713,7 +1713,7 @@ class TrofeoGui(QMainWindow):
         self.config_intro_text_label = self.configuration_panel.intro_label
         bind_config_panel_controls(self, self.configuration_panel.controls)
         self.game_power_widget = GamePowerWidget(self.configuration_panel)
-        gaming_layout = self.configuration_panel.controls.gaming_fps.box.layout()
+        gaming_layout = self.configuration_panel.controls.gaming_fps.automation_layout
         gaming_layout.insertWidget(gaming_layout.indexOf(self.cfg_game_auto_theme_chk), self.game_power_widget)
         self.game_power_widget.checkbox.toggled.connect(lambda _checked: self._save_ui_state())
         QApplication.instance().aboutToQuit.connect(self.game_power_widget.controller.shutdown)
@@ -4085,6 +4085,18 @@ class TrofeoGui(QMainWindow):
                 background: {bg_panel};
                 border: 2px solid {primary_color};
                 border-radius: 20px;
+            }}
+            QFrame#configActionBar {{
+                background: {bg_panel};
+                border-top: 1px solid {border_main};
+                border-radius: 10px;
+            }}
+            QTabWidget#configSectionTabs::pane {{
+                border: none;
+            }}
+            QTabWidget#configSectionTabs QTabBar::tab {{
+                min-width: 0px;
+                padding: 10px 14px;
             }}
             QGroupBox#dashboardCardBox, QGroupBox#configCardBox {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
