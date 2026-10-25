@@ -1,3 +1,13 @@
+open-trofeo-lcd (0.1.0~dev20261025+ubuntu4) resolute; urgency=medium
+
+  * Prevent legacy TRCC's image-identity JPEG cache from reusing stale frames
+    after rotation, avoiding repeated images despite a steady animation FPS.
+  * Retain only the last submitted surface until its replacement is allocated.
+  * Add a 1000-frame regression test using the actual legacy DeviceService
+    encoder cache, alongside a deterministic frame-lifetime test.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Sun, 25 Oct 2026 11:00:00 +0100
+
 open-trofeo-lcd (0.1.0~dev20261025+ubuntu3) resolute; urgency=medium
 
   * Fix the global 180-degree rotation crash with TRCC 9.4.7 by adapting

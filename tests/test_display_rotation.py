@@ -3,6 +3,7 @@ import io
 import tempfile
 import threading
 import unittest
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -18,6 +19,28 @@ import trofeo_lcd
 
 
 class DisplayRotationTests(unittest.TestCase):
+    def test_previous_frame_is_alive_until_the_next_frame_is_allocated(self):
+        class Frame:
+            pass
+
+        previous = None
+        references = []
+
+        def rotate(_image, _degrees):
+            nonlocal previous
+            if previous is not None:
+                self.assertIsNotNone(previous(), "previous frame released before TRCC's id cache can be replaced")
+            result = Frame()
+            previous = weakref.ref(result)
+            references.append(previous)
+            return result
+
+        output = _RotatedDisplay(SimpleNamespace(send_frame=lambda image: True),
+                                SimpleNamespace(rotate=rotate), SimpleNamespace(value=180))
+        for _ in range(4):
+            output.send_frame(object())
+        self.assertEqual(sum(reference() is not None for reference in references), 1)
+
     def test_rotation_is_persistent_and_existing_worker_sees_changes(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "display.json"

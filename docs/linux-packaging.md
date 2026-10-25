@@ -37,7 +37,7 @@ Files live in `packaging/deb/debian`.
 
 The Ubuntu development PPA is
 [`ppa:abigor82/open-trofeo-lcd`](https://launchpad.net/~abigor82/+archive/ubuntu/open-trofeo-lcd).
-The `0.1.0~dev20261025+ubuntu3` update targets **resolute**, matching the existing
+The `0.1.0~dev20261025+ubuntu4` update targets **resolute**, matching the existing
 PPA series. It includes automatic AMDGPU readings, a Celsius/Fahrenheit weather
 setting, corrected theme animation timing and migration of the bundled Linux
 themes into existing libraries. Quit and reopen the app after upgrading.
@@ -55,6 +55,13 @@ files and SHA-256 checksums. AppStream screenshot URLs are pinned to that releas
 tag so Discover can fetch the same previews that shipped with the package.
 
 ### Display rotation and missing FPS
+
+For smooth rotated animations with legacy TRCC, use
+`0.1.0~dev20261025+ubuntu4` or later. Older builds could reuse a stale JPEG
+when a new rotated image received the same Python object id as a released frame.
+The worker now retains its last submitted surface until the replacement exists;
+memory stays bounded to one frame. A regression test sends 1000 changing frames
+through the actual legacy TRCC encoding cache and checks their contents.
 
 Use `0.1.0~dev20261025+ubuntu3` or later with TRCC 9.4.7: this fixes the
 `QtRenderer object has no attribute rotate` crash when selecting 180°.

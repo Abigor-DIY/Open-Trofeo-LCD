@@ -126,12 +126,18 @@ class _RotatedDisplay:
     def __init__(self, display, renderer, rotation=None):
         self.display, self.renderer = display, renderer
         self.rotation = rotation or DisplayRotation()
+        self._last_frame = None
 
     def __getattr__(self, name):
         return getattr(self.display, name)
 
     def _image(self, image):
-        return _rotate_image(self.renderer, image, 180) if self.rotation.value == 180 else image
+        frame = _rotate_image(self.renderer, image, 180) if self.rotation.value == 180 else image
+        # Legacy TRCC caches JPEGs by id(image), without retaining the image.
+        # Keep the previous surface alive until its replacement is allocated,
+        # so a fresh frame cannot reuse the old id and send a stale JPEG.
+        self._last_frame = frame
+        return frame
 
     def send(self, image):
         return self.display.send(self._image(image))
