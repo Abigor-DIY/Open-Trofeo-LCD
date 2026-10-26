@@ -45,7 +45,7 @@ def manifest_state(path):
         if Path(path).stat().st_size > 65536:
             raise ValueError("oversized manifest")
         layer = json.loads(Path(path).read_text())["layer"]
-        result["layer"] = {k: layer.get(k) for k in ("name", "api_version", "enable_environment", "disable_environment")}
+        result["layer"] = {k: layer.get(k) for k in ("name", "api_version", "implementation_version", "enable_environment", "disable_environment")}
         library = Path(layer["library_path"])
         if not library.is_absolute():
             library = Path(path).parent / library
@@ -76,7 +76,7 @@ def backend_state(url):
         return {**{k: state.get(k) for k in ("busy", "running", "mode", "last_exit_code")},
                 "display_backend": config.get("display_backend"), "trcc_bin": config.get("trcc_bin"),
                 "display_rotation": config.get("display_rotation"),
-                "fps_probe": {k: probe.get(k) for k in ("active", "age_ms", "source", "socket_path", "log_error", "log_dropped_samples")},
+                "fps_probe": {k: probe.get(k) for k in ("active", "age_ms", "source", "socket_path", "abstract_socket", "abstract_ready", "transport", "transport_error", "log_error", "log_dropped_samples")},
                 "game": {k: game.get(k) for k in ("game_name", "game_launcher", "game_fps", "game_frametime_ms", "game_fps_source")}}
     except (OSError, ValueError) as exc:
         return {"error": f"{type(exc).__name__}: {exc}"}
@@ -87,6 +87,14 @@ FPS_ENV = {"OPEN_TROFEO_FPS_LAYER", "OPEN_TROFEO_FPS_SOCKET", "OPEN_TROFEO_GAME_
            "VK_LAYER_PATH", "VK_ADD_IMPLICIT_LAYER_PATH", "VK_IMPLICIT_LAYER_PATH",
            "VK_LOADER_LAYERS_ENABLE", "VK_LOADER_LAYERS_DISABLE", "FLATPAK_ID", "PROTON_ENABLE_WAYLAND",
            "STEAM_COMPAT_TOOL_PATHS", "SteamAppId"}
+
+
+def abstract_endpoint(path):
+    # Keep the standalone reporter usable without importing the application.
+    value = 14695981039346656037
+    for byte in os.fsencode(path):
+        value = ((value ^ byte) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return f"@open-trofeo-fps-v1-{value:016x}"
 
 
 def game_processes(game, default_socket, proc_root=Path("/proc")):
@@ -113,6 +121,13 @@ def game_processes(game, default_socket, proc_root=Path("/proc")):
             item["socket_in_game_namespace"] = file_state(entry / "root" / socket_path.lstrip("/"))
             if socket_path != default_socket:
                 item["backend_socket_in_game_namespace"] = file_state(entry / "root" / default_socket.lstrip("/"))
+            endpoint = abstract_endpoint(socket_path)
+            try:
+                with (entry / "net/unix").open(errors="replace") as handle:
+                    names = [line.split()[-1] for line in handle.read(2_000_000).splitlines() if line.split()]
+                item["abstract_socket_in_game_network"] = {"name": endpoint, "visible": endpoint in names}
+            except OSError as exc:
+                item["abstract_socket_in_game_network"] = {"name": endpoint, "error": type(exc).__name__}
             found.append(item)
         except OSError:
             continue

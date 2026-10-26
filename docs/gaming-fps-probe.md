@@ -1,6 +1,6 @@
 # Open Trofeo FPS Probe
 
-Open Trofeo LCD exposes a local Unix datagram socket for headless game FPS data.
+Open Trofeo LCD exposes local Unix sockets for headless game FPS data.
 The goal is to show FPS and frame time on the Trofeo LCD without drawing an
 overlay over the game.
 
@@ -23,6 +23,36 @@ Override:
 ```bash
 OPEN_TROFEO_FPS_SOCKET=/custom/path/fps.sock
 ```
+
+### Steam Runtime and Proton containers
+
+From `0.1.0~dev20261026+ubuntu1`, the native probe automatically falls back to
+an authenticated Linux abstract Unix stream when Steam's mount namespace hides
+the filesystem socket. The default channel above remains supported. The stream
+name is derived from the same socket path, so custom paths keep separate
+receivers. Both peers verify the kernel-reported user ID before sending or
+accepting telemetry. The channel uses no IP port or shared filesystem mount.
+
+Standard Steam/Proton launch options remain the same. A game already running
+continues using its loaded library, so upgrading requires these steps:
+
+1. Exit the game and Steam completely.
+2. Upgrade Open Trofeo LCD, quit it from its tray menu, then reopen it.
+3. Open **Configuration → Gaming → Configure FPS layer**. This rebuilds both
+   native and installed Flatpak copies of the probe, even if file timestamps
+   would otherwise skip a build. The library is replaced atomically.
+4. Start Steam and the game again, keeping your existing launch options.
+
+`config.fps_probe.transport` reports `filesystem` or `abstract-stream` when
+samples arrive. `abstract_ready` reports the listener state. Probe logs include
+`loaded ... library-transport-v2` and `transport ... abstract-stream` markers.
+The fallback requires the same network namespace, as used by standard Steam
+Runtime. Custom network isolation can use the original filesystem socket with
+the appropriate narrow filesystem mapping instead.
+
+See [Valve's container-sharing documentation](https://github.com/ValveSoftware/steam-runtime/blob/master/doc/steamlinuxruntime-known-issues.md#sharing-directories-with-the-container)
+and the [Linux Unix-socket documentation](https://man7.org/linux/man-pages/man7/unix.7.html)
+for the underlying namespace and peer-credential behaviour.
 
 ## Datagram schema
 
@@ -107,7 +137,7 @@ Steam launch option example:
 OPEN_TROFEO_FPS_LAYER=1 OPEN_TROFEO_FPS_SOCKET=/run/user/$UID/open-trofeo-lcd/fps.sock OPEN_TROFEO_GAME_NAME="Game Name" OPEN_TROFEO_GAME_LAUNCHER=Steam %command%
 ```
 
-The GUI exposes a copy-ready launch option in Configuration > Gaming FPS:
+The GUI exposes a copy-ready launch option in Configuration > Gaming:
 
 ```bash
 OPEN_TROFEO_FPS_LAYER=1 OPEN_TROFEO_GAME_NAME="Game Name" OPEN_TROFEO_GAME_LAUNCHER=Steam %command%
@@ -206,7 +236,8 @@ options. `--url http://127.0.0.1:18777` can select a different local backend por
 
 The report checks the backend FPS snapshot, both native/Flatpak manifests and
 their libraries, the matching game's loaded probe/MangoHud libraries, socket
-visibility inside the game's namespace, selected FPS environment variables,
+visibility inside the game's mount namespace and the matching abstract endpoint
+in its network namespace, selected FPS environment variables,
 probe log markers and display-worker errors. It also reports installed TRCC
 versions and saved Trofeo orientation. It does not touch USB, send synthetic
 FPS samples, change settings, upload data, or export weather coordinates/full
@@ -214,7 +245,7 @@ process environments. Home and runtime paths are replaced with placeholders.
 
 `OPEN_TROFEO_FPS_LAYER=1` opts into an installed layer; the flag alone does not
 install it. If the report says the manifest/library is missing, use
-**Configuration → Gaming FPS → Configure FPS layer**, restart Steam completely
+**Configuration → Gaming → Configure FPS layer**, restart Steam completely
 and retry. MangoHud's visible FPS counter does not establish that the separate
 Open Trofeo layer has loaded. Compare its `loaded`, `create-device`,
 `first-present` and `socket-error` markers before changing launch options.

@@ -29,7 +29,7 @@ configure_steam_flatpak_runtime_access() {
     fi
 }
 
-BUILD_OUTPUT="$("${ROOT_DIR}/scripts/build_fps_probe.sh")"
+BUILD_OUTPUT="$("${ROOT_DIR}/scripts/build_fps_probe.sh" --always-make)"
 SOURCE_JSON="$(printf '%s\n' "${BUILD_OUTPUT}" | grep 'VkLayer_OPEN_TROFEO_fps\.json$' | tail -n 1)"
 if [[ -z "${SOURCE_JSON}" || ! -f "${SOURCE_JSON}" ]]; then
     echo "[-] Vulkan layer manifest was not generated." >&2
@@ -45,7 +45,7 @@ if [[ -d "${STEAM_FLATPAK_HOME}" ]]; then
     STEAM_DATA_DIR="${STEAM_FLATPAK_HOME}/.local/share/vulkan/implicit_layer.d"
     mkdir -p "${STEAM_CACHE_HOME}" "${STEAM_DATA_DIR}"
     cp -f "${ROOT_DIR}/native/fps_probe/Makefile" "${ROOT_DIR}/native/fps_probe/open_trofeo_fps_probe.c" "${STEAM_CACHE_HOME}/"
-    make -C "${STEAM_CACHE_HOME}" >/dev/null
+    make --always-make -C "${STEAM_CACHE_HOME}" >/dev/null
     STEAM_JSON="${STEAM_DATA_DIR}/VkLayer_OPEN_TROFEO_fps.json"
     sed "s#\"library_path\": \".*libopen_trofeo_fps_probe.so\"#\"library_path\": \"${STEAM_CACHE_HOME}/libopen_trofeo_fps_probe.so\"#" "${SOURCE_JSON}" > "${STEAM_JSON}"
     printf '%s\n' "${STEAM_JSON}"

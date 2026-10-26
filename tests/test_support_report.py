@@ -56,8 +56,18 @@ class SupportReportTests(unittest.TestCase):
             (proc / "comm").write_text("enshrouded.exe\n")
             (proc / "environ").write_bytes(b"OPEN_TROFEO_FPS_LAYER=1\0PRIVATE_TOKEN=hidden\0")
             (proc / "maps").write_text("libopen_trofeo_fps_probe.so\nMangoHud.so\n")
-            result = report.game_processes("Enshrouded", "/tmp/fps.sock", root)
+            (proc / "net").mkdir()
+            socket_path = f"/run/user/{os.getuid()}/open-trofeo-lcd/fps.sock"
+            endpoint = report.abstract_endpoint(socket_path)
+            (proc / "net/unix").write_text(f"0: 00000000 00000000 00010000 0001 01 0 {endpoint}\n")
+            result = report.game_processes("Enshrouded", socket_path, root)
             self.assertEqual(result[0]["env"], {"OPEN_TROFEO_FPS_LAYER": "1"})
             self.assertTrue(result[0]["probe_library_loaded"])
             self.assertTrue(result[0]["mangohud_loaded"])
             self.assertNotIn("hidden", json.dumps(result))
+            self.assertTrue(result[0]["abstract_socket_in_game_network"]["visible"])
+
+    def test_standalone_reporter_names_the_same_endpoint_as_the_receiver(self):
+        from fps_transport import abstract_socket_name
+        for path in ("/run/user/1000/open-trofeo-lcd/fps.sock", "/tmp/żółć/fps.sock"):
+            self.assertEqual(report.abstract_endpoint(path), abstract_socket_name(path).replace("\0", "@", 1))

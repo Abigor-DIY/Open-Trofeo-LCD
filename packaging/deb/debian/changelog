@@ -1,3 +1,17 @@
+open-trofeo-lcd (0.1.0~dev20261026+ubuntu1) resolute; urgency=medium
+
+  * Add a same-user authenticated abstract Unix stream fallback for FPS data
+    from Steam/Proton mount namespaces that cannot see the host socket file.
+  * Preserve the filesystem datagram endpoint and custom socket isolation.
+  * Keep native sending nonblocking, reconnect after backend restarts and
+    prevent descriptor leaks when no receiver is available.
+  * Rebuild installed native/Flatpak probes atomically and report the selected
+    transport, listener readiness and endpoint visibility in diagnostics.
+  * Exercise the native sender in a real hidden-filesystem namespace through
+    StatsProvider and CSV logging, including credential and backpressure tests.
+
+ -- Abigor-DIY <abigor-diy@users.noreply.github.com>  Mon, 26 Oct 2026 06:40:12 +0100
+
 open-trofeo-lcd (0.1.0~dev20261025+ubuntu5) resolute; urgency=medium
 
   * Keep Configuration Apply, Save and Cancel actions visible outside the

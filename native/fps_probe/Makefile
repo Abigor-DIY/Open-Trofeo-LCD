@@ -11,7 +11,11 @@ SRC := open_trofeo_fps_probe.c
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LDLIBS)
+	@set -e; probe_tmp=$$(mktemp ./.$(TARGET).XXXXXX); \
+	trap 'rm -f "$$probe_tmp"' EXIT; \
+	$(CC) $(CFLAGS) $(LDFLAGS) -o "$$probe_tmp" $< $(LDLIBS); \
+	chmod 0755 "$$probe_tmp"; \
+	mv -f "$$probe_tmp" $@
 
 clean:
 	rm -f $(TARGET)

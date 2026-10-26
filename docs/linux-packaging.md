@@ -37,7 +37,7 @@ Files live in `packaging/deb/debian`.
 
 The Ubuntu development PPA is
 [`ppa:abigor82/open-trofeo-lcd`](https://launchpad.net/~abigor82/+archive/ubuntu/open-trofeo-lcd).
-The `0.1.0~dev20261025+ubuntu5` update targets **resolute**, matching the existing
+The `0.1.0~dev20261026+ubuntu1` update targets **resolute**, matching the existing
 PPA series. It includes automatic AMDGPU readings, a Celsius/Fahrenheit weather
 setting, corrected theme animation timing and migration of the bundled Linux
 themes into existing libraries. Quit and reopen the app after upgrading.
@@ -55,6 +55,13 @@ files and SHA-256 checksums. AppStream screenshot URLs are pinned to that releas
 tag so Discover can fetch the same previews that shipped with the package.
 
 ### Display rotation and missing FPS
+
+`0.1.0~dev20261026+ubuntu1` adds an authenticated local FPS stream fallback for
+Steam/Proton containers where the probe loads but cannot see `fps.sock`.
+After upgrading, quit the game and Steam, reopen Open Trofeo LCD, then run
+**Configuration → Gaming → Configure FPS layer** before relaunching the game.
+This rebuild is required to load the new native library; existing launch flags
+can stay unchanged. See the [FPS transport and upgrade notes](gaming-fps-probe.md#steam-runtime-and-proton-containers).
 
 From `0.1.0~dev20261025+ubuntu5`, Configuration groups settings into General,
 Gaming, Integrations, Automation and Tools. Apply, Save Settings and Cancel

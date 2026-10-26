@@ -25,7 +25,7 @@ if [[ "${1:-}" != "clean" ]]; then
     "type": "GLOBAL",
     "api_version": "1.3.0",
     "library_path": "${PROBE_DIR}/libopen_trofeo_fps_probe.so",
-    "implementation_version": "1",
+    "implementation_version": "2",
     "description": "Open Trofeo LCD no-overlay FPS probe",
     "functions": {
       "vkNegotiateLoaderLayerInterfaceVersion": "vkNegotiateLoaderLayerInterfaceVersion",

@@ -24,6 +24,7 @@ from urllib.parse import unquote, urlparse, urlencode
 from urllib.request import Request, urlopen
 from dataclasses import dataclass
 from pathlib import Path
+from fps_transport import FpsProbeServer, abstract_socket_name, socket_is_live
 from process_memory import ProcessMemoryCache
 from gpu_sources import find_amd_card, has_nvidia_card, read_amd_gpu_stats
 
@@ -151,6 +152,7 @@ class StatsProvider:
         self._fps_log_thread = threading.Thread(target=self._fps_log_worker, name="trofeo-fps-log", daemon=True)
         self._fps_log_thread.start()
         self._fps_probe_socket_path = self._default_fps_probe_socket_path()
+        self._fps_probe_server = None
         self._gpu_type = self._detect_gpu_type()
         self._last_media_snapshot = self._default_media_snapshot()
         self._last_media_at = 0.0
@@ -232,16 +234,7 @@ class StatsProvider:
     @staticmethod
     def _fps_probe_socket_is_live(path: str) -> bool:
         """Return True when an existing socket path is served by a live process."""
-        probe = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        try:
-            probe.settimeout(0.2)
-            probe.connect(path)
-            probe.send(b"")
-            return True
-        except OSError:
-            return False
-        finally:
-            probe.close()
+        return socket_is_live(path)
 
     @staticmethod
     def _format_fps_value(value: object) -> str:
@@ -570,50 +563,10 @@ class StatsProvider:
         if not path or not self._fps_probe_enabled:
             return
 
-        def _worker() -> None:
-            sock: socket.socket | None = None
-            try:
-                parent = os.path.dirname(path)
-                os.makedirs(parent, mode=0o700, exist_ok=True)
-                # Never steal the socket from a live receiver (the backend owns
-                # it). Only remove a stale file left behind by a dead process,
-                # otherwise transient StatsProviders orphan the real listener.
-                if os.path.exists(path) and self._fps_probe_socket_is_live(path):
-                    return
-                try:
-                    os.unlink(path)
-                except FileNotFoundError:
-                    pass
-                except OSError:
-                    pass
-                sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-                try:
-                    sock.bind(path)
-                except OSError:
-                    return
-                try:
-                    os.chmod(path, 0o600)
-                except OSError:
-                    pass
-                sock.settimeout(1.0)
-                while True:
-                    try:
-                        raw, _addr = sock.recvfrom(4096)
-                    except socket.timeout:
-                        continue
-                    except OSError:
-                        break
-                    self._accept_fps_probe_payload(raw)
-            finally:
-                if sock is not None:
-                    try:
-                        sock.close()
-                    except OSError:
-                        pass
+        self._fps_probe_server = FpsProbeServer(path, self._accept_fps_probe_payload)
+        self._fps_probe_server.start()
 
-        threading.Thread(target=_worker, name="trofeo-fps-probe", daemon=True).start()
-
-    def _accept_fps_probe_payload(self, raw: bytes) -> None:
+    def _accept_fps_probe_payload(self, raw: bytes, transport: str = "filesystem") -> None:
         try:
             payload = json.loads(raw.decode("utf-8", "replace"))
         except Exception:
@@ -648,6 +601,7 @@ class StatsProvider:
             "probe_pid": str(payload.get("pid") or "")[:32],
             "game_session_frames": session_frames if session_frames else "N/A",
             "probe_updated_at": now,
+            "probe_transport": transport,
         }
         with self._fps_probe_lock:
             session_key = "|".join(
@@ -744,6 +698,10 @@ class StatsProvider:
         }
         return {
             "socket_path": self._fps_probe_socket_path,
+            "abstract_socket": abstract_socket_name(self._fps_probe_socket_path).replace("\0", "@", 1),
+            "abstract_ready": bool(self._fps_probe_server and self._fps_probe_server.abstract_bound),
+            "transport": str(snapshot.get("probe_transport") or "waiting"),
+            "transport_error": self._fps_probe_server.error if self._fps_probe_server else "",
             "active": "yes" if age is not None and age <= 2.5 else "no",
             "age_ms": "N/A" if age is None else f"{int(age * 1000)}",
             "source": str(snapshot.get("game_fps_source") or "open-trofeo-probe-waiting"),

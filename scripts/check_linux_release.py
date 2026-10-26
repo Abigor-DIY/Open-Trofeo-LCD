@@ -60,6 +60,7 @@ REQUIRED_FLATPAK_SKIPS = {
 }
 
 REQUIRED_PACKAGE_FILES = {
+    "fps_transport.py",
     "scripts/display_preferences.py",
     "scripts/trofeo_support_report.py",
     "scripts/trcc_runtime.py",

@@ -1,11 +1,15 @@
 import os
+import json
+import tempfile
 import time
 import unittest
-from unittest.mock import Mock
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from trofeo_gui import TrofeoGui
 
@@ -32,6 +36,21 @@ class TrofeoGuiSmokeTests(unittest.TestCase):
             window.close()
             window.deleteLater()
             QApplication.processEvents()
+
+    def test_old_fps_probe_has_an_upgrade_hint_until_reconfigured(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder)
+            manifest = home / ".local/share/vulkan/implicit_layer.d/VkLayer_OPEN_TROFEO_fps.json"
+            manifest.parent.mkdir(parents=True)
+            owner = SimpleNamespace(cfg_fps_layer_status_label=QLabel(),
+                                    _steam_flatpak_installed=lambda: False,
+                                    _refresh_gaming_auto_theme_status=lambda: None,
+                                    _tr=lambda en, pl: en)
+            with patch.object(Path, "home", return_value=home):
+                for version, expected in ((1, True), (2, False)):
+                    manifest.write_text(json.dumps({"layer": {"implementation_version": version}}))
+                    TrofeoGui.refresh_fps_layer_status(owner)
+                    self.assertEqual("update available" in owner.cfg_fps_layer_status_label.text(), expected)
 
     def test_global_rotation_apply_acknowledgement_and_cancel(self) -> None:
         window = TrofeoGui("http://127.0.0.1:18777", start_background_tasks=False)

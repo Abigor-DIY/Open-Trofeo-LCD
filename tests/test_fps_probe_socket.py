@@ -14,9 +14,21 @@ class FpsProbeSocketTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.socket_path = str(Path(self._tmp.name) / "fps.sock")
         self._previous = os.environ.get("OPEN_TROFEO_FPS_SOCKET")
+        self._state_previous = os.environ.get("XDG_STATE_HOME")
         os.environ["OPEN_TROFEO_FPS_SOCKET"] = self.socket_path
+        os.environ["XDG_STATE_HOME"] = self._tmp.name
+        self.providers = []
 
     def tearDown(self) -> None:
+        for provider in self.providers:
+            if provider._fps_probe_server:
+                provider._fps_probe_server.close()
+            provider._fps_log_queue.put(None)
+            provider._fps_log_thread.join(timeout=2)
+        if self._state_previous is None:
+            os.environ.pop("XDG_STATE_HOME", None)
+        else:
+            os.environ["XDG_STATE_HOME"] = self._state_previous
         if self._previous is None:
             os.environ.pop("OPEN_TROFEO_FPS_SOCKET", None)
         else:
@@ -39,12 +51,14 @@ class FpsProbeSocketTests(unittest.TestCase):
 
     def test_disabled_provider_does_not_create_socket(self) -> None:
         provider = StatsProvider(enable_fps_probe=False)
+        self.providers.append(provider)
         time.sleep(0.1)
         self.assertFalse(provider._fps_probe_enabled)
         self.assertFalse(Path(self.socket_path).exists())
 
     def test_enabled_provider_receives_samples_and_is_not_stolen(self) -> None:
         provider = StatsProvider(enable_fps_probe=True)
+        self.providers.append(provider)
         for _ in range(50):
             if StatsProvider._fps_probe_socket_is_live(self.socket_path):
                 break
@@ -60,6 +74,7 @@ class FpsProbeSocketTests(unittest.TestCase):
 
         # A second provider must not steal the live socket from the first one.
         second = StatsProvider(enable_fps_probe=True)
+        self.providers.append(second)
         time.sleep(0.2)
         self._send(90.0)
         for _ in range(50):

@@ -3,6 +3,8 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <inttypes.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -122,6 +124,10 @@ static VkInstance g_instance = NULL;
 static int g_sock = -1;
 static struct sockaddr_un g_sock_addr;
 static int g_sock_ready = 0;
+static int g_stream_sock = -1;
+static struct sockaddr_un g_stream_addr;
+static socklen_t g_stream_addr_len = 0;
+static int g_transport = 0;
 static uint64_t g_window_start_ns = 0;
 static uint64_t g_session_start_ns = 0;
 static uint64_t g_last_present_ns = 0;
@@ -287,7 +293,11 @@ static const char *default_socket_path(char *buffer, size_t size) {
     }
     const char *runtime_dir = getenv("XDG_RUNTIME_DIR");
     if (runtime_dir != NULL && runtime_dir[0] != '\0') {
-        snprintf(buffer, size, "%s/open-trofeo-lcd/fps.sock", runtime_dir);
+        size_t length = strlen(runtime_dir);
+        while (length > 1 && runtime_dir[length - 1] == '/') {
+            --length;
+        }
+        snprintf(buffer, size, "%.*s/open-trofeo-lcd/fps.sock", (int)length, runtime_dir);
         return buffer;
     }
     snprintf(buffer, size, "/run/user/%ld/open-trofeo-lcd/fps.sock", (long)getuid());
@@ -304,6 +314,10 @@ static void init_socket_locked(void) {
         g_sock_ready = -1;
         return;
     }
+    if (g_sock >= 0) {
+        close(g_sock);
+        g_sock = -1;
+    }
     g_sock = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     if (g_sock < 0) {
         g_sock_ready = -1;
@@ -312,7 +326,84 @@ static void init_socket_locked(void) {
     memset(&g_sock_addr, 0, sizeof(g_sock_addr));
     g_sock_addr.sun_family = AF_UNIX;
     memcpy(g_sock_addr.sun_path, path, strlen(path) + 1);
+    uint64_t hash = UINT64_C(14695981039346656037);
+    for (const unsigned char *byte = (const unsigned char *)path; *byte; ++byte) {
+        hash = (hash ^ *byte) * UINT64_C(1099511628211);
+    }
+    memset(&g_stream_addr, 0, sizeof(g_stream_addr));
+    g_stream_addr.sun_family = AF_UNIX;
+    snprintf(g_stream_addr.sun_path + 1, sizeof(g_stream_addr.sun_path) - 1,
+             "open-trofeo-fps-v1-%016" PRIx64, hash);
+    g_stream_addr_len = (socklen_t)(offsetof(struct sockaddr_un, sun_path)
+                                  + 1 + strlen(g_stream_addr.sun_path + 1));
     g_sock_ready = 1;
+}
+
+static void close_stream_locked(void) {
+    if (g_stream_sock >= 0) {
+        close(g_stream_sock);
+        g_stream_sock = -1;
+    }
+}
+
+static int connect_stream_locked(void) {
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        return -1;
+    }
+    if (connect(fd, (const struct sockaddr *)&g_stream_addr, g_stream_addr_len) < 0) {
+        int error = errno;
+        close(fd);
+        errno = error;
+        return -1;
+    }
+    struct ucred peer;
+    socklen_t length = sizeof(peer);
+    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &peer, &length) < 0
+            || length != sizeof(peer) || peer.uid != getuid()) {
+        close(fd);
+        errno = EACCES;
+        return -1;
+    }
+    g_stream_sock = fd;
+    return 0;
+}
+
+static int send_stream_locked(const char *payload, size_t length) {
+    ssize_t sent = send(g_stream_sock, payload, length, MSG_DONTWAIT | MSG_NOSIGNAL);
+    if (sent == (ssize_t)length) {
+        return 0;
+    }
+    int error = sent < 0 ? errno : EIO;
+    // A partial message is discarded when the receiver sees EOF. Never block
+    // the game waiting for a receiver, and reconnect on the next sample.
+    close_stream_locked();
+    errno = error;
+    return -1;
+}
+
+static int send_payload_locked(const char *payload, size_t length) {
+    int transport = 0;
+    if (g_stream_sock >= 0 && send_stream_locked(payload, length) == 0) {
+        transport = 2;
+    } else if (sendto(g_sock, payload, length, MSG_DONTWAIT,
+                      (const struct sockaddr *)&g_sock_addr, sizeof(g_sock_addr)) >= 0) {
+        transport = 1;
+    } else {
+        int error = errno;
+        if (error != ENOENT && error != ECONNREFUSED && error != EACCES) {
+            return -1;
+        }
+        if (connect_stream_locked() < 0 || send_stream_locked(payload, length) < 0) {
+            return -1;
+        }
+        transport = 2;
+    }
+    if (transport != g_transport) {
+        log_event("transport", transport == 2 ? "abstract-stream" : "filesystem");
+        g_transport = transport;
+    }
+    return 0;
 }
 
 static void send_sample_locked(uint64_t ts_ns) {
@@ -323,6 +414,8 @@ static void send_sample_locked(uint64_t ts_ns) {
     if (g_last_send_ns != 0 && ts_ns > g_last_send_ns && (ts_ns - g_last_send_ns) < 100000000ull) {
         return;
     }
+    // Failed receivers must not trigger one reconnect per presented frame.
+    g_last_send_ns = ts_ns;
     const char *game_name = getenv("OPEN_TROFEO_GAME_NAME");
     const char *launcher = getenv("OPEN_TROFEO_GAME_LAUNCHER");
     if (game_name == NULL || game_name[0] == '\0') {
@@ -364,18 +457,14 @@ static void send_sample_locked(uint64_t ts_ns) {
     if (len >= sizeof(payload)) {
         len = sizeof(payload) - 1;
     }
-    if (sendto(g_sock, payload, len, MSG_DONTWAIT, (const struct sockaddr *)&g_sock_addr, sizeof(g_sock_addr)) < 0) {
+    payload[len++] = '\n';
+    if (send_payload_locked(payload, len) < 0) {
         if (!g_logged_socket_error) {
             char detail[96];
-            snprintf(detail, sizeof(detail), "sendto errno=%d", errno);
+            snprintf(detail, sizeof(detail), "local FPS transport errno=%d", errno);
             log_event("socket-error", detail);
             g_logged_socket_error = 1;
         }
-        if (errno == ENOENT || errno == ECONNREFUSED) {
-            g_sock_ready = 0;
-        }
-    } else {
-        g_last_send_ns = ts_ns;
     }
 }
 
@@ -603,5 +692,5 @@ VkResult vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface *versi
 }
 
 __attribute__((constructor)) static void open_trofeo_layer_loaded(void) {
-    log_event("loaded", "library");
+    log_event("loaded", "library-transport-v2");
 }

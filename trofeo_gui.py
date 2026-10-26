@@ -1312,6 +1312,20 @@ class TrofeoGui(QMainWindow):
             lines.append(f"Socket access: {'ready' if socket_override else 'missing xdg-run/open-trofeo-lcd'}")
         else:
             lines.append("Steam DEB/native: no Flatpak override required")
+        manifests = [user_manifest] + ([steam_manifest] if steam_flatpak else [])
+        for manifest in manifests:
+            if not manifest.exists():
+                continue
+            try:
+                version = int(json.loads(manifest.read_text())["layer"].get("implementation_version", 0))
+            except (OSError, ValueError, TypeError, KeyError):
+                version = 0
+            if version < 2:
+                lines.append(self._tr(
+                    "FPS probe update available: run Configure FPS layer, then restart the game.",
+                    "Dostępna aktualizacja warstwy FPS: skonfiguruj ją ponownie, potem uruchom grę ponownie.",
+                ))
+                break
         self.cfg_fps_layer_status_label.setText("\n".join(lines))
         self._refresh_gaming_auto_theme_status()
 
